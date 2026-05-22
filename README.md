@@ -19,24 +19,6 @@
 
 videowipe uses a Spatial-Temporal Transformer Network to detect and erase fixed-pattern content in video: hardcoded subtitles, channel logos, animated watermarks. You provide a video and a mask image marking the region to erase. The model fills in the background using temporal information from surrounding frames.
 
-### Subtitle removal
-
-![detext](pics/de-text/detext_9_ko.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch video</a></p>
-
-### Logo removal
-
-![delogo](pics/de-logo/delogo_4.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">Watch video</a></p>
-
-### Dynamic watermark removal
-
-![dynamic logo](pics/de-dynamic-logo/de-dynamic-logo_1.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">Watch video</a></p>
-
 ## Install
 
 Requires Python 3.8+ and PyTorch.
@@ -95,6 +77,26 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | `-w, --weight` | Model weight path (skips auto-download if set) | auto |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
+
+## Preview
+
+### Subtitle removal
+
+![detext](pics/de-text/detext_9_ko.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch video</a></p>
+
+### Logo removal
+
+![delogo](pics/de-logo/delogo_4.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">Watch video</a></p>
+
+### Dynamic watermark removal
+
+![dynamic logo](pics/de-dynamic-logo/de-dynamic-logo_1.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">Watch video</a></p>
 
 ## How it works
 

@@ -19,24 +19,6 @@
 
 videowipe 使用时空 Transformer 网络检测并擦除视频中的固定模式内容：硬字幕、台标、动态水印。你提供视频和标记擦除区域的 mask 图片，模型利用前后帧的时域信息填充背景。
 
-### 字幕擦除
-
-![detext](pics/de-text/detext_9_ko.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">查看视频</a></p>
-
-### 台标擦除
-
-![delogo](pics/de-logo/delogo_4.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">查看视频</a></p>
-
-### 动态水印擦除
-
-![dynamic logo](pics/de-dynamic-logo/de-dynamic-logo_1.JPG)
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">查看视频</a></p>
-
 ## 安装
 
 需要 Python 3.8+ 和 PyTorch。
@@ -95,6 +77,26 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | `-w, --weight` | 模型权重路径（设置后跳过自动下载） | 自动下载 |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
+
+## 效果预览
+
+### 字幕擦除
+
+![detext](pics/de-text/detext_9_ko.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">查看视频</a></p>
+
+### 台标擦除
+
+![delogo](pics/de-logo/delogo_4.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">查看视频</a></p>
+
+### 动态水印擦除
+
+![dynamic logo](pics/de-dynamic-logo/de-dynamic-logo_1.JPG)
+
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">查看视频</a></p>
 
 ## 原理
 
