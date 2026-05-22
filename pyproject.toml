@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videowipe"
+version = "0.1.0"
+description = "STTN-based video inpainting tool for removing subtitles, logos, and watermarks"
+requires-python = ">=3.8"
+dependencies = [
+    "opencv-python>=4.5",
+    "matplotlib",
+    "numba>=0.56",
+    "numpy",
+    "tqdm",
+    "torch>=2.0",
+    "torchvision",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+videowipe = "videowipe.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/videowipe"]
