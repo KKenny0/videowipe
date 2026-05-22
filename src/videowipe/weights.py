@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import urllib.request
-from typing import Optional
+from typing import List
 
 from tqdm import tqdm
 
@@ -53,11 +53,55 @@ def ensure_weight(filename: str, version: str = "v0.1") -> str:
     return local_path
 
 
+def ensure_onnx_weights(base_name: str = "sttn", version: str = "v0.1") -> str:
+    """Download all ONNX model files for a given base name.
+
+    Downloads <base_name>_encoder.onnx[.data],
+              <base_name>_transformer.onnx[.data],
+              <base_name>_decoder.onnx[.data].
+
+    Returns the base path (without .onnx) for use with ONNXBackend.
+    """
+    weights_dir = get_weights_dir()
+    base_path = os.path.join(weights_dir, base_name)
+
+    # Check if already downloaded (just check the encoder .onnx)
+    if os.path.isfile(f"{base_path}_encoder.onnx"):
+        return base_path
+
+    suffixes = [
+        "_encoder.onnx", "_encoder.onnx.data",
+        "_transformer.onnx", "_transformer.onnx.data",
+        "_decoder.onnx", "_decoder.onnx.data",
+    ]
+    for suffix in suffixes:
+        filename = f"{base_name}{suffix}"
+        local_path = os.path.join(weights_dir, filename)
+        if os.path.isfile(local_path):
+            continue
+
+        url = f"{_RELEASE_BASE}/{version}/{filename}"
+        print(f"Downloading {filename} ...")
+        try:
+            _download_with_progress(url, local_path)
+        except Exception as e:
+            # Clean up partial downloads
+            for s in suffixes:
+                p = os.path.join(weights_dir, f"{base_name}{s}")
+                if os.path.exists(p):
+                    os.remove(p)
+            raise RuntimeError(
+                f"Failed to download {filename}: {e}\n{_MANUAL_DOWNLOAD_MSG}"
+            ) from e
+
+    return base_path
+
+
 def _download_with_progress(url: str, dest: str) -> None:
     tmp_path = dest + ".tmp"
 
     class _Progress(tqdm):
-        def update_to(self, b: int = 1, bsize: int = 1, tsize: Optional[int] = None):
+        def update_to(self, b: int = 1, bsize: int = 1, tsize: int | None = None):
             if tsize is not None:
                 self.total = tsize
             self.update(b * bsize - self.n)

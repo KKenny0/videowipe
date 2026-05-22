@@ -70,7 +70,7 @@ class InpaintGenerator(BaseNetwork):
         blocks = []
         for _ in range(stack_num):
             blocks.append(TransformerBlock(patchsize, hidden=channel))
-        self.transformer = nn.Sequential(*blocks)
+        self.transformer = nn.ModuleList(blocks)
 
         self.encoder = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),
@@ -102,17 +102,17 @@ class InpaintGenerator(BaseNetwork):
         b, t, c, h, w = masked_frames.size()
         enc_feat = self.encoder(masked_frames.view(b*t, c, h, w))
         _, c, h, w = enc_feat.size()
-        enc_feat = self.transformer(
-            {'x': enc_feat, 'b': b, 'c': c})['x']
+        for block in self.transformer:
+            enc_feat = block(enc_feat, b=b, c=c)
         output = self.decoder(enc_feat)
         output = torch.tanh(output)
         return output
 
     def infer(self, feat):
         t, c, _, _ = feat.size()
-        enc_feat = self.transformer(
-            {'x': feat, 'b': 1, 'c': c})['x']
-        return enc_feat
+        for block in self.transformer:
+            feat = block(feat, b=1, c=c)
+        return feat
 
 
 class deconv(nn.Module):
@@ -232,11 +232,10 @@ class TransformerBlock(nn.Module):
         self.attention = MultiHeadedAttention(patchsize, d_model=hidden)
         self.feed_forward = FeedForward(hidden)
 
-    def forward(self, x):
-        x, b, c = x['x'], x['b'], x['c']
+    def forward(self, x, b=1, c=256):
         x = x + self.attention(x, b, c)
         x = x + self.feed_forward(x)
-        return {'x': x, 'b': b, 'c': c}
+        return x
 
 
 # ######################################################################

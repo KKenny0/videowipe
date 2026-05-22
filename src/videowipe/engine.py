@@ -7,15 +7,18 @@ from typing import Optional
 from videowipe.tasks.base import BaseTask, read_frame_info, read_mask
 from videowipe.tasks.detext import DetextTask
 from videowipe.tasks.delogo import DelogoTask
-from videowipe.weights import ensure_weight
+from videowipe.weights import ensure_onnx_weights, ensure_weight
 
 _TASK_CLASSES = {
     "detext": DetextTask,
     "delogo": DelogoTask,
 }
 
-_DEFAULT_WEIGHTS = {
+_DEFAULT_WEIGHTS_PTH = {
     "detext": "detext_trial.pth",
+}
+_DEFAULT_WEIGHTS_ONNX = {
+    "detext": "sttn",
 }
 
 
@@ -26,8 +29,9 @@ class WipeEngine:
 
     Args:
         task: Task type, "detext" or "delogo".
-        weight: Path to model weight file. None to auto-download the default.
-        device: "auto", "cuda", or "cpu".
+        weight: Path to model weight file (.pth for PyTorch, .onnx for ONNX).
+            None to auto-download the default.
+        device: "auto", "cuda", or "cpu". Only used with .pth weights.
         gap: Segment length per pass. Higher = better quality, slower.
         dual: Show original video side-by-side in output.
     """
@@ -54,7 +58,20 @@ class WipeEngine:
             return
         weight_path = self._weight
         if weight_path is None:
-            weight_path = ensure_weight(_DEFAULT_WEIGHTS[self.task])
+            # Auto-detect: prefer ONNX if onnxruntime is available, else PyTorch
+            try:
+                import onnxruntime  # noqa: F401
+                base = ensure_onnx_weights(_DEFAULT_WEIGHTS_ONNX[self.task])
+                weight_path = base + ".onnx"
+            except ImportError:
+                try:
+                    weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
+                except Exception:
+                    raise RuntimeError(
+                        "No inference backend found. Install one of:\n"
+                        "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
+                        "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
+                    ) from None
         self._task_impl.load_model(weight_path, device=self._device)
         self._model_loaded = True
 
@@ -85,7 +102,12 @@ def remove_text(
     gap: int = 200,
     dual: bool = False,
 ) -> str:
-    """Remove hardcoded subtitles from a video. Convenience wrapper."""
+    """Remove hardcoded subtitles from a video. Convenience wrapper.
+
+    Backend is auto-detected from the weight file:
+      .pth → PyTorch (requires ``pip install videowipe[torch]``)
+      .onnx → ONNX Runtime (requires ``pip install videowipe[onnx]``)
+    """
     engine = WipeEngine(task="detext", weight=weight, device=device, gap=gap, dual=dual)
     result = engine.process(video=video, mask=mask, output=output)
     engine.cleanup()

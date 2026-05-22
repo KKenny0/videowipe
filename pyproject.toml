@@ -9,15 +9,23 @@ description = "STTN-based video inpainting tool for removing subtitles, logos, a
 requires-python = ">=3.8"
 dependencies = [
     "opencv-python>=4.5",
-    "matplotlib",
-    "numba>=0.56",
     "numpy",
+    "numba>=0.56",
     "tqdm",
-    "torch>=2.0",
-    "torchvision",
 ]
 
 [project.optional-dependencies]
+torch = [
+    "torch>=2.0",
+    "torchvision",
+]
+onnx = [
+    "onnxruntime>=1.15",
+]
+all = [
+    "videowipe[torch]",
+    "videowipe[onnx]",
+]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

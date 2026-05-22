@@ -4,14 +4,9 @@ import os
 
 import cv2
 import numpy as np
-import torch
 from numba import njit, prange
-from torchvision import transforms
 
-from videowipe.core.utils import Stack, ToTorchFormatTensor
 from videowipe.tasks.base import BaseTask, read_mask, read_frame_info
-
-_to_tensors = transforms.Compose([Stack(), ToTorchFormatTensor()])
 
 
 def get_ref_index(neighbor_ids, length, ref_length):
@@ -35,23 +30,13 @@ def blend_frames(comp_frames, pred_img, neighbor_ids, mask):
             comp_frames[idx] = 0.5 * comp_frames[idx] + 0.5 * img
 
 
-def _process_segment(frames, model, device, w, h, ref_length, neighbor_stride):
-    """Inpaint a batch of frames through the STTN model."""
+def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
+    """Inpaint a batch of frames through the model (backend-agnostic)."""
     video_length = len(frames)
-    feats = _to_tensors(frames).unsqueeze(0) * 2 - 1
-    feats = feats.to(device)
+    feats = backend.encode(backend.preprocess(frames))
 
     comp_frames_np = np.zeros((video_length, h, w, 3), dtype=np.float32)
     mask = np.zeros((video_length,), dtype=np.bool_)
-
-    with torch.no_grad():
-        feats = model.encoder(
-            feats.view(video_length, 3, h, w)
-            .contiguous()
-            .to(memory_format=torch.channels_last)
-        )
-        _, c, feat_h, feat_w = feats.size()
-        feats = feats.view(1, video_length, c, feat_h, feat_w)
 
     for f in range(0, video_length, neighbor_stride):
         neighbor_ids = [
@@ -62,26 +47,12 @@ def _process_segment(frames, model, device, w, h, ref_length, neighbor_stride):
         ]
         ref_ids = get_ref_index(neighbor_ids, video_length, ref_length)
 
-        with torch.no_grad():
-            with torch.cuda.amp.autocast():
-                ids = neighbor_ids + ref_ids
-                input_feats = (
-                    feats[0, ids, :, :, :]
-                    .contiguous()
-                    .to(memory_format=torch.channels_last)
-                )
-                pred_feat = model.infer(input_feats)
-                decoded = model.decoder(
-                    pred_feat[: len(neighbor_ids), :, :, :]
-                ).detach()
-                pred_img = torch.tanh(decoded)
+        ids = neighbor_ids + ref_ids
+        selected = feats[ids]
+        transformed = backend.transform(selected)
+        decoded = backend.decode(transformed[: len(neighbor_ids)])
 
-            pred_img = ((pred_img + 1.0) * 127.5).clamp(0, 255)
-            pred_img = (
-                pred_img.permute(0, 2, 3, 1).contiguous().cpu().numpy().astype(np.uint8)
-            )
-
-        blend_frames(comp_frames_np, pred_img, np.array(neighbor_ids), mask)
+        blend_frames(comp_frames_np, decoded, np.array(neighbor_ids), mask)
 
     comp_frames = []
     for idx in range(video_length):
@@ -169,7 +140,7 @@ class DetextTask(BaseTask):
                 futures = {
                     k: executor.submit(
                         _process_segment,
-                        frames[k], self.model, self.device, w, h,
+                        frames[k], self.backend, w, h,
                         self.ref_length, self.neighbor_stride,
                     )
                     for k in range(len(mode))

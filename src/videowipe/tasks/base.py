@@ -4,9 +4,8 @@ import sys
 import time
 
 import cv2
-import torch
 
-from videowipe.core.utils import Stack, ToTorchFormatTensor
+from videowipe.backends import load_backend
 
 
 def read_frame_info(video_path: str):
@@ -45,23 +44,12 @@ class BaseTask:
         self.ref_length = ref_length
         self.neighbor_stride = neighbor_stride
         self.dual = dual
-        self.model = None
-        self.device = None
+        self.backend = None
 
     def load_model(self, weight_path: str, device: str = "auto"):
-        """Load STTN model from a weight file."""
-        if device == "auto":
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
-
-        from videowipe.models.sttn import InpaintGenerator
-
-        self.model = InpaintGenerator().to(self.device)
-        data = torch.load(weight_path, map_location=self.device)
-        self.model.load_state_dict(data["netG"])
-        self.model.eval()
-        print(f"Loaded weight: {weight_path}")
+        """Load model from a weight file (.pth or .onnx)."""
+        self.backend = load_backend(weight_path, device=device)
+        print(f"Loaded weight: {weight_path} (backend: {type(self.backend).__name__})")
 
     def process_video(self, reader, frame_info, mask, output_dir: str,
                       video_path: str = "") -> str:
@@ -92,8 +80,6 @@ class BaseTask:
 
     def cleanup(self):
         """Release model and GPU memory."""
-        if self.model is not None:
-            del self.model
-            self.model = None
-        if self.device is not None and self.device.type == "cuda":
-            torch.cuda.empty_cache()
+        if self.backend is not None:
+            self.backend.cleanup()
+            self.backend = None
