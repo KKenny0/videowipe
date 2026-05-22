@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="pics/cover.png" alt="videowipe" width="480">
-</p>
-
 <h1 align="center">videowipe</h1>
 
 <p align="center">
@@ -82,19 +78,25 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 
 ### 字幕擦除
 
-![detext](pics/de-text/detext_9_ko.JPG)
+| Before | After |
+|--------|-------|
+| <img src="pics/de-text/detext_9_ko_before.JPG" width="400"> | <img src="pics/de-text/detext_9_ko_after.JPG" width="400"> |
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">查看视频</a></p>
 
 ### 台标擦除
 
-![delogo](pics/de-logo/delogo_4.JPG)
+| Before | After |
+|--------|-------|
+| <img src="pics/de-logo/delogo_4_before.JPG" width="400"> | <img src="pics/de-logo/delogo_4_after.JPG" width="400"> |
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">查看视频</a></p>
 
 ### 动态水印擦除
 
-![dynamic logo](pics/de-dynamic-logo/de-dynamic-logo_1.JPG)
+| Before | After |
+|--------|-------|
+| <img src="pics/de-dynamic-logo/de-dynamic-logo_1_before.JPG" width="400"> | <img src="pics/de-dynamic-logo/de-dynamic-logo_1_after.JPG" width="400"> |
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">查看视频</a></p>
 
