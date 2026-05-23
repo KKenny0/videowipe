@@ -339,5 +339,5 @@ def _default_detector() -> DBNetDetector:
     """Create the default detector with auto-downloaded weights."""
     from videowipe.weights import ensure_weight
 
-    weight = ensure_weight("ppocrv5_det_mob.onnx", version="v0.1")
+    weight = ensure_weight("ppocrv5_det_mob.onnx", version="v0.1.0")
     return DBNetDetector(weight)

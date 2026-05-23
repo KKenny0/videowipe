@@ -28,7 +28,7 @@ def get_weights_dir() -> str:
     return _WEIGHTS_DIR
 
 
-def ensure_weight(filename: str, version: str = "v0.1") -> str:
+def ensure_weight(filename: str, version: str = "v0.1.0") -> str:
     """Return the local path to a weight file, downloading if necessary.
 
     Returns the absolute path to the weight file on disk.
@@ -53,7 +53,7 @@ def ensure_weight(filename: str, version: str = "v0.1") -> str:
     return local_path
 
 
-def ensure_onnx_weights(base_name: str = "sttn", version: str = "v0.1") -> str:
+def ensure_onnx_weights(base_name: str = "sttn", version: str = "v0.1.0") -> str:
     """Download all ONNX model files for a given base name.
 
     Downloads <base_name>_encoder.onnx[.data],
