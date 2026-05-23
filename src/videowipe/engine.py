@@ -5,6 +5,7 @@ import os
 from typing import TYPE_CHECKING, Optional
 
 import cv2
+import numpy as np
 
 from videowipe.tasks.base import BaseTask, read_frame_info, read_mask
 from videowipe.tasks.detext import DetextTask
