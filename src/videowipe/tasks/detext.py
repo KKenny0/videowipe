@@ -1,6 +1,7 @@
 """Subtitle removal task."""
 import concurrent.futures
 import os
+import subprocess
 
 import cv2
 import numpy as np
@@ -98,17 +99,27 @@ class DetextTask(BaseTask):
 
         video_name = os.path.splitext(os.path.basename(video_path))[0] if video_path else "output"
         video_out_path = os.path.join(output_dir, f"{video_name}_detext.mp4")
-        writer = cv2.VideoWriter(
+        out_w = ori_w
+        out_h = ori_h * 2 if self.dual else ori_h
+
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{out_w}x{out_h}", "-pix_fmt", "bgr24",
+            "-r", str(fps),
+            "-i", "-",
+            "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             video_out_path,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps,
-            (ori_w, ori_h) if not self.dual else (ori_w, ori_h * 2),
-        )
+        ]
+        pipe = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
         split_h = int(ori_w * 3 / 16)
         mode = get_inpaint_mode(ori_h, split_h, mask)
         if not mode:
-            writer.release()
+            pipe.stdin.close()
+            pipe.wait()
             reader.release()
             raise ValueError(
                 "Mask has no inpaintable regions. "
@@ -172,9 +183,15 @@ class DetextTask(BaseTask):
                             )
                     if self.dual:
                         frame = np.vstack([frame_ori, frame])
-                    writer.write(frame)
+                    pipe.stdin.write(frame.tobytes())
 
-        writer.release()
+        pipe.stdin.close()
+        pipe.wait()
         reader.release()
+        if pipe.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg exited with code {pipe.returncode}:\n"
+                f"{pipe.stderr.read().decode(errors='replace')}"
+            )
         print(f"Saved to {video_out_path}")
         return video_out_path
