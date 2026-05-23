@@ -159,7 +159,11 @@ class DBNetDetector:
     def detect(self, frame: np.ndarray) -> List[TextBox]:
         """Run text detection on a single frame."""
         if self._hl_model is not None:
-            return self._detect_hl(frame)
+            boxes = self._detect_hl(frame)
+            if boxes:
+                return boxes
+            # High-level API returned nothing — fall back to manual post-processing
+            logger.debug("High-level DB API returned 0 boxes; falling back to manual path")
         return self._detect_manual(frame)
 
     def _detect_hl(self, frame: np.ndarray) -> List[TextBox]:

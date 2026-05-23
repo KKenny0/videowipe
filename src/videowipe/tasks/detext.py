@@ -107,6 +107,14 @@ class DetextTask(BaseTask):
 
         split_h = int(ori_w * 3 / 16)
         mode = get_inpaint_mode(ori_h, split_h, mask)
+        if not mode:
+            writer.release()
+            reader.release()
+            raise ValueError(
+                "Mask has no inpaintable regions. "
+                "The auto-detected mask is empty — the text detector may have "
+                "failed to find subtitles. Try providing a mask manually with -m."
+            )
 
         rec_time = (
             video_length // self.gap
