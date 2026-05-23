@@ -4,7 +4,7 @@ import os
 
 import cv2
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 from videowipe.tasks.base import BaseTask, read_mask, read_frame_info
 
@@ -18,9 +18,9 @@ def get_ref_index(neighbor_ids, length, ref_length):
     return ref_index
 
 
-@njit(parallel=True)
+@njit
 def blend_frames(comp_frames, pred_img, neighbor_ids, mask):
-    for i in prange(len(neighbor_ids)):
+    for i in range(len(neighbor_ids)):
         idx = neighbor_ids[i]
         img = pred_img[i].astype(np.float32)
         if not mask[idx]:
