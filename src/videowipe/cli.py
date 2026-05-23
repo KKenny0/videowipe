@@ -15,7 +15,8 @@ def _build_parser():
     for name, help_text in [("detext", "Remove subtitles"), ("delogo", "Remove logos")]:
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument("-v", "--video", required=True, help="Input video path")
-        sub.add_argument("-m", "--mask", required=True, help="Mask image path")
+        sub.add_argument("-m", "--mask", default=None,
+                         help="Mask image path (auto-detect if omitted)")
         sub.add_argument("-o", "--output", default="result/", help="Output directory")
         sub.add_argument("-w", "--weight", default=None, help="Model weight path")
         sub.add_argument("-g", "--gap", type=int, default=200,
