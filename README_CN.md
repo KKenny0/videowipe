@@ -36,7 +36,13 @@ pip install videowipe[cpu]
 ```python
 from videowipe import remove_text
 
-# 处理单个视频
+# Mask 可选 — 省略时自动检测字幕区域
+remove_text(
+    video="input.mp4",
+    output="result/",
+)
+
+# 也可以手动指定 mask
 remove_text(
     video="input.mp4",
     mask="mask.png",
@@ -50,7 +56,7 @@ remove_text(
 from videowipe import WipeEngine
 
 engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", mask="mask.png", output="result/")
+engine.process(video="clip1.mp4", output="result/")
 engine.process(video="clip2.mp4", mask="mask.png", output="result/")
 engine.cleanup()
 ```
@@ -58,6 +64,10 @@ engine.cleanup()
 ### CLI
 
 ```bash
+# 自动检测字幕区域（无需 mask）
+videowipe detext -v input.mp4 -o result/
+
+# 手动指定 mask
 videowipe detext -v input.mp4 -m mask.png -o result/
 videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 videowipe delogo -v input.mp4 -m mask.png -o result/
@@ -68,7 +78,7 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `-v, --video` | 输入视频路径 | 必填 |
-| `-m, --mask` | Mask 图片路径 | 必填 |
+| `-m, --mask` | Mask 图片路径（省略时自动检测） | 自动检测 |
 | `-o, --output` | 输出目录 | `result/` |
 | `-w, --weight` | 模型权重路径（设置后跳过自动下载） | 自动下载 |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
@@ -108,7 +118,7 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 
 ## 致谢
 
-基于 [STTN](https://github.com/researchmm/STTN) 和 [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe)。
+基于 [STTN](https://github.com/researchmm/STTN) 和 [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe)。内置文字检测模型来自 [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR)。
 
 ## License
 

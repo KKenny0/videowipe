@@ -36,7 +36,13 @@ Model weights download automatically on first run to `~/.videowipe/weights/`. No
 ```python
 from videowipe import remove_text
 
-# One-shot: process a single video
+# Mask is optional — subtitle regions are auto-detected if omitted
+remove_text(
+    video="input.mp4",
+    output="result/",
+)
+
+# Or provide your own mask for full control
 remove_text(
     video="input.mp4",
     mask="mask.png",
@@ -50,7 +56,7 @@ For batch processing, reuse the engine to avoid reloading the model:
 from videowipe import WipeEngine
 
 engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", mask="mask.png", output="result/")
+engine.process(video="clip1.mp4", output="result/")
 engine.process(video="clip2.mp4", mask="mask.png", output="result/")
 engine.cleanup()
 ```
@@ -58,6 +64,10 @@ engine.cleanup()
 ### CLI
 
 ```bash
+# Auto-detect subtitle regions (no mask needed)
+videowipe detext -v input.mp4 -o result/
+
+# With manual mask
 videowipe detext -v input.mp4 -m mask.png -o result/
 videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 videowipe delogo -v input.mp4 -m mask.png -o result/
@@ -68,7 +78,7 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-v, --video` | Input video path | required |
-| `-m, --mask` | Mask image path | required |
+| `-m, --mask` | Mask image path (auto-detect if omitted) | auto |
 | `-o, --output` | Output directory | `result/` |
 | `-w, --weight` | Model weight path (skips auto-download if set) | auto |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
@@ -108,7 +118,7 @@ Key optimizations in this fork: Numba-accelerated frame blending, AMP mixed-prec
 
 ## Credits
 
-This project builds on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) implementation.
+This project builds on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) implementation. The built-in text detection model is from [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR).
 
 ## License
 
