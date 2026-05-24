@@ -2,7 +2,7 @@
 
 <p align="center">
   基于 STTN 的视频修复库。<br>
-  擦除字幕、台标、水印，<code>pip install videowipe</code> 即可使用。
+  擦除硬字幕，<code>pip install videowipe</code> 即可使用。
 </p>
 
 <p align="center">
@@ -13,18 +13,21 @@
 
 ## 功能
 
-videowipe 使用时空 Transformer 网络检测并擦除视频中的固定模式内容：硬字幕、台标、动态水印。你提供视频和标记擦除区域的 mask 图片，模型利用前后帧的时域信息填充背景。
+videowipe 使用时空 Transformer 网络擦除视频中的硬字幕。你可以提供标记擦除区域的 mask 图片，也可以让内置检测器自动生成，模型利用前后帧的时域信息填充背景。
 
 ## 安装
 
-需要 Python 3.8+ 和 PyTorch。
+需要 Python 3.8+，以及 ONNX Runtime 或 PyTorch。
 
 ```bash
 # 已有 PyTorch：
 pip install videowipe
 
-# 需要安装 PyTorch（CPU 版）：
-pip install videowipe[cpu]
+# 轻量 ONNX Runtime 后端：
+pip install videowipe[onnx]
+
+# 或 PyTorch 后端：
+pip install videowipe[torch]
 ```
 
 模型权重在首次运行时自动下载到 `~/.videowipe/weights/`，无需手动配置。
@@ -70,7 +73,6 @@ videowipe detext -v input.mp4 -o result/
 # 手动指定 mask
 videowipe detext -v input.mp4 -m mask.png -o result/
 videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
-videowipe delogo -v input.mp4 -m mask.png -o result/
 ```
 
 ### 参数
@@ -80,7 +82,7 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | `-v, --video` | 输入视频路径 | 必填 |
 | `-m, --mask` | Mask 图片路径（省略时自动检测） | 自动检测 |
 | `-o, --output` | 输出目录 | `result/` |
-| `-w, --weight` | 模型权重路径（设置后跳过自动下载） | 自动下载 |
+| `-w, --weight` | 模型权重路径。PyTorch 接受 `.pth`/`.pt`；ONNX 需要以 `.onnx` 结尾的前缀路径，并存在对应的 `_encoder`、`_transformer`、`_decoder` 文件。 | 自动下载 |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
 
@@ -93,22 +95,6 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | <img src="pics/de-text/detext_9_ko_before.JPG" width="400"> | <img src="pics/de-text/detext_9_ko_after.JPG" width="400"> |
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">查看视频</a></p>
-
-### 台标擦除
-
-| Before | After |
-|--------|-------|
-| <img src="pics/de-logo/delogo_4_before.JPG" width="400"> | <img src="pics/de-logo/delogo_4_after.JPG" width="400"> |
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">查看视频</a></p>
-
-### 动态水印擦除
-
-| Before | After |
-|--------|-------|
-| <img src="pics/de-dynamic-logo/de-dynamic-logo_1_before.JPG" width="400"> | <img src="pics/de-dynamic-logo/de-dynamic-logo_1_after.JPG" width="400"> |
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">查看视频</a></p>
 
 ## 原理
 

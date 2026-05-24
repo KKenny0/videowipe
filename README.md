@@ -2,7 +2,7 @@
 
 <p align="center">
   Video inpainting library powered by STTN.<br>
-  Remove subtitles, logos, and watermarks. <code>pip install videowipe</code> and go.
+  Remove hardcoded subtitles. <code>pip install videowipe</code> and go.
 </p>
 
 <p align="center">
@@ -13,18 +13,21 @@
 
 ## What it does
 
-videowipe uses a Spatial-Temporal Transformer Network to detect and erase fixed-pattern content in video: hardcoded subtitles, channel logos, animated watermarks. You provide a video and a mask image marking the region to erase. The model fills in the background using temporal information from surrounding frames.
+videowipe uses a Spatial-Temporal Transformer Network to erase hardcoded subtitles from video. You provide a video and a mask image marking the region to erase, or let the built-in detector generate one. The model fills in the background using temporal information from surrounding frames.
 
 ## Install
 
-Requires Python 3.8+ and PyTorch.
+Requires Python 3.8+ and either ONNX Runtime or PyTorch.
 
 ```bash
 # If you already have PyTorch:
 pip install videowipe
 
-# If you need PyTorch (CPU):
-pip install videowipe[cpu]
+# Lightweight ONNX Runtime backend:
+pip install videowipe[onnx]
+
+# Or the PyTorch backend:
+pip install videowipe[torch]
 ```
 
 Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.
@@ -70,7 +73,6 @@ videowipe detext -v input.mp4 -o result/
 # With manual mask
 videowipe detext -v input.mp4 -m mask.png -o result/
 videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
-videowipe delogo -v input.mp4 -m mask.png -o result/
 ```
 
 ### Arguments
@@ -80,7 +82,7 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | `-v, --video` | Input video path | required |
 | `-m, --mask` | Mask image path (auto-detect if omitted) | auto |
 | `-o, --output` | Output directory | `result/` |
-| `-w, --weight` | Model weight path (skips auto-download if set) | auto |
+| `-w, --weight` | Model weight path. PyTorch accepts `.pth`/`.pt`; ONNX expects a prefix path ending in `.onnx` with matching `_encoder`, `_transformer`, and `_decoder` files. | auto |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
 
@@ -93,22 +95,6 @@ videowipe delogo -v input.mp4 -m mask.png -o result/
 | <img src="pics/de-text/detext_9_ko_before.JPG" width="400"> | <img src="pics/de-text/detext_9_ko_after.JPG" width="400"> |
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch video</a></p>
-
-### Logo removal
-
-| Before | After |
-|--------|-------|
-| <img src="pics/de-logo/delogo_4_before.JPG" width="400"> | <img src="pics/de-logo/delogo_4_after.JPG" width="400"> |
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/delogo_04.mp4">Watch video</a></p>
-
-### Dynamic watermark removal
-
-| Before | After |
-|--------|-------|
-| <img src="pics/de-dynamic-logo/de-dynamic-logo_1_before.JPG" width="400"> | <img src="pics/de-dynamic-logo/de-dynamic-logo_1_after.JPG" width="400"> |
-
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/de_dynamic_logo.mp4">Watch video</a></p>
 
 ## How it works
 

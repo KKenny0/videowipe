@@ -7,9 +7,13 @@ from typing import TYPE_CHECKING, Optional
 import cv2
 import numpy as np
 
-from videowipe.tasks.base import BaseTask, read_frame_info, read_mask
+from videowipe.tasks.base import (
+    BaseTask,
+    read_frame_info,
+    read_mask,
+    validate_mask_shape,
+)
 from videowipe.tasks.detext import DetextTask
-from videowipe.tasks.delogo import DelogoTask
 from videowipe.weights import ensure_onnx_weights, ensure_weight
 
 if TYPE_CHECKING:
@@ -17,7 +21,6 @@ if TYPE_CHECKING:
 
 _TASK_CLASSES = {
     "detext": DetextTask,
-    "delogo": DelogoTask,
 }
 
 _DEFAULT_WEIGHTS_PTH = {
@@ -34,7 +37,7 @@ class WipeEngine:
     Create one engine, call process() for each video, then cleanup().
 
     Args:
-        task: Task type, "detext" or "delogo".
+        task: Task type, currently "detext".
         weight: Path to model weight file (.pth for PyTorch, .onnx for ONNX).
             None to auto-download the default.
         device: "auto", "cuda", or "cpu". Only used with .pth weights.
@@ -99,8 +102,6 @@ class WipeEngine:
 
         os.makedirs(output, exist_ok=True)
 
-        reader, frame_info = read_frame_info(video)
-
         if mask is not None:
             mask_arr = read_mask(mask)
         else:
@@ -113,8 +114,16 @@ class WipeEngine:
                 (mask_arr * 255).astype(np.uint8),
             )
 
-        return self._task_impl.process_video(reader, frame_info, mask_arr, output,
-                                              video_path=video)
+        reader = None
+        try:
+            reader, frame_info = read_frame_info(video)
+            validate_mask_shape(mask_arr, frame_info)
+            return self._task_impl.process_video(
+                reader, frame_info, mask_arr, output, video_path=video
+            )
+        finally:
+            if reader is not None:
+                reader.release()
 
     def cleanup(self):
         """Release model and GPU memory."""
@@ -144,6 +153,7 @@ def remove_text(
         task="detext", weight=weight, device=device, gap=gap, dual=dual,
         detector=detector,
     )
-    result = engine.process(video=video, mask=mask, output=output)
-    engine.cleanup()
-    return result
+    try:
+        return engine.process(video=video, mask=mask, output=output)
+    finally:
+        engine.cleanup()

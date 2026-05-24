@@ -1,3 +1,10 @@
 
 __pycache__/
 *.pyc
+.DS_Store
+.inspection_frames/
+weights_onnx/
+auto_mask.png
+*_detext.mp4
+result/
+AGENTS.md

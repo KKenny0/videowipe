@@ -1,6 +1,7 @@
 """Inference backends: PyTorch or ONNX Runtime."""
 from __future__ import annotations
 
+import os
 from typing import List
 
 import cv2
@@ -11,7 +12,11 @@ def _detect_backend(weight_path: str) -> str:
     """Detect backend from weight file extension."""
     if weight_path.endswith(".onnx"):
         return "onnx"
-    return "torch"
+    if weight_path.endswith(".pth") or weight_path.endswith(".pt"):
+        return "torch"
+    raise ValueError(
+        f"Unsupported weight file: {weight_path}. Expected .onnx, .pth, or .pt."
+    )
 
 
 def load_backend(
@@ -129,6 +134,17 @@ class ONNXBackend(InpaintBackend):
         import onnxruntime as ort
 
         base = weight_path[: -len(".onnx")]
+        required = [
+            f"{base}_encoder.onnx",
+            f"{base}_transformer.onnx",
+            f"{base}_decoder.onnx",
+        ]
+        missing = [path for path in required if not os.path.isfile(path)]
+        if missing:
+            raise ValueError(
+                "ONNX backend expects a prefix path ending in .onnx. Missing files: "
+                + ", ".join(missing)
+            )
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
         self.encoder_session = ort.InferenceSession(

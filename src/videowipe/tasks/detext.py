@@ -2,12 +2,13 @@
 import concurrent.futures
 import os
 import subprocess
+import tempfile
 
 import cv2
 import numpy as np
 from numba import njit
 
-from videowipe.tasks.base import BaseTask, read_mask, read_frame_info
+from videowipe.tasks.base import BaseTask
 
 
 def get_ref_index(neighbor_ids, length, ref_length):
@@ -102,8 +103,18 @@ class DetextTask(BaseTask):
         out_w = ori_w
         out_h = ori_h * 2 if self.dual else ori_h
 
+        split_h = int(ori_w * 3 / 16)
+        mode = get_inpaint_mode(ori_h, split_h, mask)
+        if not mode:
+            raise ValueError(
+                "Mask has no inpaintable regions. "
+                "The auto-detected mask is empty — the text detector may have "
+                "failed to find subtitles. Try providing a mask manually with -m."
+            )
+
         ffmpeg_cmd = [
             "ffmpeg", "-y",
+            "-loglevel", "error", "-nostats",
             "-f", "rawvideo", "-vcodec", "rawvideo",
             "-s", f"{out_w}x{out_h}", "-pix_fmt", "bgr24",
             "-r", str(fps),
@@ -113,85 +124,92 @@ class DetextTask(BaseTask):
             "-movflags", "+faststart",
             video_out_path,
         ]
-        pipe = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        split_h = int(ori_w * 3 / 16)
-        mode = get_inpaint_mode(ori_h, split_h, mask)
-        if not mode:
-            pipe.stdin.close()
-            pipe.wait()
-            reader.release()
-            raise ValueError(
-                "Mask has no inpaintable regions. "
-                "The auto-detected mask is empty — the text detector may have "
-                "failed to find subtitles. Try providing a mask manually with -m."
+        stderr_file = tempfile.TemporaryFile()
+        pipe = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=stderr_file)
+        stdin_closed = False
+        processing_failed = False
+        try:
+            rec_time = (
+                video_length // self.gap
+                if video_length % self.gap == 0
+                else video_length // self.gap + 1
             )
 
-        rec_time = (
-            video_length // self.gap
-            if video_length % self.gap == 0
-            else video_length // self.gap + 1
-        )
+            # Backend instances are shared runtime objects; keep inference
+            # serialized until the backend declares a thread-safety contract.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                for i in range(rec_time):
+                    start_f = i * self.gap
+                    end_f = min((i + 1) * self.gap, video_length)
+                    print(f"Processing frames {start_f + 1}-{end_f}/{video_length}")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(mode)) as executor:
-            for i in range(rec_time):
-                start_f = i * self.gap
-                end_f = min((i + 1) * self.gap, video_length)
-                print(f"Processing frames {start_f + 1}-{end_f}/{video_length}")
+                    frames_hr = []
+                    frames = {k: [] for k in range(len(mode))}
 
-                frames_hr = []
-                frames = {k: [] for k in range(len(mode))}
-                comps = {}
+                    for j in range(start_f, end_f):
+                        success, image = reader.read()
+                        if not success:
+                            break
+                        frames_hr.append(image)
+                        for k in range(len(mode)):
+                            image_crop = image[mode[k][0]:mode[k][1], :, :]
+                            image_resize = cv2.resize(image_crop, (w, h))
+                            frames[k].append(image_resize)
 
-                for j in range(start_f, end_f):
-                    success, image = reader.read()
-                    if not success:
+                    if not frames_hr:
                         break
-                    frames_hr.append(image)
-                    for k in range(len(mode)):
-                        image_crop = image[mode[k][0]:mode[k][1], :, :]
-                        image_resize = cv2.resize(image_crop, (w, h))
-                        frames[k].append(image_resize)
 
-                if not frames_hr:
-                    break
+                    futures = {
+                        k: executor.submit(
+                            _process_segment,
+                            frames[k], self.backend, w, h,
+                            self.ref_length, self.neighbor_stride,
+                        )
+                        for k in range(len(mode))
+                        if frames[k]
+                    }
+                    comps = {k: futures[k].result() for k in futures}
 
-                futures = {
-                    k: executor.submit(
-                        _process_segment,
-                        frames[k], self.backend, w, h,
-                        self.ref_length, self.neighbor_stride,
-                    )
-                    for k in range(len(mode))
-                    if frames[k]
-                }
-                comps = {k: futures[k].result() for k in futures}
+                    for j in range(len(frames_hr)):
+                        frame_ori = frames_hr[j].copy()
+                        frame = frames_hr[j]
+                        for k in range(len(mode)):
+                            if comps.get(k) and j < len(comps[k]):
+                                comp = cv2.resize(comps[k][j], (ori_w, split_h))
+                                comp = cv2.cvtColor(
+                                    np.array(comp).astype(np.uint8), cv2.COLOR_BGR2RGB
+                                )
+                                mask_area = mask[mode[k][0]:mode[k][1], :]
+                                frame[mode[k][0]:mode[k][1], :, :] = (
+                                    mask_area * comp
+                                    + (1 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]
+                                )
+                        if self.dual:
+                            frame = np.vstack([frame_ori, frame])
+                        pipe.stdin.write(frame.tobytes())
 
-                for j in range(len(frames_hr)):
-                    frame_ori = frames_hr[j].copy()
-                    frame = frames_hr[j]
-                    for k in range(len(mode)):
-                        if comps.get(k) and j < len(comps[k]):
-                            comp = cv2.resize(comps[k][j], (ori_w, split_h))
-                            comp = cv2.cvtColor(
-                                np.array(comp).astype(np.uint8), cv2.COLOR_BGR2RGB
-                            )
-                            mask_area = mask[mode[k][0]:mode[k][1], :]
-                            frame[mode[k][0]:mode[k][1], :, :] = (
-                                mask_area * comp
-                                + (1 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]
-                            )
-                    if self.dual:
-                        frame = np.vstack([frame_ori, frame])
-                    pipe.stdin.write(frame.tobytes())
-
-        pipe.stdin.close()
-        pipe.wait()
-        reader.release()
+            pipe.stdin.close()
+            stdin_closed = True
+            pipe.wait()
+        except Exception:
+            processing_failed = True
+            raise
+        finally:
+            if not stdin_closed and pipe.stdin is not None:
+                pipe.stdin.close()
+            if pipe.poll() is None:
+                pipe.terminate()
+                pipe.wait()
+            if processing_failed:
+                stderr_file.close()
         if pipe.returncode != 0:
+            stderr_file.seek(0)
+            stderr = stderr_file.read().decode(errors="replace")
+            stderr_file.close()
             raise RuntimeError(
                 f"FFmpeg exited with code {pipe.returncode}:\n"
-                f"{pipe.stderr.read().decode(errors='replace')}"
+                f"{stderr}"
             )
+        stderr_file.close()
         print(f"Saved to {video_out_path}")
         return video_out_path

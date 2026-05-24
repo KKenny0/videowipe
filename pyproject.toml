@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "videowipe"
 version = "0.1.0"
-description = "STTN-based video inpainting tool for removing subtitles, logos, and watermarks"
+description = "STTN-based video inpainting tool for removing hardcoded subtitles"
 requires-python = ">=3.8"
 dependencies = [
     "opencv-python>=4.5",
@@ -33,3 +33,6 @@ videowipe = "videowipe.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/videowipe"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

@@ -2,7 +2,7 @@
 """Export STTN model from PyTorch .pth to three ONNX files.
 
 Usage:
-    python scripts/export_onnx.py --weight pretrained_weight/detext_trial.pth --output-dir weights_onnx/
+    python scripts/export_onnx.py --weight ~/.videowipe/weights/detext_trial.pth --output-dir weights_onnx/
 
 Produces:
     - sttn_encoder.onnx
@@ -161,7 +161,11 @@ def validate(model, output_dir: str, device: str = "cpu"):
 def main():
     parser = argparse.ArgumentParser(description="Export STTN model to ONNX")
     parser.add_argument("--weight", required=True, help="Path to .pth weight file")
-    parser.add_argument("--output-dir", default="weights_onnx", help="Output directory")
+    parser.add_argument(
+        "--output-dir",
+        default="weights_onnx",
+        help="Output directory for local ONNX artifacts (ignored by git)",
+    )
     parser.add_argument("--opset", type=int, default=14, help="ONNX opset version")
     parser.add_argument("--skip-validate", action="store_true", help="Skip validation")
     args = parser.parse_args()
