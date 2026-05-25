@@ -7,7 +7,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Docker requires lowercase image names; github.repository may contain uppercase.
+  IMAGE_NAME: kkenny0/videowipe
 
 jobs:
   build-cpu:
