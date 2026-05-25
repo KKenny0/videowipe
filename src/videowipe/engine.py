@@ -21,13 +21,16 @@ if TYPE_CHECKING:
 
 _TASK_CLASSES = {
     "detext": DetextTask,
+    "clean": DetextTask,
 }
 
 _DEFAULT_WEIGHTS_PTH = {
     "detext": "detext_trial.pth",
+    "clean": "detext_trial.pth",
 }
 _DEFAULT_WEIGHTS_ONNX = {
     "detext": "sttn",
+    "clean": "sttn",
 }
 
 
@@ -63,6 +66,8 @@ class WipeEngine:
         self._device = device
         self._detector = detector
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
+        if task == "clean":
+            setattr(self._task_impl, "output_suffix", "clean")
         self._model_loaded = False
 
     def _ensure_model(self):
@@ -89,7 +94,13 @@ class WipeEngine:
 
     def process(self, video: str, mask: str | None = None,
                 output: str = "result/",
-                detector: Optional[TextDetector] = None) -> str:
+                detector: Optional[TextDetector] = None,
+                targets: list[str] | None = None,
+                intent: str | None = None,
+                agent: str | None = None,
+                regions: list[str] | None = None,
+                preview: bool = False,
+                confirm: bool = False) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -98,21 +109,100 @@ class WipeEngine:
             output: Output directory.
             detector: Override the text detector for auto-mask generation.
         """
-        self._ensure_model()
-
         os.makedirs(output, exist_ok=True)
 
         if mask is not None:
             mask_arr = read_mask(mask)
         else:
-            from videowipe.detect import detect_subtitle_mask
             det = detector or self._detector
-            mask_arr = detect_subtitle_mask(video, detector=det)
-            # Save auto-detected mask for inspection
-            cv2.imwrite(
-                os.path.join(output, "auto_mask.png"),
-                (mask_arr * 255).astype(np.uint8),
-            )
+            if self.task == "clean":
+                from videowipe.detect import (
+                    detect_clean_candidates,
+                    infer_regions_from_text,
+                    infer_targets_from_text,
+                    mask_from_candidates,
+                    normalize_target,
+                    select_clean_candidates,
+                    write_clean_artifacts,
+                )
+
+                target_text = " ".join(targets or [])
+                intent_text = " ".join(part for part in [target_text, intent or ""] if part)
+                requested_regions = list(regions or [])
+                requested_regions.extend(infer_regions_from_text(intent_text))
+                requested_regions = list(dict.fromkeys(requested_regions))
+
+                inferred_targets = infer_targets_from_text(target_text)
+                intent_targets = infer_targets_from_text(intent or "")
+                effective_targets = list(targets or [])
+                effective_targets.extend(inferred_targets)
+                effective_targets = [
+                    target for target in dict.fromkeys(effective_targets)
+                    if normalize_target(target) != target or target in inferred_targets
+                ]
+                normalized_targets = {normalize_target(target) for target in effective_targets}
+                if requested_regions:
+                    effective_targets.append("region")
+                    normalized_targets.add("region")
+                mentioned_targets = normalized_targets | set(intent_targets)
+                include_logo = "logo" in mentioned_targets
+                include_translucent = "watermark" in mentioned_targets
+                text_targets = {
+                    "subtitle", "timestamp", "watermark",
+                    "scene_text", "unknown_text",
+                }
+                detect_text = (
+                    bool(mentioned_targets & text_targets)
+                    or (not requested_regions and not mentioned_targets)
+                    or bool(intent and not mentioned_targets)
+                )
+
+                result = detect_clean_candidates(
+                    video,
+                    detector=det,
+                    regions=requested_regions,
+                    detect_text=detect_text,
+                    include_logo=include_logo,
+                    include_translucent_watermark=include_translucent,
+                )
+                selected = select_clean_candidates(
+                    result.candidates,
+                    targets=effective_targets,
+                    intent=intent,
+                )
+                self._warn_if_timestamp_unresolved(effective_targets, result.candidates)
+                if agent and intent:
+                    agent_selected = self._select_candidates_with_agent(
+                        agent, result.candidates, intent
+                    )
+                    if agent_selected is not None:
+                        selected = agent_selected
+                write_clean_artifacts(result, selected, output)
+                if confirm:
+                    selected = self._confirm_candidates(result.candidates, selected)
+                    write_clean_artifacts(result, selected, output)
+                mask_arr = mask_from_candidates(selected, result.frame_shape)
+                cv2.imwrite(
+                    os.path.join(output, "auto_mask.png"),
+                    (mask_arr * 255).astype(np.uint8),
+                )
+                if preview:
+                    print(f"Preview saved to {output}")
+                    return output
+            else:
+                from videowipe.detect import detect_subtitle_mask
+                mask_arr = detect_subtitle_mask(video, detector=det)
+                # Save auto-detected mask for inspection
+                cv2.imwrite(
+                    os.path.join(output, "auto_mask.png"),
+                    (mask_arr * 255).astype(np.uint8),
+                )
+
+        if preview:
+            print(f"Preview saved to {output}")
+            return output
+
+        self._ensure_model()
 
         reader = None
         try:
@@ -129,6 +219,54 @@ class WipeEngine:
         """Release model and GPU memory."""
         self._task_impl.cleanup()
         self._model_loaded = False
+
+    @staticmethod
+    def _confirm_candidates(candidates, selected):
+        """Ask the user which candidates should be removed."""
+        selected_ids = {candidate.id for candidate in selected}
+        print("Detected clean targets:")
+        for candidate in candidates:
+            marker = "*" if candidate.id in selected_ids else " "
+            print(
+                f"{marker} {candidate.id}: {candidate.label} "
+                f"({candidate.reason}, confidence {candidate.confidence:.2f})"
+            )
+        answer = input(
+            "Remove candidate ids separated by commas, press Enter to accept, "
+            "or type 'none': "
+        ).strip()
+        if not answer:
+            return list(selected)
+        if answer.lower() in {"none", "cancel", "no"}:
+            return []
+        wanted = {item.strip() for item in answer.split(",") if item.strip()}
+        return [candidate for candidate in candidates if candidate.id in wanted]
+
+    @staticmethod
+    def _select_candidates_with_agent(agent, candidates, intent):
+        from videowipe.agent import select_with_agent
+
+        selected_ids = select_with_agent(agent, candidates, intent)
+        if selected_ids is None:
+            print("Agent selection unavailable; using local rules.")
+            return None
+        id_set = set(selected_ids)
+        return [candidate for candidate in candidates if candidate.id in id_set]
+
+    @staticmethod
+    def _warn_if_timestamp_unresolved(targets, candidates):
+        from videowipe.detect import normalize_target
+
+        requested = {normalize_target(target) for target in (targets or [])}
+        if "timestamp" not in requested:
+            return
+        if any(candidate.type == "timestamp" for candidate in candidates):
+            return
+        print(
+            "No timestamp target was confirmed. Timestamp detection requires "
+            "recognized text content; use --region top-left/top-right if the "
+            "current detector only finds text boxes."
+        )
 
 
 def remove_text(

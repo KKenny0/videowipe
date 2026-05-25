@@ -102,7 +102,8 @@ class DetextTask(BaseTask):
         fps = frame_info["fps"]
 
         video_name = os.path.splitext(os.path.basename(video_path))[0] if video_path else "output"
-        video_out_path = os.path.join(output_dir, f"{video_name}_detext.mp4")
+        output_suffix = getattr(self, "output_suffix", "detext")
+        video_out_path = os.path.join(output_dir, f"{video_name}_{output_suffix}.mp4")
         out_w = ori_w
         out_h = ori_h * 2 if self.dual else ori_h
 

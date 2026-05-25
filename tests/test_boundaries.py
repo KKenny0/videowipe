@@ -1,17 +1,53 @@
 import numpy as np
 import pytest
+import cv2
 
 from videowipe.backends import _detect_backend
 from videowipe import cli
+from videowipe import agent as agent_module
 from videowipe.cli import _build_parser
+from videowipe.detect import (
+    CleanCandidate,
+    TextBox,
+    detect_clean_candidates,
+    mask_from_candidates,
+    select_candidates_by_intent,
+    select_clean_candidates,
+)
 from videowipe.engine import WipeEngine, remove_text
 from videowipe.tasks.base import read_mask, validate_mask_shape
 
 
-def test_cli_exposes_only_implemented_detext_command():
+def _write_test_video(path, width=96, height=64, frames=4, draw=None):
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        4,
+        (width, height),
+    )
+    for i in range(frames):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        if draw is not None:
+            draw(frame, i)
+        writer.write(frame)
+    writer.release()
+
+
+def test_cli_exposes_detext_and_clean_commands():
     parser = _build_parser()
 
     assert parser.parse_args(["detext", "-v", "input.mp4"]).command == "detext"
+    clean = parser.parse_args(["clean", "input.mp4", "--target", "watermark"])
+    assert clean.command == "clean"
+    assert clean.video == "input.mp4"
+    assert clean.target == ["watermark"]
+    intent = parser.parse_args(
+        ["clean", "input.mp4", "--intent", "去掉底部字幕，保留路牌", "--agent", "codex"]
+    )
+    assert intent.intent == "去掉底部字幕，保留路牌"
+    assert intent.agent == "codex"
+    region = parser.parse_args(["clean", "input.mp4", "--region", "top-right"])
+    assert region.region == ["top-right"]
     with pytest.raises(SystemExit):
         parser.parse_args(["delogo", "-v", "input.mp4", "-m", "mask.png"])
 
@@ -81,3 +117,407 @@ def test_cli_translates_errors_to_stderr(monkeypatch, capsys):
 
     assert exc.value.code == 1
     assert "videowipe: bad input" in capsys.readouterr().err
+
+
+def test_clean_detection_classifies_text_targets(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="hello subtitle",
+                ),
+                TextBox(
+                    points=np.array([[2, 2], [44, 2], [44, 10], [2, 10]]),
+                    confidence=0.95,
+                    text="2026-05-25 12:30:05",
+                ),
+                TextBox(
+                    points=np.array([[70, 4], [94, 4], [94, 12], [70, 12]]),
+                    confidence=0.8,
+                    text="@brand",
+                ),
+                TextBox(
+                    points=np.array([[35, 25], [60, 25], [60, 35], [35, 35]]),
+                    confidence=0.7,
+                    text="Main St",
+                ),
+            ]
+
+    result = detect_clean_candidates(str(video), detector=FakeDetector(), sample_count=3)
+    types = {candidate.type for candidate in result.candidates}
+
+    assert {"subtitle", "timestamp", "watermark", "scene_text"} <= types
+    scene_text = [candidate for candidate in result.candidates if candidate.type == "scene_text"][0]
+    assert scene_text.default_remove is False
+
+
+def test_clean_timestamp_requires_recognized_text_content(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[2, 2], [44, 2], [44, 10], [2, 10]]),
+                    confidence=0.95,
+                )
+            ]
+
+    result = detect_clean_candidates(str(video), detector=FakeDetector(), sample_count=3)
+
+    assert all(candidate.type != "timestamp" for candidate in result.candidates)
+    assert select_clean_candidates(result.candidates, targets=["timestamp"]) == []
+
+
+def test_clean_candidate_selection_and_mask_merge():
+    subtitle_mask = np.zeros((20, 30, 1), dtype=np.uint8)
+    subtitle_mask[15:18, 2:28] = 1
+    timestamp_mask = np.zeros((20, 30, 1), dtype=np.uint8)
+    timestamp_mask[1:4, 1:8] = 1
+    scene_mask = np.zeros((20, 30, 1), dtype=np.uint8)
+    scene_mask[8:12, 10:18] = 1
+
+    candidates = [
+        CleanCandidate(
+            id="c1", type="subtitle", label="bottom subtitle",
+            bbox=(2, 15, 27, 17), confidence=0.9, frame_fraction=1.0,
+            reason="wide bottom text", default_remove=True, mask=subtitle_mask,
+        ),
+        CleanCandidate(
+            id="c2", type="timestamp", label="top timestamp",
+            bbox=(1, 1, 7, 3), confidence=0.9, frame_fraction=1.0,
+            reason="time-like text", default_remove=True, mask=timestamp_mask,
+        ),
+        CleanCandidate(
+            id="c3", type="scene_text", label="center scene text",
+            bbox=(10, 8, 17, 11), confidence=0.9, frame_fraction=1.0,
+            reason="scene text", default_remove=False, mask=scene_mask,
+        ),
+    ]
+
+    assert [c.id for c in select_clean_candidates(candidates)] == ["c1", "c2"]
+    assert [c.id for c in select_clean_candidates(candidates, targets=["timestamp"])] == ["c2"]
+
+    mask = mask_from_candidates(select_clean_candidates(candidates), (20, 30))
+    assert mask[16, 5, 0] == 1
+    assert mask[2, 2, 0] == 1
+    assert mask[9, 12, 0] == 0
+
+
+def test_clean_intent_selects_remove_target_and_keeps_scene_text():
+    candidates = [
+        CleanCandidate(
+            id="c1", type="subtitle", label="bottom subtitle",
+            bbox=(2, 15, 27, 17), confidence=0.9, frame_fraction=1.0,
+            reason="wide bottom text", default_remove=True,
+            text_samples=["中文字幕"],
+        ),
+        CleanCandidate(
+            id="c2", type="scene_text", label="center scene text",
+            bbox=(10, 8, 17, 11), confidence=0.9, frame_fraction=1.0,
+            reason="scene text", default_remove=False,
+            text_samples=["路牌"],
+        ),
+    ]
+
+    selected = select_candidates_by_intent(candidates, "去掉底部中文字幕，保留路牌")
+
+    assert [candidate.id for candidate in selected] == ["c1"]
+
+
+def test_clean_intent_keep_only_removes_from_default_selection():
+    candidates = [
+        CleanCandidate(
+            id="c1", type="subtitle", label="bottom subtitle",
+            bbox=(2, 15, 27, 17), confidence=0.9, frame_fraction=1.0,
+            reason="wide bottom text", default_remove=True,
+        ),
+        CleanCandidate(
+            id="c2", type="watermark", label="top-right text watermark",
+            bbox=(20, 1, 29, 4), confidence=0.9, frame_fraction=1.0,
+            reason="watermark-like text", default_remove=True,
+        ),
+    ]
+
+    selected = select_clean_candidates(candidates, intent="保留右上角水印")
+
+    assert [candidate.id for candidate in selected] == ["c1"]
+
+
+def test_clean_preview_writes_artifacts_without_loading_model(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="hello subtitle",
+                )
+            ]
+
+    def fail_model_load(self):
+        raise AssertionError("preview should not load the inpainting model")
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", fail_model_load)
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        assert engine.process(video=str(video), output=str(output), preview=True) == str(output)
+    finally:
+        engine.cleanup()
+
+    assert (output / "clean_candidates.json").exists()
+    assert (output / "clean_preview.jpg").exists()
+    assert (output / "auto_mask.png").exists()
+
+
+def test_clean_agent_selection_overrides_local_rules(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="hello subtitle",
+                ),
+                TextBox(
+                    points=np.array([[70, 4], [94, 4], [94, 12], [70, 12]]),
+                    confidence=0.8,
+                    text="@brand",
+                ),
+            ]
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+    monkeypatch.setattr(
+        WipeEngine,
+        "_select_candidates_with_agent",
+        staticmethod(lambda agent, candidates, intent: [c for c in candidates if c.type == "watermark"]),
+    )
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            intent="去掉底部字幕",
+            agent="codex",
+        )
+    finally:
+        engine.cleanup()
+
+    data = (output / "clean_candidates.json").read_text(encoding="utf-8")
+    assert '"type": "watermark"' in data
+    assert '"selected": true' in data
+
+
+def test_clean_agent_failure_falls_back_to_local_rules(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="hello subtitle",
+                )
+            ]
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+    monkeypatch.setattr(
+        WipeEngine,
+        "_select_candidates_with_agent",
+        staticmethod(lambda agent, candidates, intent: None),
+    )
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            intent="去掉字幕",
+            agent="missing-agent",
+        )
+    finally:
+        engine.cleanup()
+
+    data = (output / "clean_candidates.json").read_text(encoding="utf-8")
+    assert '"type": "subtitle"' in data
+    assert '"selected": true' in data
+
+
+def test_clean_region_preview_skips_text_detector_and_writes_region(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return []
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            regions=["top-right"],
+        )
+    finally:
+        engine.cleanup()
+
+    data = (output / "clean_candidates.json").read_text(encoding="utf-8")
+    assert '"type": "region"' in data
+    assert '"label": "top-right region"' in data
+    assert '"selected": true' in data
+
+
+def test_clean_target_phrase_infers_region_and_logo(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+
+    def draw_logo(frame, i):
+        cv2.rectangle(frame, (74, 4), (90, 16), (255, 255, 255), 1)
+        cv2.line(frame, (76, 14), (88, 6), (255, 255, 255), 1)
+
+    _write_test_video(video, draw=draw_logo)
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return []
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            targets=["右上角台标"],
+        )
+    finally:
+        engine.cleanup()
+
+    data = (output / "clean_candidates.json").read_text(encoding="utf-8")
+    assert '"type": "logo"' in data
+    assert '"type": "region"' in data
+
+
+def test_clean_watermark_target_enables_translucent_watermark_scan(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+
+    def draw_watermark(frame, i):
+        cv2.putText(
+            frame,
+            "WATER",
+            (28, 34),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (35, 35, 35),
+            1,
+            cv2.LINE_AA,
+        )
+
+    _write_test_video(video, draw=draw_watermark)
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return []
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            targets=["watermark"],
+        )
+    finally:
+        engine.cleanup()
+
+    data = (output / "clean_candidates.json").read_text(encoding="utf-8")
+    assert '"possible translucent center watermark"' in data
+
+
+def test_clean_timestamp_target_warns_when_detector_has_no_text(tmp_path, capsys):
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[2, 2], [44, 2], [44, 10], [2, 10]]),
+                    confidence=0.95,
+                )
+            ]
+
+    engine = WipeEngine(task="clean", detector=FakeDetector())
+    try:
+        engine.process(
+            video=str(video),
+            output=str(output),
+            preview=True,
+            targets=["timestamp"],
+        )
+    finally:
+        engine.cleanup()
+
+    assert "Timestamp detection requires recognized text content" in capsys.readouterr().out
+
+
+def test_local_agent_selector_returns_valid_ids(monkeypatch):
+    candidate = CleanCandidate(
+        id="c1", type="subtitle", label="bottom subtitle",
+        bbox=(2, 15, 27, 17), confidence=0.9, frame_fraction=1.0,
+        reason="wide bottom text", default_remove=True,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = '{"remove":["c1"]}'
+
+    monkeypatch.setattr(agent_module.shutil, "which", lambda command: command)
+    monkeypatch.setattr(agent_module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert agent_module.select_with_agent("codex", [candidate], "去掉字幕") == ["c1"]
+
+
+def test_local_agent_selector_rejects_invalid_ids(monkeypatch):
+    candidate = CleanCandidate(
+        id="c1", type="subtitle", label="bottom subtitle",
+        bbox=(2, 15, 27, 17), confidence=0.9, frame_fraction=1.0,
+        reason="wide bottom text", default_remove=True,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = '{"remove":["c9"]}'
+
+    monkeypatch.setattr(agent_module.shutil, "which", lambda command: command)
+    monkeypatch.setattr(agent_module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert agent_module.select_with_agent("codex", [candidate], "去掉字幕") is None

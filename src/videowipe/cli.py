@@ -23,6 +23,37 @@ def _build_parser():
     sub.add_argument("-d", "--dual", action="store_true",
                      help="Show original video side-by-side")
 
+    clean = subparsers.add_parser("clean", help="Clean subtitles and text overlays")
+    clean.add_argument("video", help="Input video path")
+    clean.add_argument("-m", "--mask", default=None,
+                       help="Mask image path (skip detection if provided)")
+    clean.add_argument("-o", "--output", default="result/", help="Output directory")
+    clean.add_argument("-w", "--weight", default=None, help="Model weight path")
+    clean.add_argument("-g", "--gap", type=int, default=200,
+                       help="Segment length per pass; higher = better quality")
+    clean.add_argument("-d", "--dual", action="store_true",
+                       help="Show original video side-by-side")
+    clean.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="Target type to clean: subtitle, timestamp, or watermark",
+    )
+    clean.add_argument(
+        "--region",
+        action="append",
+        default=None,
+        help="Region to clean: top-left, top-right, bottom-left, bottom-right, top, bottom, center",
+    )
+    clean.add_argument("--intent", default=None,
+                       help="Natural-language cleanup intent")
+    clean.add_argument("--agent", default=None,
+                       help="Optional local agent CLI for intent selection")
+    clean.add_argument("--preview", action="store_true",
+                       help="Only write detection preview artifacts")
+    clean.add_argument("--confirm", action="store_true",
+                       help="Confirm detected targets before processing")
+
     return parser
 
 
@@ -41,7 +72,17 @@ def main():
         dual=args.dual,
     )
     try:
-        engine.process(video=args.video, mask=args.mask, output=args.output)
+        engine.process(
+            video=args.video,
+            mask=args.mask,
+            output=args.output,
+            targets=getattr(args, "target", None),
+            intent=getattr(args, "intent", None),
+            agent=getattr(args, "agent", None),
+            regions=getattr(args, "region", None),
+            preview=getattr(args, "preview", False),
+            confirm=getattr(args, "confirm", False),
+        )
     except Exception as exc:
         print(f"videowipe: {exc}", file=sys.stderr)
         sys.exit(1)
