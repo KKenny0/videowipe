@@ -2,7 +2,7 @@
 
 <p align="center">
   基于 STTN 的视频修复库。<br>
-  擦除硬字幕，<code>pip install videowipe</code> 即可使用。
+  擦除硬字幕、水印和文字叠加，<code>pip install videowipe</code> 即可使用。
 </p>
 
 <p align="center">
@@ -67,15 +67,49 @@ engine.cleanup()
 ### CLI
 
 ```bash
-# 自动检测字幕区域（无需 mask）
+# 自动检测并清除所有文字叠加（推荐）
+videowipe clean input.mp4 -o result/
+
+# 旧命令：仅自动检测字幕
 videowipe detext -v input.mp4 -o result/
 
 # 手动指定 mask
 videowipe detext -v input.mp4 -m mask.png -o result/
-videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 ```
 
-### 参数
+#### `clean` 命令选项
+
+```bash
+# 只清除特定类型的目标
+videowipe clean input.mp4 --target subtitle
+videowipe clean input.mp4 --target watermark
+
+# 指定屏幕区域
+videowipe clean input.mp4 --region bottom
+videowipe clean input.mp4 --region top-right
+
+# 自然语言意图
+videowipe clean input.mp4 --intent "去掉底部中文字幕"
+
+# 预览检测结果（不执行修复）
+videowipe clean input.mp4 --preview -o result/
+
+# 交互确认检测结果后再处理
+videowipe clean input.mp4 --confirm
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--target` | 清除目标类型（可重复）：`subtitle`、`timestamp`、`watermark`、`logo` | 自动检测所有 |
+| `--region` | 屏幕区域（可重复）：`top`、`bottom`、`top-left`、`top-right`、`bottom-left`、`bottom-right`、`center` | 所有区域 |
+| `--intent` | 自然语言清除意图 | — |
+| `--preview` | 仅输出检测产物（不执行修复） | 关闭 |
+| `--confirm` | 显示检测目标并确认后再处理 | 关闭 |
+| `--agent` | 本地 LLM CLI 做意图选择（如 `claude`、`codex`） | — |
+| `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
+| `-d, --dual` | 输出中同时显示原视频 | 关闭 |
+
+#### `detext` 命令参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|

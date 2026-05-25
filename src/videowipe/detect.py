@@ -565,33 +565,6 @@ def _zone(bbox: tuple[int, int, int, int], w: int, h: int) -> str:
     return f"{vertical}-{horizontal}"
 
 
-def _classify_text_box(
-    box: TextBox,
-    bbox: tuple[int, int, int, int],
-    w: int,
-    h: int,
-) -> tuple[str, str, bool]:
-    x1, y1, x2, y2 = bbox
-    bw = max(1, x2 - x1)
-    bh = max(1, y2 - y1)
-    text = (box.text or "").strip()
-    zone = _zone(bbox, w, h)
-    area_ratio = (bw * bh) / float(w * h)
-    width_ratio = bw / float(w)
-    edge = x1 < w * 0.12 or x2 > w * 0.88 or y1 < h * 0.18 or y2 > h * 0.75
-
-    if text and _TIME_RE.search(text):
-        return "timestamp", f"time-like text in {zone}", True
-    if text and _WATERMARK_RE.search(text):
-        return "watermark", f"watermark-like text in {zone}", True
-    if y1 > h * 0.58 and width_ratio > 0.18:
-        return "subtitle", f"wide bottom text in {zone}", True
-    if y2 < h * 0.25 and width_ratio > 0.18:
-        return "subtitle", f"wide top text in {zone}", True
-    if edge and area_ratio < 0.04:
-        return "watermark", f"small persistent edge text in {zone}", True
-    return "scene_text", f"scene text in {zone}", False
-
 
 def _candidate_label(target_type: str, zone: str) -> str:
     labels = {
@@ -779,16 +752,61 @@ def _detect_translucent_watermark_candidates(
     return [candidate] if candidate is not None else []
 
 
+def _classify_region(
+    bbox: tuple[int, int, int, int],
+    zone: str,
+    text_samples: list[str],
+    w: int,
+    h: int,
+) -> tuple[str, str, bool]:
+    """Classify a detected region by position and content patterns."""
+    x1, y1, x2, y2 = bbox
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    cy = (y1 + y2) / 2
+    width_ratio = bw / float(w)
+    area_ratio = (bw * bh) / float(w * h)
+    text = " ".join(text_samples).strip()
+
+    if text and _TIME_RE.search(text):
+        return "timestamp", f"time-like text in {zone}", True
+    if text and _WATERMARK_RE.search(text):
+        return "watermark", f"watermark-like text in {zone}", True
+
+    height_ratio = bh / float(h)
+
+    if cy > h * 0.50 and width_ratio > 0.15:
+        return "subtitle", f"wide bottom text in {zone}", True
+    if cy < h * 0.30 and width_ratio > 0.15:
+        return "subtitle", f"wide top text in {zone}", True
+
+    # Wide thin text strip below top 25% → likely subtitle regardless of vertical position
+    if width_ratio > 0.40 and height_ratio < 0.08 and cy > h * 0.25:
+        return "subtitle", f"wide thin text in {zone}", True
+
+    edge = x1 < w * 0.12 or x2 > w * 0.88 or y1 < h * 0.18 or y2 > h * 0.80
+    if edge and area_ratio < 0.05:
+        return "watermark", f"small persistent edge text in {zone}", True
+
+    return "scene_text", f"text in {zone}", False
+
+
 def detect_clean_candidates(
     video_path: str,
     detector: TextDetector | None = None,
-    sample_count: int = 30,
+    sample_count: int = 50,
     regions: Iterable[str] | None = None,
     detect_text: bool = True,
     include_logo: bool = False,
     include_translucent_watermark: bool = False,
+    consistency: float = 0.4,
 ) -> CleanDetectionResult:
-    """Detect removable clean targets from sampled video frames."""
+    """Detect removable clean targets from sampled video frames.
+
+    Uses a frequency-map approach: builds a per-pixel frequency map of
+    text detections across sampled frames, then finds connected regions
+    and classifies each by position and content.
+    """
     if detect_text and detector is None:
         detector = _default_detector()
 
@@ -797,10 +815,13 @@ def detect_clean_candidates(
         raise ValueError(f"No frames could be read from: {video_path}")
 
     h, w = frames[0].shape[:2]
-    groups: dict[tuple[str, str], dict] = {}
+    candidates: list[CleanCandidate] = []
     n_valid = 0
 
     if detect_text and detector is not None:
+        freq = np.zeros((h, w), dtype=np.float32)
+        all_frame_boxes: list[list[TextBox]] = []
+
         for frame in frames:
             try:
                 boxes = detector.detect(frame)
@@ -808,57 +829,71 @@ def detect_clean_candidates(
                 logger.warning("Clean detection failed on sampled frame: %s", exc)
                 continue
             n_valid += 1
-            seen_keys = set()
+            all_frame_boxes.append(boxes)
+            frame_mask = np.zeros((h, w), dtype=np.uint8)
             for box in boxes:
-                bbox = _bbox(box.points, w, h)
-                target_type, reason, default_remove = _classify_text_box(box, bbox, w, h)
-                zone = _zone(bbox, w, h)
-                key = (target_type, zone)
-                if key not in groups:
-                    groups[key] = {
-                        "mask": np.zeros((h, w), dtype=np.uint8),
-                        "conf": [],
-                        "texts": [],
-                        "seen": 0,
-                        "reason": reason,
-                        "default_remove": default_remove,
-                    }
-                cv2.fillPoly(groups[key]["mask"], [box.points.astype(np.int32)], 1)
-                groups[key]["conf"].append(float(box.confidence))
-                if box.text:
-                    groups[key]["texts"].append(box.text)
-                seen_keys.add(key)
-            for key in seen_keys:
-                groups[key]["seen"] += 1
+                cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
+            freq += frame_mask
 
-    if detect_text and n_valid == 0:
-        raise RuntimeError("Target detection failed on all sampled frames.")
+        if n_valid == 0:
+            raise RuntimeError("Target detection failed on all sampled frames.")
 
-    candidates: list[CleanCandidate] = []
-    for idx, ((target_type, zone), data) in enumerate(sorted(groups.items()), 1):
-        raw_mask = data["mask"].astype(np.uint8)
+        freq /= n_valid
+
+        text_mask = (freq >= consistency).astype(np.uint8)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5))
-        mask = cv2.dilate(raw_mask, kernel, iterations=2)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        ys, xs = np.where(mask > 0)
-        if len(xs) == 0:
-            continue
-        bbox = (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
-        frame_fraction = data["seen"] / float(n_valid)
-        candidates.append(
-            CleanCandidate(
-                id=f"c{idx}",
-                type=target_type,  # type: ignore[arg-type]
-                label=_candidate_label(target_type, zone),
-                bbox=bbox,
-                confidence=float(np.mean(data["conf"])) if data["conf"] else 0.0,
-                frame_fraction=frame_fraction,
-                reason=data["reason"],
-                default_remove=bool(data["default_remove"]),
-                text_samples=sorted(set(data["texts"]))[:5],
-                mask=mask[:, :, None],
+        text_mask = cv2.dilate(text_mask, kernel, iterations=2)
+        text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel)
+
+        num_labels, labels = cv2.connectedComponents(text_mask)
+
+        raw_regions: list[tuple[int, int, int, int, int]] = []  # (label_id, x1, y1, x2, y2)
+        for label_id in range(1, num_labels):
+            component = (labels == label_id).astype(np.uint8)
+            ys, xs = np.where(component > 0)
+            if len(xs) < 10:
+                continue
+            raw_regions.append((label_id, int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())))
+
+        raw_regions.sort(key=lambda b: (b[2], b[1]))
+
+        for label_id, x1, y1, x2, y2 in raw_regions:
+            text_samples: list[str] = []
+            for boxes in all_frame_boxes:
+                for box in boxes:
+                    bx1, by1, bx2, by2 = _bbox(box.points, w, h)
+                    if bx1 <= x2 and bx2 >= x1 and by1 <= y2 and by2 >= y1:
+                        if box.text:
+                            text_samples.append(box.text)
+
+            zone = _zone((x1, y1, x2, y2), w, h)
+            target_type, reason, default_remove = _classify_region(
+                (x1, y1, x2, y2), zone, text_samples, w, h,
             )
-        )
+
+            region_freq = freq[y1:y2 + 1, x1:x2 + 1]
+            pos_freq = region_freq[region_freq > 0]
+            confidence = float(pos_freq.mean()) if len(pos_freq) > 0 else 0.0
+            frame_fraction = float(region_freq.mean())
+
+            component_mask = (labels[y1:y2 + 1, x1:x2 + 1] == label_id).astype(np.uint8)
+            full_mask = np.zeros((h, w, 1), dtype=np.uint8)
+            full_mask[y1:y2 + 1, x1:x2 + 1, 0] = component_mask
+
+            candidates.append(
+                CleanCandidate(
+                    id=f"c{len(candidates) + 1}",
+                    type=target_type,  # type: ignore[arg-type]
+                    label=_candidate_label(target_type, zone),
+                    bbox=(x1, y1, x2, y2),
+                    confidence=confidence,
+                    frame_fraction=frame_fraction,
+                    reason=reason,
+                    default_remove=default_remove,
+                    text_samples=sorted(set(text_samples))[:5],
+                    mask=full_mask,
+                )
+            )
 
     next_index = len(candidates) + 1
     if regions:

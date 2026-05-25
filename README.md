@@ -2,7 +2,7 @@
 
 <p align="center">
   Video inpainting library powered by STTN.<br>
-  Remove hardcoded subtitles. <code>pip install videowipe</code> and go.
+  Remove hardcoded subtitles, watermarks, and text overlays. <code>pip install videowipe</code> and go.
 </p>
 
 <p align="center">
@@ -67,15 +67,49 @@ engine.cleanup()
 ### CLI
 
 ```bash
-# Auto-detect subtitle regions (no mask needed)
+# Auto-detect and remove all text overlays (recommended)
+videowipe clean input.mp4 -o result/
+
+# Legacy command: auto-detect subtitles only
 videowipe detext -v input.mp4 -o result/
 
 # With manual mask
 videowipe detext -v input.mp4 -m mask.png -o result/
-videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 ```
 
-### Arguments
+#### `clean` command options
+
+```bash
+# Only remove specific target types
+videowipe clean input.mp4 --target subtitle
+videowipe clean input.mp4 --target watermark
+
+# Target a specific screen region
+videowipe clean input.mp4 --region bottom
+videowipe clean input.mp4 --region top-right
+
+# Natural language intent
+videowipe clean input.mp4 --intent "remove bottom Chinese subtitles"
+
+# Preview detection results without processing
+videowipe clean input.mp4 --preview -o result/
+
+# Interactively confirm detected targets
+videowipe clean input.mp4 --confirm
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--target` | Target type to clean (can repeat): `subtitle`, `timestamp`, `watermark`, `logo` | auto-detect all |
+| `--region` | Screen region (can repeat): `top`, `bottom`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `center` | all regions |
+| `--intent` | Natural-language cleanup intent | — |
+| `--preview` | Write detection artifacts only (no inpainting) | off |
+| `--confirm` | Show detected targets and confirm before processing | off |
+| `--agent` | Local LLM CLI for intent-based selection (e.g., `claude`, `codex`) | — |
+| `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
+| `-d, --dual` | Show original video side-by-side in output | off |
+
+#### `detext` command arguments
 
 | Flag | Description | Default |
 |------|-------------|---------|
