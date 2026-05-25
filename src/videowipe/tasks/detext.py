@@ -6,7 +6,6 @@ import tempfile
 
 import cv2
 import numpy as np
-from numba import njit
 
 from videowipe.tasks.base import BaseTask
 
@@ -20,10 +19,14 @@ def get_ref_index(neighbor_ids, length, ref_length):
     return ref_index
 
 
-@njit
 def blend_frames(comp_frames, pred_img, neighbor_ids, mask):
-    for i in range(len(neighbor_ids)):
-        idx = neighbor_ids[i]
+    """Blend predicted frames into the composite buffer.
+
+    Pure-numpy replacement for the former @njit version.
+    neighbor_ids may contain duplicates across calls; for first hit the
+    frame is written directly, for subsequent hits it is averaged.
+    """
+    for i, idx in enumerate(neighbor_ids):
         img = pred_img[i].astype(np.float32)
         if not mask[idx]:
             comp_frames[idx] = img

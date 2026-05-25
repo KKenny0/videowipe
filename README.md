@@ -100,7 +100,36 @@ videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 
 The model is an STTN (Spatial-Temporal Transformer Network) with 8 stacked transformer blocks operating on multi-scale patches. It encodes video frames with a CNN backbone, runs temporal attention across neighboring and reference frames, then decodes the inpainted result.
 
-Key optimizations in this fork: Numba-accelerated frame blending, AMP mixed-precision inference, and `channels_last` memory layout. A 23-second test clip processes in 125s (down from 200s in the original).
+Key optimizations in this fork: AMP mixed-precision inference and `channels_last` memory layout. A 23-second test clip processes in 125s (down from 200s in the original).
+
+## Docker
+
+No Python? No problem. Run videowipe directly with Docker.
+
+**CPU:**
+
+```bash
+docker pull ghcr.io/kkenny0/videowipe:latest
+docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
+```
+
+**GPU (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)):**
+
+```bash
+docker pull ghcr.io/kkenny0/videowipe:gpu
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+```
+
+Or use the included wrapper script (auto-detects GPU):
+
+```bash
+./scripts/docker-videowipe.sh detext -v input.mp4 -o result/
+```
+
+| Image | Size | GPU | Notes |
+|-------|------|-----|-------|
+| `videowipe:latest` | ~480 MB | No | CPU only, smallest image |
+| `videowipe:gpu` | ~1.4 GB | Yes | ONNX Runtime with CUDA |
 
 ## Credits
 

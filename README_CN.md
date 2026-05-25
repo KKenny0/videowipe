@@ -100,7 +100,36 @@ videowipe detext -v input.mp4 -m mask.png -o result/ -g 400
 
 模型基于 STTN（时空 Transformer 网络），8 层 transformer block 对多尺度 patch 做时域注意力。CNN 编码器提取帧特征，跨帧注意力机制利用邻近帧和参考帧信息，解码器生成修复结果。
 
-性能优化：Numba 加速帧混合、AMP 混合精度推理、`channels_last` 内存布局。23 秒测试视频处理时间 125s。
+性能优化：AMP 混合精度推理、`channels_last` 内存布局。23 秒测试视频处理时间 125s。
+
+## Docker
+
+没有 Python 环境？直接用 Docker 运行。
+
+**CPU：**
+
+```bash
+docker pull ghcr.io/kkenny0/videowipe:latest
+docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
+```
+
+**GPU（需要 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)）：**
+
+```bash
+docker pull ghcr.io/kkenny0/videowipe:gpu
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+```
+
+或者使用自带的 wrapper 脚本（自动检测 GPU）：
+
+```bash
+./scripts/docker-videowipe.sh detext -v input.mp4 -o result/
+```
+
+| 镜像 | 大小 | GPU | 说明 |
+|------|------|-----|------|
+| `videowipe:latest` | ~480 MB | 否 | 仅 CPU，体积最小 |
+| `videowipe:gpu` | ~1.4 GB | 是 | ONNX Runtime + CUDA |
 
 ## 致谢
 

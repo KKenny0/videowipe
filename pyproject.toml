@@ -10,7 +10,6 @@ requires-python = ">=3.8"
 dependencies = [
     "opencv-python>=4.5",
     "numpy",
-    "numba>=0.56",
     "tqdm",
 ]
 
@@ -21,6 +20,12 @@ torch = [
 ]
 onnx = [
     "onnxruntime>=1.15",
+]
+onnx-gpu = [
+    "onnxruntime-gpu>=1.15",
+]
+headless = [
+    "opencv-python-headless>=4.5",
 ]
 all = [
     "videowipe[torch]",
