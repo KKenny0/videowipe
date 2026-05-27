@@ -9,6 +9,7 @@ from videowipe.cli import _build_parser
 from videowipe.detect import (
     CleanCandidate,
     TextBox,
+    _iou_bbox,
     detect_clean_candidates,
     mask_from_candidates,
     select_candidates_by_intent,
@@ -121,28 +122,28 @@ def test_cli_translates_errors_to_stderr(monkeypatch, capsys):
 
 def test_clean_detection_classifies_text_targets(tmp_path):
     video = tmp_path / "input.mp4"
-    _write_test_video(video)
+    _write_test_video(video, width=320, height=180)
 
     class FakeDetector:
         def detect(self, frame):
             return [
                 TextBox(
-                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    points=np.array([[30, 160], [290, 160], [290, 175], [30, 175]]),
                     confidence=0.9,
                     text="hello subtitle",
                 ),
                 TextBox(
-                    points=np.array([[2, 2], [44, 2], [44, 10], [2, 10]]),
+                    points=np.array([[5, 5], [150, 5], [150, 20], [5, 20]]),
                     confidence=0.95,
                     text="2026-05-25 12:30:05",
                 ),
                 TextBox(
-                    points=np.array([[70, 4], [94, 4], [94, 12], [70, 12]]),
+                    points=np.array([[250, 5], [315, 5], [315, 20], [250, 20]]),
                     confidence=0.8,
                     text="@brand",
                 ),
                 TextBox(
-                    points=np.array([[35, 25], [60, 25], [60, 35], [35, 35]]),
+                    points=np.array([[120, 75], [200, 75], [200, 95], [120, 95]]),
                     confidence=0.7,
                     text="Main St",
                 ),
@@ -521,3 +522,72 @@ def test_local_agent_selector_rejects_invalid_ids(monkeypatch):
     monkeypatch.setattr(agent_module.subprocess, "run", lambda *args, **kwargs: Result())
 
     assert agent_module.select_with_agent("codex", [candidate], "去掉字幕") is None
+
+
+def test_iou_bbox_overlap_and_disjoint():
+    assert _iou_bbox((0, 0, 10, 10), (0, 0, 10, 10)) == pytest.approx(1.0)
+    assert _iou_bbox((0, 0, 5, 5), (5, 5, 10, 10)) == pytest.approx(0.0, abs=0.05)
+    assert 0 < _iou_bbox((0, 0, 8, 8), (4, 4, 12, 12)) < 1
+
+
+def test_band_fallback_catches_missed_bottom_subtitle(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class BandOnlyDetector:
+        """Returns text only on short (cropped) frames, simulating DBNet miss."""
+
+        def detect(self, frame):
+            h = frame.shape[0]
+            if h < 50:
+                w = frame.shape[1]
+                return [
+                    TextBox(
+                        points=np.array([[2, h - 10], [w - 2, h - 10],
+                                         [w - 2, h - 2], [2, h - 2]]),
+                        confidence=0.9,
+                        text="hidden subtitle",
+                    )
+                ]
+            return []
+
+    # Without fallback: no candidates (main detection sees nothing)
+    result_off = detect_clean_candidates(
+        str(video), detector=BandOnlyDetector(), sample_count=3, subtitle_fallback="off",
+    )
+    assert len(result_off.candidates) == 0
+
+    # With light fallback: should find the hidden subtitle
+    result_light = detect_clean_candidates(
+        str(video), detector=BandOnlyDetector(), sample_count=3, subtitle_fallback="light",
+    )
+    types = {c.type for c in result_light.candidates}
+    assert "subtitle" in types
+    assert any("band fallback" in c.reason for c in result_light.candidates)
+
+
+def test_band_fallback_deduplicates_against_main_detection(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class AlwaysDetectBottom:
+        """Returns the same bottom text on both full frame and crop."""
+
+        def detect(self, frame):
+            h, w = frame.shape[:2]
+            return [
+                TextBox(
+                    points=np.array([[2, h - 10], [w - 2, h - 10],
+                                     [w - 2, h - 2], [2, h - 2]]),
+                    confidence=0.9,
+                    text="subtitle",
+                )
+            ]
+
+    # Main detection already finds it; fallback should not duplicate
+    result = detect_clean_candidates(
+        str(video), detector=AlwaysDetectBottom(), sample_count=3, subtitle_fallback="light",
+    )
+    # Should have exactly one candidate (from main detection), no fallback duplicate
+    assert len(result.candidates) == 1
+    assert result.candidates[0].id.startswith("c")

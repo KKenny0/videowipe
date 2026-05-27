@@ -672,6 +672,137 @@ def _largest_overlay_candidate(
     )
 
 
+def _prepare_band_variant(crop: np.ndarray, variant: str) -> np.ndarray:
+    """Prepare an image variant for band fallback detection."""
+    if variant == "original":
+        return crop
+    if variant == "contrast":
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    if variant == "inverted":
+        return cv2.bitwise_not(crop)
+    return crop
+
+
+def _iou_bbox(
+    bbox1: tuple[int, int, int, int],
+    bbox2: tuple[int, int, int, int],
+) -> float:
+    """Compute IoU between two axis-aligned bounding boxes."""
+    x1 = max(bbox1[0], bbox2[0])
+    y1 = max(bbox1[1], bbox2[1])
+    x2 = min(bbox1[2], bbox2[2])
+    y2 = min(bbox1[3], bbox2[3])
+    inter = max(0, x2 - x1 + 1) * max(0, y2 - y1 + 1)
+    area1 = (bbox1[2] - bbox1[0] + 1) * (bbox1[3] - bbox1[1] + 1)
+    area2 = (bbox2[2] - bbox2[0] + 1) * (bbox2[3] - bbox2[1] + 1)
+    union = area1 + area2 - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _band_fallback_detect(
+    frames: list[np.ndarray],
+    detector: TextDetector,
+    mode: str = "light",
+    consistency: float = 0.4,
+) -> list[CleanCandidate]:
+    """Detect text in subtitle bands missed by the main frequency-map pass.
+
+    For each band (bottom 40%, optionally top 25%), creates image variants
+    and runs the detector.  Builds a per-pixel frequency map from fallback
+    detections, then extracts connected-component candidates.
+    """
+    if not frames:
+        return []
+
+    h, w = frames[0].shape[:2]
+
+    bands: list[tuple[str, int, int, int, int]] = []
+    bands.append(("bottom", 0, int(h * 0.6), w - 1, h - 1))
+    if mode == "force":
+        bands.append(("top", 0, 0, w - 1, max(0, int(h * 0.25) - 1)))
+
+    if mode == "light":
+        variants = ["original", "contrast"]
+    else:
+        variants = ["original", "contrast", "inverted"]
+
+    freq = np.zeros((h, w), dtype=np.float32)
+    n_valid = 0
+
+    for frame in frames:
+        frame_mask = np.zeros((h, w), dtype=np.uint8)
+        for _band_name, bx1, by1, bx2, by2 in bands:
+            crop = frame[by1:by2 + 1, bx1:bx2 + 1]
+            if crop.size == 0:
+                continue
+            for variant in variants:
+                prepared = _prepare_band_variant(crop, variant)
+                try:
+                    boxes = detector.detect(prepared)
+                except Exception:
+                    continue
+                for box in boxes:
+                    pts = box.points.copy()
+                    pts[:, 0] += bx1
+                    pts[:, 1] += by1
+                    cv2.fillPoly(frame_mask, [pts.astype(np.int32)], 1)
+        freq += frame_mask
+        n_valid += 1
+
+    if n_valid == 0:
+        return []
+
+    freq /= n_valid
+
+    text_mask = (freq >= consistency).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5))
+    text_mask = cv2.dilate(text_mask, kernel, iterations=2)
+    text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_CLOSE, kernel)
+
+    num_labels, labels = cv2.connectedComponents(text_mask)
+
+    candidates: list[CleanCandidate] = []
+    for label_id in range(1, num_labels):
+        component = (labels == label_id).astype(np.uint8)
+        ys, xs = np.where(component > 0)
+        if len(xs) < 10:
+            continue
+        x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+        zone = _zone((x1, y1, x2, y2), w, h)
+        target_type, reason, default_remove = _classify_region(
+            (x1, y1, x2, y2), zone, [], w, h,
+        )
+
+        region_freq = freq[y1:y2 + 1, x1:x2 + 1]
+        pos_freq = region_freq[region_freq > 0]
+        confidence = float(pos_freq.mean()) if len(pos_freq) > 0 else 0.0
+        frame_fraction = float(region_freq.mean())
+
+        component_mask = (labels[y1:y2 + 1, x1:x2 + 1] == label_id).astype(np.uint8)
+        full_mask = np.zeros((h, w, 1), dtype=np.uint8)
+        full_mask[y1:y2 + 1, x1:x2 + 1, 0] = component_mask
+
+        candidates.append(
+            CleanCandidate(
+                id=f"b{len(candidates) + 1}",
+                type=target_type,  # type: ignore[arg-type]
+                label=_candidate_label(target_type, zone),
+                bbox=(x1, y1, x2, y2),
+                confidence=confidence,
+                frame_fraction=frame_fraction,
+                reason=f"band fallback: {reason}",
+                default_remove=default_remove,
+                mask=full_mask,
+            )
+        )
+
+    return candidates
+
+
 def _detect_fixed_logo_candidates(
     frames: list[np.ndarray],
     start_index: int = 1,
@@ -800,6 +931,7 @@ def detect_clean_candidates(
     include_logo: bool = False,
     include_translucent_watermark: bool = False,
     consistency: float = 0.4,
+    subtitle_fallback: str = "off",
 ) -> CleanDetectionResult:
     """Detect removable clean targets from sampled video frames.
 
@@ -894,6 +1026,19 @@ def detect_clean_candidates(
                     mask=full_mask,
                 )
             )
+
+    if subtitle_fallback != "off" and detect_text and detector is not None:
+        fallback_raw = _band_fallback_detect(
+            frames, detector, mode=subtitle_fallback, consistency=consistency,
+        )
+        main_bboxes = [c.bbox for c in candidates]
+        surviving = [
+            fc for fc in fallback_raw
+            if not any(_iou_bbox(fc.bbox, mb) > 0.3 for mb in main_bboxes)
+        ]
+        for idx, fc in enumerate(surviving, 1):
+            fc.id = f"b{idx}"
+            candidates.append(fc)
 
     next_index = len(candidates) + 1
     if regions:

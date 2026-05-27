@@ -164,6 +164,11 @@ class WipeEngine:
                     detect_text=detect_text,
                     include_logo=include_logo,
                     include_translucent_watermark=include_translucent,
+                    subtitle_fallback=(
+                        "force" if "subtitle" in normalized_targets
+                        else "light" if detect_text
+                        else "off"
+                    ),
                 )
                 selected = select_clean_candidates(
                     result.candidates,
