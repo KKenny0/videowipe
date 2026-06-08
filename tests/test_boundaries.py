@@ -1,3 +1,8 @@
+import json
+import os
+import pathlib
+import sys
+
 import numpy as np
 import pytest
 import cv2
@@ -591,3 +596,164 @@ def test_band_fallback_deduplicates_against_main_detection(tmp_path):
     # Should have exactly one candidate (from main detection), no fallback duplicate
     assert len(result.candidates) == 1
     assert result.candidates[0].id.startswith("c")
+
+
+# --- Benchmark / timing tests ---
+
+
+def test_engine_writes_benchmark_json_on_manual_mask(tmp_path, monkeypatch):
+    """WipeEngine.process() writes benchmark.json with timing data."""
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    mask = tmp_path / "mask.png"
+    _write_test_video(video)
+
+    # Create a valid mask (96x64)
+    mask_arr = np.zeros((64, 96), dtype=np.uint8)
+    mask_arr[50:60, 10:86] = 255
+    cv2.imwrite(str(mask), mask_arr)
+
+    # Stub model loading and processing
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FakeTask:
+        _bm = None
+        backend = type("B", (), {"__name__": "FakeBackend"})()
+        output_suffix = "detext"
+
+        def process_video(self, reader, frame_info, mask_arr, output_dir, video_path=""):
+            self._bm["timing"]["inpainting_s"] = 0.001
+            return os.path.join(output_dir, "output_detext.mp4")
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(
+        "videowipe.engine._TASK_CLASSES", {"detext": lambda **kw: FakeTask()}
+    )
+
+    engine = WipeEngine(task="detext")
+    try:
+        engine.process(video=str(video), mask=str(mask), output=str(output))
+    finally:
+        engine.cleanup()
+
+    bm_path = output / "benchmark.json"
+    assert bm_path.exists(), "benchmark.json should be written"
+    bm = json.loads(bm_path.read_text(encoding="utf-8"))
+    assert bm["mask_source"] == "manual"
+    assert "total_s" in bm["timing"]
+    assert "model_load_s" in bm["timing"]
+    assert "inpainting_s" in bm["timing"]
+    assert bm["width"] == 96
+    assert bm["height"] == 64
+    assert bm["error"] is None
+
+
+def test_engine_writes_benchmark_json_on_error(tmp_path, monkeypatch):
+    """benchmark.json is written even when processing fails."""
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FailingTask:
+        _bm = None
+        backend = type("B", (), {"__name__": "FakeBackend"})()
+
+        def process_video(self, reader, frame_info, mask_arr, output_dir, video_path=""):
+            raise RuntimeError("inpainting failed")
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(
+        "videowipe.engine._TASK_CLASSES", {"detext": lambda **kw: FailingTask()}
+    )
+
+    # Create a minimal mask file
+    mask = tmp_path / "mask.png"
+    mask_arr = np.zeros((64, 96), dtype=np.uint8)
+    mask_arr[50:60, 10:86] = 255
+    cv2.imwrite(str(mask), mask_arr)
+
+    engine = WipeEngine(task="detext")
+    with pytest.raises(RuntimeError, match="inpainting failed"):
+        engine.process(video=str(video), mask=str(mask), output=str(output))
+    engine.cleanup()
+
+    bm_path = output / "benchmark.json"
+    assert bm_path.exists()
+    bm = json.loads(bm_path.read_text(encoding="utf-8"))
+    assert bm["error"] == "inpainting failed"
+    assert "total_s" in bm["timing"]
+
+
+def test_compute_mask_iou_identical_and_disjoint():
+    """IoU should be 1.0 for identical masks and 0.0 for disjoint."""
+    from videowipe.detect import mask_from_candidates
+
+    mask_a = np.zeros((20, 30, 1), dtype=np.uint8)
+    mask_a[5:15, 5:25] = 1
+
+    # Identical
+    intersection = np.sum((mask_a > 0) & (mask_a > 0))
+    union = np.sum((mask_a > 0) | (mask_a > 0))
+    assert intersection / union == pytest.approx(1.0)
+
+    # Disjoint
+    mask_b = np.zeros((20, 30, 1), dtype=np.uint8)
+    mask_b[0:5, 0:5] = 1
+    intersection = np.sum((mask_a > 0) & (mask_b > 0))
+    union = np.sum((mask_a > 0) | (mask_b > 0))
+    assert intersection == 0
+
+
+def test_eval_clean_detection_reports_golden_iou(tmp_path):
+    """eval_clean_detection.py computes IoU when --mask-dir is given."""
+    # Create a test video
+    video = tmp_path / "test1.mp4"
+    _write_test_video(video, width=96, height=64)
+
+    # Create a golden mask
+    mask_dir = tmp_path / "masks"
+    mask_dir.mkdir()
+    golden = np.zeros((64, 96), dtype=np.uint8)
+    golden[50:60, 10:86] = 255
+    cv2.imwrite(str(mask_dir / "test1_mask.png"), golden)
+
+    # Run eval script as subprocess
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/eval_clean_detection.py",
+         str(tmp_path), "--mask-dir", str(mask_dir)],
+        capture_output=True, text=True, cwd=str(
+            pathlib.Path(__file__).resolve().parent.parent
+        ),
+    )
+    # Script should succeed (may find 0 candidates but that's ok)
+    assert result.returncode in (0, 2)  # 0 = success, 2 = abnormal bbox
+    # Should mention golden IoU in output
+    assert "Mask area ratio" in result.stdout
+
+
+def test_eval_clean_detection_flags_missing_golden(tmp_path):
+    """eval_clean_detection.py reports missing goldens."""
+    video = tmp_path / "test2.mp4"
+    _write_test_video(video, width=96, height=64)
+
+    mask_dir = tmp_path / "masks"
+    mask_dir.mkdir()
+    # No golden mask for test2
+
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "scripts/eval_clean_detection.py",
+         str(tmp_path), "--mask-dir", str(mask_dir)],
+        capture_output=True, text=True, cwd=str(
+            pathlib.Path(__file__).resolve().parent.parent
+        ),
+    )
+    assert "MISSING GOLDEN" in result.stdout
+

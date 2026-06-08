@@ -1,7 +1,9 @@
 """WipeEngine and convenience functions."""
 from __future__ import annotations
 
+import json
 import os
+import time
 from typing import TYPE_CHECKING, Optional
 
 import cv2
@@ -110,11 +112,15 @@ class WipeEngine:
             detector: Override the text detector for auto-mask generation.
         """
         os.makedirs(output, exist_ok=True)
+        bm: dict = {"video_path": video, "timing": {}}
+        bm["mask_source"] = "manual" if mask is not None else "auto"
+        t_total_start = time.monotonic()
 
         if mask is not None:
             mask_arr = read_mask(mask)
         else:
             det = detector or self._detector
+            t_detect_start = time.monotonic()
             if self.task == "clean":
                 from videowipe.detect import (
                     detect_clean_candidates,
@@ -202,23 +208,51 @@ class WipeEngine:
                     os.path.join(output, "auto_mask.png"),
                     (mask_arr * 255).astype(np.uint8),
                 )
+            bm["timing"]["detection_s"] = round(time.monotonic() - t_detect_start, 3)
 
         if preview:
             print(f"Preview saved to {output}")
             return output
 
+        t_model_start = time.monotonic()
         self._ensure_model()
+        bm["timing"]["model_load_s"] = round(time.monotonic() - t_model_start, 3)
+        bm["backend"] = type(self._task_impl.backend).__name__
 
         reader = None
+        out_path = ""
+        bm_error = None
         try:
             reader, frame_info = read_frame_info(video)
+            bm.update({
+                "width": frame_info["W_ori"],
+                "height": frame_info["H_ori"],
+                "frame_count": frame_info["len"],
+                "fps": round(frame_info["fps"], 2),
+            })
             validate_mask_shape(mask_arr, frame_info)
-            return self._task_impl.process_video(
+            mask_pixels = float(np.sum(mask_arr > 0))
+            total_pixels = frame_info["H_ori"] * frame_info["W_ori"]
+            bm["mask_area_ratio"] = round(mask_pixels / total_pixels, 6) if total_pixels else 0.0
+            self._task_impl._bm = bm
+            out_path = self._task_impl.process_video(
                 reader, frame_info, mask_arr, output, video_path=video
             )
+        except Exception as exc:
+            bm_error = str(exc)
+            raise
         finally:
             if reader is not None:
                 reader.release()
+            bm["timing"]["total_s"] = round(time.monotonic() - t_total_start, 3)
+            bm["output_path"] = out_path or None
+            bm["error"] = bm_error
+            try:
+                with open(os.path.join(output, "benchmark.json"), "w", encoding="utf-8") as fh:
+                    json.dump(bm, fh, indent=2)
+            except OSError:
+                pass
+        return out_path
 
     def cleanup(self):
         """Release model and GPU memory."""

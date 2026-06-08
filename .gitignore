@@ -7,4 +7,5 @@ weights_onnx/
 auto_mask.png
 *_detext.mp4
 result/
+benchmark_report.json
 AGENTS.md

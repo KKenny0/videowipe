@@ -13,20 +13,40 @@ import json
 import os
 import sys
 
+import cv2
+import numpy as np
+
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 from videowipe.detect import (
     detect_clean_candidates,
+    mask_from_candidates,
     select_clean_candidates,
 )
 
 
-def _eval_video(video_path: str) -> dict:
+def _compute_mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
+    """Compute IoU between two binary masks."""
+    a = np.asarray(mask_a).squeeze().astype(bool).flatten()
+    b = np.asarray(mask_b).squeeze().astype(bool).flatten()
+    if len(a) != len(b):
+        return 0.0
+    intersection = int(np.sum(a & b))
+    union = int(np.sum(a | b))
+    return intersection / union if union > 0 else 0.0
+
+
+def _eval_video(video_path: str, mask_dir: str | None = None) -> dict:
     """Run clean detection on a single video and return a report dict."""
     result = detect_clean_candidates(video_path, subtitle_fallback="light")
     selected = select_clean_candidates(result.candidates)
     selected_ids = {c.id for c in selected}
     h, w = result.frame_shape
+
+    # Generate mask from selected candidates
+    generated_mask = mask_from_candidates(selected, result.frame_shape)
+    gen_pixels = int(np.sum(generated_mask > 0))
+    gen_area_ratio = round(gen_pixels / (h * w), 6) if h and w else 0.0
 
     candidates_report: list[dict] = []
     for c in result.candidates:
@@ -51,10 +71,30 @@ def _eval_video(video_path: str) -> dict:
         "selected_count": len(selected),
         "frame_shape": list(result.frame_shape),
         "empty_detection": empty,
+        "generated_mask_area_ratio": gen_area_ratio,
         "candidates": candidates_report,
     }
     if empty:
         report["warning"] = "No candidates detected"
+
+    # Golden mask comparison
+    if mask_dir:
+        video_stem = os.path.splitext(os.path.basename(video_path))[0]
+        golden_path = os.path.join(mask_dir, f"{video_stem}_mask.png")
+        if os.path.exists(golden_path):
+            golden_img = cv2.imread(golden_path, cv2.IMREAD_GRAYSCALE)
+            if golden_img is not None:
+                _, golden_bin = cv2.threshold(golden_img, 127, 1, cv2.THRESH_BINARY)
+                golden_area = int(np.sum(golden_bin > 0))
+                report["golden_mask_area_ratio"] = round(
+                    golden_area / (h * w), 6
+                ) if h and w else 0.0
+                report["mask_iou"] = round(_compute_mask_iou(generated_mask, golden_bin), 4)
+            else:
+                report["golden_mask_missing"] = f"cannot read: {golden_path}"
+        else:
+            report["golden_mask_missing"] = golden_path
+
     return report
 
 
@@ -63,6 +103,13 @@ def _print_report(report: dict) -> None:
     print(f"\n{'=' * 60}")
     print(f"Video: {report['video']}")
     print(f"Shape: {report['frame_shape']}")
+    gen_ratio = report.get("generated_mask_area_ratio", 0)
+    print(f"Mask area ratio: {gen_ratio:.4f}")
+    if "mask_iou" in report:
+        golden_ratio = report.get("golden_mask_area_ratio", 0)
+        print(f"Golden IoU: {report['mask_iou']:.4f}  Golden area: {golden_ratio:.4f}")
+    if report.get("golden_mask_missing"):
+        print(f"MISSING GOLDEN: {report['golden_mask_missing']}")
     print(f"Candidates: {report['candidate_count']}  Selected: {report['selected_count']}")
     if report.get("warning"):
         print(f"WARNING: {report['warning']}")
@@ -137,6 +184,8 @@ def main() -> None:
                         help="Write results as baseline JSON")
     parser.add_argument("--compare-baseline", action="store_true",
                         help="Compare results against saved baseline")
+    parser.add_argument("--mask-dir",
+                        help="Directory with golden masks ({stem}_mask.png)")
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -160,7 +209,7 @@ def main() -> None:
     reports: list[dict] = []
     for video_path in videos:
         try:
-            report = _eval_video(video_path)
+            report = _eval_video(video_path, mask_dir=args.mask_dir)
         except Exception as exc:
             print(f"ERROR processing {video_path}: {exc}", file=sys.stderr)
             reports.append({
@@ -190,12 +239,26 @@ def main() -> None:
     total_candidates = sum(r["candidate_count"] for r in reports)
     empty_count = sum(1 for r in reports if r["empty_detection"])
     errors = sum(1 for r in reports if "error" in r)
+    abnormal_count = sum(
+        1 for r in reports
+        for c in r.get("candidates", [])
+        if c.get("abnormal_bbox")
+    )
+    missing_goldens = [r["video"] for r in reports if r.get("golden_mask_missing")]
     print(f"\n{'=' * 60}")
     print(f"Summary: {len(videos)} videos, {total_candidates} total candidates, "
-          f"{empty_count} empty detections, {errors} errors")
+          f"{empty_count} empty detections, {errors} errors, "
+          f"{abnormal_count} abnormal bboxes")
+    if missing_goldens:
+        print(f"Missing goldens: {', '.join(missing_goldens)}")
 
+    exit_code = 0
     if errors:
-        sys.exit(1)
+        exit_code = 1
+    elif abnormal_count > 0:
+        exit_code = 2
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

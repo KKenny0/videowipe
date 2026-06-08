@@ -56,6 +56,7 @@ class BaseTask:
         self.neighbor_stride = neighbor_stride
         self.dual = dual
         self.backend = None
+        self._bm = None
 
     def load_model(self, weight_path: str, device: str = "auto"):
         """Load model from a weight file (.pth or .onnx)."""

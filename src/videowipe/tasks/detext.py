@@ -3,6 +3,7 @@ import concurrent.futures
 import os
 import subprocess
 import tempfile
+import time
 
 import cv2
 import numpy as np
@@ -141,6 +142,7 @@ class DetextTask(BaseTask):
 
             # Backend instances are shared runtime objects; keep inference
             # serialized until the backend declares a thread-safety contract.
+            t_inpaint_start = time.monotonic()
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 for i in range(rec_time):
                     start_f = i * self.gap
@@ -195,6 +197,11 @@ class DetextTask(BaseTask):
             pipe.stdin.close()
             stdin_closed = True
             pipe.wait()
+
+            if hasattr(self, "_bm") and isinstance(self._bm, dict):
+                self._bm["timing"]["inpainting_s"] = round(
+                    time.monotonic() - t_inpaint_start, 3
+                )
         except Exception:
             processing_failed = True
             raise
