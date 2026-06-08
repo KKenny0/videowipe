@@ -17,6 +17,7 @@ from videowipe.detect import (
     _iou_bbox,
     detect_clean_candidates,
     mask_from_candidates,
+    resolve_detect_params,
     select_candidates_by_intent,
     select_clean_candidates,
 )
@@ -857,4 +858,268 @@ def test_engine_external_command_benchmark_json(tmp_path, monkeypatch):
     assert bm["backend"] == "external"
     assert "external_s" in bm["timing"]
     assert bm["error"] is None
+
+
+# --- Detect mode tests ---
+
+
+def test_resolve_detect_params_maps_modes():
+    fast = resolve_detect_params("fast")
+    assert fast["sample_count"] == 24
+    assert fast["consistency"] == 0.50
+    assert fast["subtitle_fallback"] == "off"
+
+    balanced = resolve_detect_params("balanced")
+    assert balanced["sample_count"] == 50
+    assert balanced["consistency"] == 0.40
+    assert balanced["subtitle_fallback"] == "light"
+
+    sensitive = resolve_detect_params("sensitive")
+    assert sensitive["sample_count"] == 80
+    assert sensitive["consistency"] == 0.30
+    assert sensitive["subtitle_fallback"] == "force"
+
+
+def test_resolve_detect_params_subtitle_override():
+    """When has_subtitle_target is True, subtitle_fallback upgrades to force."""
+    fast = resolve_detect_params("fast", has_subtitle_target=True)
+    assert fast["subtitle_fallback"] == "force"
+
+    balanced = resolve_detect_params("balanced", has_subtitle_target=True)
+    assert balanced["subtitle_fallback"] == "force"
+
+
+def test_resolve_detect_params_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="Unknown detect mode"):
+        resolve_detect_params("turbo")
+
+
+def test_cli_detect_mode_choices():
+    parser = _build_parser()
+
+    # Valid modes
+    for mode in ("fast", "balanced", "sensitive"):
+        args = parser.parse_args(["clean", "input.mp4", "--detect-mode", mode])
+        assert args.detect_mode == mode
+
+    # Default is balanced
+    args = parser.parse_args(["clean", "input.mp4"])
+    assert args.detect_mode == "balanced"
+
+    # Invalid mode rejected
+    with pytest.raises(SystemExit):
+        parser.parse_args(["clean", "input.mp4", "--detect-mode", "turbo"])
+
+
+def test_cli_ocr_choices():
+    parser = _build_parser()
+
+    for mode in ("auto", "off", "rapidocr"):
+        args = parser.parse_args(["clean", "input.mp4", "--ocr", mode])
+        assert args.ocr == mode
+
+    # Default is auto
+    args = parser.parse_args(["clean", "input.mp4"])
+    assert args.ocr == "auto"
+
+
+def test_detect_mode_fast_uses_fewer_samples(tmp_path, monkeypatch):
+    """Fast mode should call detect_clean_candidates with sample_count=24."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="test subtitle",
+                )
+            ]
+
+    captured = {}
+    original_detect = detect_clean_candidates
+
+    def spy_detect(*args, **kwargs):
+        captured.update(kwargs)
+        return original_detect(*args, **kwargs)
+
+    monkeypatch.setattr("videowipe.detect.detect_clean_candidates", spy_detect)
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    engine = WipeEngine(task="clean", detector=FakeDetector(), detect_mode="fast")
+    try:
+        engine.process(video=str(video), output=str(tmp_path / "result"), preview=True)
+    finally:
+        engine.cleanup()
+
+    assert captured["sample_count"] == 24
+    assert captured["consistency"] == 0.50
+
+
+def test_detect_mode_sensitive_uses_more_samples(tmp_path, monkeypatch):
+    """Sensitive mode should call detect_clean_candidates with sample_count=80."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="test subtitle",
+                )
+            ]
+
+    captured = {}
+    original_detect = detect_clean_candidates
+
+    def spy_detect(*args, **kwargs):
+        captured.update(kwargs)
+        return original_detect(*args, **kwargs)
+
+    monkeypatch.setattr("videowipe.detect.detect_clean_candidates", spy_detect)
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    engine = WipeEngine(task="clean", detector=FakeDetector(), detect_mode="sensitive")
+    try:
+        engine.process(video=str(video), output=str(tmp_path / "result"), preview=True)
+    finally:
+        engine.cleanup()
+
+    assert captured["sample_count"] == 80
+    assert captured["consistency"] == 0.30
+
+
+# --- OCR tests ---
+
+
+def test_ocr_off_builds_no_recognizer():
+    """ocr='off' should always return None recognizer."""
+    assert WipeEngine._build_recognizer("off") is None
+
+
+def test_ocr_auto_degrades_gracefully(monkeypatch):
+    """ocr='auto' returns None when rapidocr is not installed."""
+    import sys
+    # Remove ocr module if present to force re-import path
+    monkeypatch.setitem(sys.modules, "videowipe.ocr", None)
+    # The from import in _build_recognizer will hit videowipe.ocr which is None,
+    # causing ImportError. Auto mode should catch and return None.
+    result = WipeEngine._build_recognizer("auto")
+    assert result is None
+
+
+def test_ocr_rapidocr_raises_when_missing(monkeypatch):
+    """ocr='rapidocr' should raise RuntimeError when rapidocr is not installed."""
+    import sys
+    monkeypatch.setitem(sys.modules, "videowipe.ocr", None)
+    with pytest.raises(RuntimeError, match="rapidocr-onnxruntime"):
+        WipeEngine._build_recognizer("rapidocr")
+
+
+def test_recognizer_fills_text_samples(tmp_path):
+    """A fake recognizer should populate text_samples on candidates."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video, width=96, height=64)
+
+    def fake_recognizer(crop):
+        return "recognized text"
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="",
+                )
+            ]
+
+    result = detect_clean_candidates(
+        str(video),
+        detector=FakeDetector(),
+        sample_count=3,
+        recognizer=fake_recognizer,
+    )
+
+    assert len(result.candidates) >= 1
+    candidate = result.candidates[0]
+    assert "recognized text" in candidate.text_samples
+
+
+def test_recognizer_skipped_when_text_already_present(tmp_path):
+    """When box.text is set, recognizer should not be called."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video, width=96, height=64)
+    call_count = 0
+
+    def counting_recognizer(crop):
+        nonlocal call_count
+        call_count += 1
+        return "ocr result"
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="already has text",
+                )
+            ]
+
+    result = detect_clean_candidates(
+        str(video),
+        detector=FakeDetector(),
+        sample_count=3,
+        recognizer=counting_recognizer,
+    )
+
+    assert call_count == 0
+    assert result.candidates[0].text_samples == ["already has text"]
+
+
+def test_engine_detect_mode_override_in_process(tmp_path, monkeypatch):
+    """detect_mode passed to process() overrides the constructor default."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    captured = {}
+
+    class FakeDetector:
+        def detect(self, frame):
+            return [
+                TextBox(
+                    points=np.array([[10, 52], [86, 52], [86, 60], [10, 60]]),
+                    confidence=0.9,
+                    text="subtitle",
+                )
+            ]
+
+    original_detect = detect_clean_candidates
+
+    def spy_detect(*args, **kwargs):
+        captured.update(kwargs)
+        return original_detect(*args, **kwargs)
+
+    monkeypatch.setattr("videowipe.detect.detect_clean_candidates", spy_detect)
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    # Constructor says fast, process() says sensitive
+    engine = WipeEngine(task="clean", detector=FakeDetector(), detect_mode="fast")
+    try:
+        engine.process(
+            video=str(video),
+            output=str(tmp_path / "result"),
+            preview=True,
+            detect_mode="sensitive",
+        )
+    finally:
+        engine.cleanup()
+
+    assert captured["sample_count"] == 80
+    assert captured["consistency"] == 0.30
 

@@ -55,6 +55,18 @@ def _build_parser():
                        help="Only write detection preview artifacts")
     clean.add_argument("--confirm", action="store_true",
                        help="Confirm detected targets before processing")
+    clean.add_argument(
+        "--detect-mode",
+        choices=["fast", "balanced", "sensitive"],
+        default="balanced",
+        help="Detection preset: fast (24 frames), balanced (50), sensitive (80)",
+    )
+    clean.add_argument(
+        "--ocr",
+        choices=["auto", "off", "rapidocr"],
+        default="auto",
+        help="OCR text recognition: auto (use if installed), off, rapidocr (error if missing)",
+    )
     clean.add_argument("--external-command", default=None,
                        help="External inpainting command (bypasses built-in STTN)")
 
@@ -75,6 +87,8 @@ def main():
         gap=args.gap,
         dual=args.dual,
         external_command=args.external_command,
+        detect_mode=getattr(args, "detect_mode", "balanced"),
+        ocr=getattr(args, "ocr", "auto"),
     )
     try:
         engine.process(

@@ -27,6 +27,9 @@ onnx-gpu = [
 headless = [
     "opencv-python-headless>=4.5",
 ]
+ocr = [
+    "rapidocr-onnxruntime",
+]
 all = [
     "videowipe[torch]",
     "videowipe[onnx]",

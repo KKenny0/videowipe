@@ -922,6 +922,48 @@ def _classify_region(
     return "scene_text", f"text in {zone}", False
 
 
+DETECT_MODES: dict[str, dict] = {
+    "fast": {
+        "sample_count": 24,
+        "consistency": 0.50,
+        "subtitle_fallback": "off",
+    },
+    "balanced": {
+        "sample_count": 50,
+        "consistency": 0.40,
+        "subtitle_fallback": "light",
+    },
+    "sensitive": {
+        "sample_count": 80,
+        "consistency": 0.30,
+        "subtitle_fallback": "force",
+    },
+}
+
+
+def resolve_detect_params(
+    mode: str,
+    has_subtitle_target: bool = False,
+) -> dict:
+    """Resolve a detect-mode name into concrete detection parameters.
+
+    Returns a dict with keys ``sample_count``, ``consistency``, and
+    ``subtitle_fallback``.
+
+    When *has_subtitle_target* is ``True``, ``subtitle_fallback`` is
+    upgraded to ``"force"`` regardless of mode, because an explicit subtitle
+    request signals that subtitle recall matters more than speed.
+    """
+    if mode not in DETECT_MODES:
+        raise ValueError(
+            f"Unknown detect mode: {mode!r}. Choose from: {list(DETECT_MODES)}"
+        )
+    params = dict(DETECT_MODES[mode])
+    if has_subtitle_target:
+        params["subtitle_fallback"] = "force"
+    return params
+
+
 def detect_clean_candidates(
     video_path: str,
     detector: TextDetector | None = None,
@@ -932,12 +974,18 @@ def detect_clean_candidates(
     include_translucent_watermark: bool = False,
     consistency: float = 0.4,
     subtitle_fallback: str = "off",
+    recognizer: object | None = None,
 ) -> CleanDetectionResult:
     """Detect removable clean targets from sampled video frames.
 
     Uses a frequency-map approach: builds a per-pixel frequency map of
     text detections across sampled frames, then finds connected regions
     and classifies each by position and content.
+
+    Args:
+        recognizer: Optional callable ``(image_crop) -> str | None``.
+            When provided and a detected text box has no ``.text`` field,
+            the crop is passed to *recognizer* to fill ``text_samples``.
     """
     if detect_text and detector is None:
         detector = _default_detector()
@@ -991,12 +1039,26 @@ def detect_clean_candidates(
 
         for label_id, x1, y1, x2, y2 in raw_regions:
             text_samples: list[str] = []
+            ocr_crops: list[np.ndarray] = []
             for boxes in all_frame_boxes:
                 for box in boxes:
                     bx1, by1, bx2, by2 = _bbox(box.points, w, h)
                     if bx1 <= x2 and bx2 >= x1 and by1 <= y2 and by2 >= y1:
                         if box.text:
                             text_samples.append(box.text)
+                        elif recognizer is not None:
+                            crop = frames[0][by1:by2 + 1, bx1:bx2 + 1]
+                            if crop.size > 0:
+                                ocr_crops.append(crop)
+
+            if not text_samples and ocr_crops and recognizer is not None:
+                for crop in ocr_crops[:3]:
+                    try:
+                        text = recognizer(crop)
+                    except Exception:
+                        text = None
+                    if text:
+                        text_samples.append(text)
 
             zone = _zone((x1, y1, x2, y2), w, h)
             target_type, reason, default_remove = _classify_region(

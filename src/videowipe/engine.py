@@ -52,6 +52,12 @@ class WipeEngine:
         external_command: External inpainting command string. When set,
             bypasses built-in STTN and calls the command with
             ``<command> <video> <mask> <output_dir>``.
+        detect_mode: Detection preset: "fast", "balanced", or "sensitive".
+            Controls sample count, consistency threshold, and subtitle fallback.
+            Only used for the "clean" task. Default is "balanced".
+        ocr: OCR mode: "auto", "off", or "rapidocr". "auto" silently degrades
+            when OCR is not installed. "off" never imports OCR. "rapidocr"
+            raises an error if unavailable.
     """
 
     def __init__(
@@ -63,6 +69,8 @@ class WipeEngine:
         dual: bool = False,
         detector: Optional[TextDetector] = None,
         external_command: Optional[str] = None,
+        detect_mode: str = "balanced",
+        ocr: str = "auto",
     ):
         if task not in _TASK_CLASSES:
             raise ValueError(f"Unknown task: {task}. Choose from: {list(_TASK_CLASSES)}")
@@ -72,6 +80,8 @@ class WipeEngine:
         self._device = device
         self._detector = detector
         self._external_command = external_command
+        self._detect_mode = detect_mode
+        self._ocr = ocr
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
         if task == "clean":
             setattr(self._task_impl, "output_suffix", "clean")
@@ -107,7 +117,9 @@ class WipeEngine:
                 agent: str | None = None,
                 regions: list[str] | None = None,
                 preview: bool = False,
-                confirm: bool = False) -> str:
+                confirm: bool = False,
+                detect_mode: str | None = None,
+                ocr: str | None = None) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -133,6 +145,7 @@ class WipeEngine:
                     infer_targets_from_text,
                     mask_from_candidates,
                     normalize_target,
+                    resolve_detect_params,
                     select_clean_candidates,
                     write_clean_artifacts,
                 )
@@ -168,6 +181,15 @@ class WipeEngine:
                     or bool(intent and not mentioned_targets)
                 )
 
+                effective_mode = detect_mode or self._detect_mode
+                has_subtitle_target = "subtitle" in normalized_targets
+                mode_params = resolve_detect_params(
+                    effective_mode, has_subtitle_target=has_subtitle_target,
+                )
+
+                effective_ocr = ocr or self._ocr
+                recognizer = self._build_recognizer(effective_ocr)
+
                 result = detect_clean_candidates(
                     video,
                     detector=det,
@@ -175,11 +197,10 @@ class WipeEngine:
                     detect_text=detect_text,
                     include_logo=include_logo,
                     include_translucent_watermark=include_translucent,
-                    subtitle_fallback=(
-                        "force" if "subtitle" in normalized_targets
-                        else "light" if detect_text
-                        else "off"
-                    ),
+                    sample_count=mode_params["sample_count"],
+                    consistency=mode_params["consistency"],
+                    subtitle_fallback=mode_params["subtitle_fallback"],
+                    recognizer=recognizer,
                 )
                 selected = select_clean_candidates(
                     result.candidates,
@@ -290,6 +311,30 @@ class WipeEngine:
         if not self._external_command:
             self._task_impl.cleanup()
         self._model_loaded = False
+
+    @staticmethod
+    def _build_recognizer(ocr_mode: str):
+        """Build a text recognizer callable based on the OCR mode setting.
+
+        Returns ``None`` when OCR is disabled or unavailable, or a
+        ``callable(image_crop) -> str | None`` when OCR is active.
+        """
+        if ocr_mode == "off":
+            return None
+        try:
+            from videowipe.ocr import recognize_text, _get_engine
+            # Eagerly validate that the OCR backend is usable
+            _get_engine()
+            return recognize_text
+        except Exception:
+            if ocr_mode == "rapidocr":
+                raise RuntimeError(
+                    "OCR mode 'rapidocr' requested but rapidocr-onnxruntime "
+                    "is not installed. Install it with: "
+                    "pip install videowipe[ocr]"
+                ) from None
+            # auto mode: silently degrade
+            return None
 
     @staticmethod
     def _confirm_candidates(candidates, selected):
