@@ -49,6 +49,9 @@ class WipeEngine:
         gap: Segment length per pass. Higher = better quality, slower.
         dual: Show original video side-by-side in output.
         detector: TextDetector for auto mask generation. None to use default.
+        external_command: External inpainting command string. When set,
+            bypasses built-in STTN and calls the command with
+            ``<command> <video> <mask> <output_dir>``.
     """
 
     def __init__(
@@ -59,6 +62,7 @@ class WipeEngine:
         gap: int = 200,
         dual: bool = False,
         detector: Optional[TextDetector] = None,
+        external_command: Optional[str] = None,
     ):
         if task not in _TASK_CLASSES:
             raise ValueError(f"Unknown task: {task}. Choose from: {list(_TASK_CLASSES)}")
@@ -67,6 +71,7 @@ class WipeEngine:
         self._weight = weight
         self._device = device
         self._detector = detector
+        self._external_command = external_command
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
         if task == "clean":
             setattr(self._task_impl, "output_suffix", "clean")
@@ -214,6 +219,32 @@ class WipeEngine:
             print(f"Preview saved to {output}")
             return output
 
+        # Resolve mask file path for external command or normal pipeline
+        if mask is not None:
+            mask_path_saved = mask
+        else:
+            mask_path_saved = os.path.join(output, "auto_mask.png")
+
+        if self._external_command:
+            bm["model_type"] = "external"
+            bm["external_command"] = self._external_command
+            t_ext_start = time.monotonic()
+            from videowipe.external import run_external, ExternalModelError
+            out_path = run_external(
+                self._external_command, video, mask_path_saved, output
+            )
+            bm["timing"]["external_s"] = round(time.monotonic() - t_ext_start, 3)
+            bm["backend"] = "external"
+            bm["output_path"] = out_path
+            bm["error"] = None
+            bm["timing"]["total_s"] = round(time.monotonic() - t_total_start, 3)
+            try:
+                with open(os.path.join(output, "benchmark.json"), "w", encoding="utf-8") as fh:
+                    json.dump(bm, fh, indent=2)
+            except OSError:
+                pass
+            return out_path
+
         t_model_start = time.monotonic()
         self._ensure_model()
         bm["timing"]["model_load_s"] = round(time.monotonic() - t_model_start, 3)
@@ -256,7 +287,8 @@ class WipeEngine:
 
     def cleanup(self):
         """Release model and GPU memory."""
-        self._task_impl.cleanup()
+        if not self._external_command:
+            self._task_impl.cleanup()
         self._model_loaded = False
 
     @staticmethod

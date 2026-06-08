@@ -22,6 +22,8 @@ def _build_parser():
                      help="Segment length per pass; higher = better quality")
     sub.add_argument("-d", "--dual", action="store_true",
                      help="Show original video side-by-side")
+    sub.add_argument("--external-command", default=None,
+                     help="External inpainting command (bypasses built-in STTN)")
 
     clean = subparsers.add_parser("clean", help="Clean subtitles and text overlays")
     clean.add_argument("video", help="Input video path")
@@ -53,6 +55,8 @@ def _build_parser():
                        help="Only write detection preview artifacts")
     clean.add_argument("--confirm", action="store_true",
                        help="Confirm detected targets before processing")
+    clean.add_argument("--external-command", default=None,
+                       help="External inpainting command (bypasses built-in STTN)")
 
     return parser
 
@@ -70,6 +74,7 @@ def main():
         weight=args.weight,
         gap=args.gap,
         dual=args.dual,
+        external_command=args.external_command,
     )
     try:
         engine.process(

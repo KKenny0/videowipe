@@ -21,6 +21,7 @@ from videowipe.detect import (
     select_clean_candidates,
 )
 from videowipe.engine import WipeEngine, remove_text
+from videowipe.external import ExternalModelError, run_external
 from videowipe.tasks.base import read_mask, validate_mask_shape
 
 
@@ -756,4 +757,104 @@ def test_eval_clean_detection_flags_missing_golden(tmp_path):
         ),
     )
     assert "MISSING GOLDEN" in result.stdout
+
+
+# --- External model adapter tests ---
+
+
+def _fake_external_cmd():
+    """Return a cross-platform command that copies arg1 to arg3 (video -> output_dir)."""
+    return (
+        f'{sys.executable} -c "import shutil,sys;'
+        f'shutil.copy(sys.argv[1],sys.argv[3])"'
+    )
+
+
+def test_run_external_success(tmp_path):
+    """Fake command copies input video to output dir; adapter discovers it."""
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    mask = tmp_path / "mask.png"
+    cv2.imwrite(str(mask), np.zeros((64, 96), dtype=np.uint8))
+
+    result = run_external(_fake_external_cmd(), str(video), str(mask), str(output_dir))
+    assert os.path.exists(result)
+    assert result.startswith(str(output_dir))
+
+
+def test_run_external_nonzero_exit(tmp_path):
+    """Non-zero exit raises ExternalModelError with stderr."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    with pytest.raises(ExternalModelError, match="exited with code"):
+        run_external("exit 1", "video.mp4", "mask.png", str(output_dir))
+
+
+def test_run_external_no_output(tmp_path):
+    """Command succeeds but produces no video file raises ExternalModelError."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    # Python no-op that exits 0 but writes nothing
+    noop = f'{sys.executable} -c "pass"'
+
+    with pytest.raises(ExternalModelError, match="no output video"):
+        run_external(noop, "video.mp4", "mask.png", str(output_dir))
+
+
+def test_engine_external_command_skips_model_loading(tmp_path, monkeypatch):
+    """Engine with external_command set never calls _ensure_model."""
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    mask = tmp_path / "mask.png"
+    mask_arr = np.zeros((64, 96), dtype=np.uint8)
+    mask_arr[50:60, 10:86] = 255
+    cv2.imwrite(str(mask), mask_arr)
+
+    def fail_model_load(self):
+        raise AssertionError("external mode should not load model")
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", fail_model_load)
+
+    engine = WipeEngine(task="detext", external_command=_fake_external_cmd())
+    try:
+        out_path = engine.process(
+            video=str(video), mask=str(mask), output=str(output)
+        )
+    finally:
+        engine.cleanup()
+
+    assert os.path.exists(out_path)
+    assert out_path.startswith(str(output))
+
+
+def test_engine_external_command_benchmark_json(tmp_path, monkeypatch):
+    """benchmark.json has model_type: external and external_s timing."""
+    video = tmp_path / "input.mp4"
+    output = tmp_path / "result"
+    _write_test_video(video)
+
+    mask = tmp_path / "mask.png"
+    mask_arr = np.zeros((64, 96), dtype=np.uint8)
+    mask_arr[50:60, 10:86] = 255
+    cv2.imwrite(str(mask), mask_arr)
+
+    engine = WipeEngine(task="detext", external_command=_fake_external_cmd())
+    try:
+        engine.process(video=str(video), mask=str(mask), output=str(output))
+    finally:
+        engine.cleanup()
+
+    bm_path = output / "benchmark.json"
+    assert bm_path.exists()
+    bm = json.loads(bm_path.read_text(encoding="utf-8"))
+    assert bm["model_type"] == "external"
+    assert bm["backend"] == "external"
+    assert "external_s" in bm["timing"]
+    assert bm["error"] is None
 
