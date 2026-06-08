@@ -169,6 +169,24 @@ videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">查看视频</a></p>
 
+### 自动检测效果
+
+内置检测器可自动定位多语种文字区域，无需手动提供 mask：
+
+<p float="left">
+  <img src="pics/detection/chinese1_detected.jpg" width="32%">
+  <img src="pics/detection/english1_detected.jpg" width="32%">
+  <img src="pics/detection/others_detected.jpg" width="32%">
+</p>
+
+| 视频 | 检测候选 | 选中 | 类型 |
+|------|---------|------|------|
+| 中文剧集 | 4 | 2 | 顶部字幕、底部字幕 |
+| 英文片段 | 2 | 2 | 底部字幕 |
+| 音乐视频（韩语 + 缅甸语） | 7 | 5 | 顶部水印、底部多语种字幕 |
+
+使用 `--detect-mode balanced`（采样 50 帧）测试。绿框为选中待修复区域。
+
 ## 原理
 
 模型基于 STTN（时空 Transformer 网络），8 层 transformer block 对多尺度 patch 做时域注意力。CNN 编码器提取帧特征，跨帧注意力机制利用邻近帧和参考帧信息，解码器生成修复结果。

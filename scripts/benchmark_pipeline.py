@@ -6,13 +6,14 @@ Usage:
         --mask-dir input/detext_examples/mask \
         --output-dir result/benchmark
 
-The script runs two phases per video:
+    # With detect-mode and OCR:
+    python scripts/benchmark_pipeline.py input/detext_examples \
+        --detect-mode sensitive --ocr rapidocr \
+        --output-dir result/benchmark-sensitive-ocr
 
-1. Detection eval via eval_clean_detection (no model loading).
-2. Full detext pipeline via WipeEngine (loads model, processes video).
-
-Results are written as JSON to the output directory. Benchmark output is
-not intended to be committed to git.
+The script runs the full clean pipeline via WipeEngine (loads model,
+processes video). Results are written as JSON to the output directory.
+Benchmark output is not intended to be committed to git.
 """
 from __future__ import annotations
 
@@ -32,11 +33,13 @@ def _benchmark_video(
     mask_path: str | None,
     output_dir: str,
     mask_source_label: str,
+    detect_mode: str = "balanced",
+    ocr_mode: str = "auto",
 ) -> dict:
-    """Run the full detext pipeline on one video and collect benchmark data."""
+    """Run the full clean pipeline on one video and collect benchmark data."""
     os.makedirs(output_dir, exist_ok=True)
 
-    engine = WipeEngine(task="detext")
+    engine = WipeEngine(task="clean", detect_mode=detect_mode, ocr=ocr_mode)
     try:
         out_path = engine.process(
             video=video_path,
@@ -66,6 +69,12 @@ def main() -> None:
                         help="Directory with manual masks ({stem}_mask.png)")
     parser.add_argument("--output-dir", default="result/benchmark",
                         help="Output directory for benchmark results")
+    parser.add_argument("--detect-mode", default="balanced",
+                        choices=["fast", "balanced", "sensitive"],
+                        help="Detection preset (default: balanced)")
+    parser.add_argument("--ocr", default="auto",
+                        choices=["auto", "off", "rapidocr"],
+                        help="OCR text recognition (default: auto)")
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -99,7 +108,10 @@ def main() -> None:
 
         video_out_dir = os.path.join(args.output_dir, video_stem)
         print(f"\n--- {os.path.basename(video_path)} ---")
-        result = _benchmark_video(video_path, mask_path, video_out_dir, mask_source)
+        result = _benchmark_video(
+            video_path, mask_path, video_out_dir, mask_source,
+            detect_mode=args.detect_mode, ocr_mode=args.ocr,
+        )
         results.append(result)
 
         if "error" in result and result["error"]:

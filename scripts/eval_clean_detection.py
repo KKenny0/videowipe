@@ -5,6 +5,7 @@ Usage:
     python scripts/eval_clean_detection.py input/detext_examples
     python scripts/eval_clean_detection.py input/detext_examples --write-baseline
     python scripts/eval_clean_detection.py input/detext_examples --compare-baseline
+    python scripts/eval_clean_detection.py input/detext_examples --detect-mode sensitive --ocr rapidocr
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 from videowipe.detect import (
     detect_clean_candidates,
     mask_from_candidates,
+    resolve_detect_params,
     select_clean_candidates,
 )
 
@@ -36,9 +38,39 @@ def _compute_mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def _eval_video(video_path: str, mask_dir: str | None = None) -> dict:
+def _build_recognizer(ocr_mode: str):
+    """Build an OCR recognizer callable, mirroring engine logic."""
+    if ocr_mode == "off":
+        return None
+    try:
+        from videowipe.ocr import recognize_text, _get_engine
+        _get_engine()
+        return recognize_text
+    except Exception:
+        if ocr_mode == "rapidocr":
+            raise RuntimeError(
+                "OCR mode 'rapidocr' requested but rapidocr-onnxruntime "
+                "is not installed. Install it with: pip install videowipe[ocr]"
+            ) from None
+        return None
+
+
+def _eval_video(
+    video_path: str,
+    mask_dir: str | None = None,
+    detect_mode: str = "balanced",
+    ocr_mode: str = "off",
+) -> dict:
     """Run clean detection on a single video and return a report dict."""
-    result = detect_clean_candidates(video_path, subtitle_fallback="light")
+    mode_params = resolve_detect_params(detect_mode)
+    recognizer = _build_recognizer(ocr_mode)
+    result = detect_clean_candidates(
+        video_path,
+        sample_count=mode_params["sample_count"],
+        consistency=mode_params["consistency"],
+        subtitle_fallback=mode_params["subtitle_fallback"],
+        recognizer=recognizer,
+    )
     selected = select_clean_candidates(result.candidates)
     selected_ids = {c.id for c in selected}
     h, w = result.frame_shape
@@ -67,6 +99,8 @@ def _eval_video(video_path: str, mask_dir: str | None = None) -> dict:
     empty = len(result.candidates) == 0
     report: dict = {
         "video": os.path.basename(video_path),
+        "detect_mode": detect_mode,
+        "ocr_mode": ocr_mode,
         "candidate_count": len(result.candidates),
         "selected_count": len(selected),
         "frame_shape": list(result.frame_shape),
@@ -186,6 +220,12 @@ def main() -> None:
                         help="Compare results against saved baseline")
     parser.add_argument("--mask-dir",
                         help="Directory with golden masks ({stem}_mask.png)")
+    parser.add_argument("--detect-mode", default="balanced",
+                        choices=["fast", "balanced", "sensitive"],
+                        help="Detection preset (default: balanced)")
+    parser.add_argument("--ocr", default="off",
+                        choices=["auto", "off", "rapidocr"],
+                        help="OCR text recognition (default: off)")
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -209,7 +249,12 @@ def main() -> None:
     reports: list[dict] = []
     for video_path in videos:
         try:
-            report = _eval_video(video_path, mask_dir=args.mask_dir)
+            report = _eval_video(
+                video_path,
+                mask_dir=args.mask_dir,
+                detect_mode=args.detect_mode,
+                ocr_mode=args.ocr,
+            )
         except Exception as exc:
             print(f"ERROR processing {video_path}: {exc}", file=sys.stderr)
             reports.append({

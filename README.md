@@ -169,6 +169,24 @@ videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
 
 <p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch video</a></p>
 
+### Auto-detection accuracy
+
+Built-in detector locates text regions across multilingual content without manual masks:
+
+<p float="left">
+  <img src="pics/detection/chinese1_detected.jpg" width="32%">
+  <img src="pics/detection/english1_detected.jpg" width="32%">
+  <img src="pics/detection/others_detected.jpg" width="32%">
+</p>
+
+| Video | Candidates | Selected | Types |
+|-------|-----------|----------|-------|
+| Chinese drama | 4 | 2 | top subtitle, bottom subtitle |
+| English clip | 2 | 2 | bottom subtitle |
+| Music video (Korean + Burmese) | 7 | 5 | top watermark, bottom multilingual subtitles |
+
+Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show selected regions for inpainting.
+
 ## How it works
 
 The model is an STTN (Spatial-Temporal Transformer Network) with 8 stacked transformer blocks operating on multi-scale patches. It encodes video frames with a CNN backbone, runs temporal attention across neighboring and reference frames, then decodes the inpainted result.

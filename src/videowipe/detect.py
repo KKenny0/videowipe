@@ -185,6 +185,7 @@ class DBNetDetector:
         unclip_ratio: float = 1.5,
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
         scale: float = 1.0 / 255.0,
+        adaptive: bool = True,
     ):
         self._input_w, self._input_h = input_size
         self._bin_thresh = bin_thresh
@@ -192,8 +193,13 @@ class DBNetDetector:
         self._unclip_ratio = unclip_ratio
         self._mean = mean
         self._scale = scale
+        self._adaptive = adaptive
 
         self._net = cv2.dnn.readNetFromONNX(weight_path)
+
+        # Cache for adaptive input-size computation
+        self._cached_frame_dims: tuple[int, int] | None = None
+        self._cached_input_size: tuple[int, int] | None = None
 
         # Try high-level OpenCV API (>= 4.5.4)
         self._hl_model = None
@@ -210,15 +216,52 @@ class DBNetDetector:
         except (AttributeError, cv2.error):
             pass
 
+    def _adaptive_input_size(self, frame_h: int, frame_w: int) -> tuple[int, int]:
+        """Compute model input size that matches the frame aspect ratio.
+
+        Keeps the total pixel budget close to ``input_size`` area while
+        choosing width/height that match the frame's aspect ratio.
+        This avoids the resolution loss that occurs when a widescreen
+        frame is squeezed into a square input.
+        """
+        dims = (frame_h, frame_w)
+        if self._cached_frame_dims == dims and self._cached_input_size is not None:
+            return self._cached_input_size
+
+        aspect = frame_w / frame_h
+        target_area = self._input_w * self._input_h
+        new_w = int(np.sqrt(target_area * aspect))
+        new_h = int(new_w / aspect)
+        # Round up to multiples of 32 (required by the model)
+        new_w = ((new_w + 31) // 32) * 32
+        new_h = ((new_h + 31) // 32) * 32
+
+        result = (new_w, new_h)
+        self._cached_frame_dims = dims
+        self._cached_input_size = result
+        return result
+
     def detect(self, frame: np.ndarray) -> List[TextBox]:
         """Run text detection on a single frame."""
+        h, w = frame.shape[:2]
+        if self._adaptive:
+            input_w, input_h = self._adaptive_input_size(h, w)
+        else:
+            input_w, input_h = self._input_w, self._input_h
+
         if self._hl_model is not None:
+            # Reconfigure input size when adaptive or first call
+            if self._adaptive:
+                self._hl_model.setInputParams(
+                    scale=self._scale, size=(input_w, input_h),
+                    mean=self._mean, swapRB=True,
+                )
             boxes = self._detect_hl(frame)
             if boxes:
                 return boxes
             # High-level API returned nothing — fall back to manual post-processing
             logger.debug("High-level DB API returned 0 boxes; falling back to manual path")
-        return self._detect_manual(frame)
+        return self._detect_manual(frame, input_w=input_w, input_h=input_h)
 
     def _detect_hl(self, frame: np.ndarray) -> List[TextBox]:
         detections, confidences = self._hl_model.detect(frame)
@@ -232,21 +275,26 @@ class DBNetDetector:
             )
         return boxes
 
-    def _detect_manual(self, frame: np.ndarray) -> List[TextBox]:
+    def _detect_manual(
+        self,
+        frame: np.ndarray,
+        input_w: int | None = None,
+        input_h: int | None = None,
+    ) -> List[TextBox]:
+        iw = input_w or self._input_w
+        ih = input_h or self._input_h
         h, w = frame.shape[:2]
-        ratio = min(self._input_w / w, self._input_h / h)
+        ratio = min(iw / w, ih / h)
         new_w, new_h = int(w * ratio), int(h * ratio)
 
         resized = cv2.resize(frame, (new_w, new_h))
-        padded = np.full(
-            (self._input_h, self._input_w, 3), 128, dtype=np.uint8
-        )
+        padded = np.full((ih, iw, 3), 128, dtype=np.uint8)
         padded[:new_h, :new_w] = resized
 
         blob = cv2.dnn.blobFromImage(
             padded,
             scalefactor=self._scale,
-            size=(self._input_w, self._input_h),
+            size=(iw, ih),
             mean=self._mean,
             swapRB=True,
         )
