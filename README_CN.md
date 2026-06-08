@@ -165,6 +165,30 @@ docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu detex
 | `videowipe:latest` | ~480 MB | 否 | 仅 CPU，体积最小 |
 | `videowipe:gpu` | ~1.4 GB | 是 | ONNX Runtime + CUDA |
 
+### 从源码构建
+
+使用 `--target` 选择镜像类型：
+
+```bash
+# CPU
+docker build --target runtime-cpu -t videowipe:latest .
+
+# GPU（构建时需要 NVIDIA Container Toolkit 以拉取基础镜像）
+docker build --target runtime-gpu --build-arg VARIANT=gpu -t videowipe:gpu .
+```
+
+> **注意：** GPU 镜像需要在具备 NVIDIA 运行时的机器上验证 CUDA 执行。否则 ONNX Runtime 会静默回退到 CPU。
+
+构建完成后运行：
+
+```bash
+# CPU
+docker run --rm -v "$(pwd)":/data videowipe:latest detext -v /data/input.mp4 -o /data/result/
+
+# GPU
+docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+```
+
 ## 致谢
 
 基于 [STTN](https://github.com/researchmm/STTN) 和 [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe)。内置文字检测模型来自 [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR)。

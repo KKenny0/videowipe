@@ -1,6 +1,6 @@
 # ── Build arguments ──────────────────────────────────────────────────────────
-# CPU (default):  docker build -t videowipe:latest .
-# GPU:           docker build --build-arg VARIANT=gpu -t videowipe:gpu .
+# CPU:  docker build --target runtime-cpu -t videowipe:latest .
+# GPU:  docker build --target runtime-gpu --build-arg VARIANT=gpu -t videowipe:gpu .
 ARG VARIANT=cpu
 
 # ── Builder stage: install Python packages ───────────────────────────────────
@@ -14,7 +14,7 @@ RUN if [ "$VARIANT" = "gpu" ]; then \
         ONNX_PKG="onnxruntime"; \
     fi && \
     pip install --no-cache-dir --prefix=/install \
-        opencv-python-headless>=4.5 \
+        "opencv-python-headless>=4.5" \
         numpy \
         tqdm \
         "$ONNX_PKG"

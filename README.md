@@ -165,6 +165,30 @@ Or use the included wrapper script (auto-detects GPU):
 | `videowipe:latest` | ~480 MB | No | CPU only, smallest image |
 | `videowipe:gpu` | ~1.4 GB | Yes | ONNX Runtime with CUDA |
 
+### Build from source
+
+Use `--target` to select the image variant:
+
+```bash
+# CPU
+docker build --target runtime-cpu -t videowipe:latest .
+
+# GPU (requires NVIDIA Container Toolkit at build time for base image)
+docker build --target runtime-gpu --build-arg VARIANT=gpu -t videowipe:gpu .
+```
+
+> **Note:** The GPU image requires a machine with NVIDIA runtime to verify CUDA execution. Without it, ONNX Runtime silently falls back to CPU.
+
+Run after building:
+
+```bash
+# CPU
+docker run --rm -v "$(pwd)":/data videowipe:latest detext -v /data/input.mp4 -o /data/result/
+
+# GPU
+docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+```
+
 ## Credits
 
 This project builds on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) implementation. The built-in text detection model is from [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR).
