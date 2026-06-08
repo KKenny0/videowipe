@@ -28,6 +28,9 @@ pip install videowipe[onnx]
 
 # 或 PyTorch 后端：
 pip install videowipe[torch]
+
+# 可选：OCR 文字识别，提升检测准确率
+pip install videowipe[ocr]
 ```
 
 模型权重在首次运行时自动下载到 `~/.videowipe/weights/`，无需手动配置。
@@ -53,7 +56,27 @@ remove_text(
 )
 ```
 
-批量处理时复用引擎，避免重复加载模型：
+### clean 命令
+
+使用 `task="clean"` 启用完整检测流水线，支持目标选择、意图解析和 OCR：
+
+```python
+from videowipe import WipeEngine
+
+engine = WipeEngine(task="clean", detect_mode="balanced", ocr="auto")
+engine.process(
+    video="input.mp4",
+    targets=["subtitle", "watermark"],
+    regions=["bottom"],
+    intent="去掉底部中文字幕和 logo 水印",
+    output="result/",
+)
+engine.cleanup()
+```
+
+### 批量处理
+
+复用引擎避免重复加载模型：
 
 ```python
 from videowipe import WipeEngine
@@ -105,7 +128,10 @@ videowipe clean input.mp4 --confirm
 | `--intent` | 自然语言清除意图 | — |
 | `--preview` | 仅输出检测产物（不执行修复） | 关闭 |
 | `--confirm` | 显示检测目标并确认后再处理 | 关闭 |
+| `--detect-mode` | 检测预设：`fast`（24帧）、`balanced`（50帧）、`sensitive`（80帧） | `balanced` |
+| `--ocr` | OCR 文字识别：`auto`、`off`、`rapidocr` | `auto` |
 | `--agent` | 本地 LLM CLI 做意图选择（如 `claude`、`codex`） | — |
+| `--external-command` | 外部修复命令（绕过内置 STTN） | — |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
 
@@ -119,6 +145,19 @@ videowipe clean input.mp4 --confirm
 | `-w, --weight` | 模型权重路径。PyTorch 接受 `.pth`/`.pt`；ONNX 需要以 `.onnx` 结尾的前缀路径，并存在对应的 `_encoder`、`_transformer`、`_decoder` 文件。 | 自动下载 |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
+| `--external-command` | 外部修复命令（绕过内置 STTN） | — |
+
+## 外部模型
+
+通过 `--external-command` 使用第三方修复模型代替内置 STTN。命令接收 `<video> <mask> <output_dir>` 三个参数，需要在输出目录中生成结果视频。
+
+```bash
+# 通过包装脚本使用 ProPainter
+videowipe clean input.mp4 --external-command "python propainter_wipe.py"
+
+# detext 也支持
+videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
+```
 
 ## 效果预览
 
@@ -144,6 +183,9 @@ videowipe clean input.mp4 --confirm
 
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:latest
+docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
+
+# 旧命令
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
 ```
 
@@ -151,7 +193,7 @@ docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/inpu
 
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:gpu
-docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
 或者使用自带的 wrapper 脚本（自动检测 GPU）：

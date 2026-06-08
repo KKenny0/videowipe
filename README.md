@@ -28,6 +28,9 @@ pip install videowipe[onnx]
 
 # Or the PyTorch backend:
 pip install videowipe[torch]
+
+# Optional: OCR text recognition for better detection accuracy
+pip install videowipe[ocr]
 ```
 
 Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.
@@ -53,7 +56,27 @@ remove_text(
 )
 ```
 
-For batch processing, reuse the engine to avoid reloading the model:
+### Clean command
+
+Use `task="clean"` for the full detection pipeline with target selection, intent parsing, and OCR:
+
+```python
+from videowipe import WipeEngine
+
+engine = WipeEngine(task="clean", detect_mode="balanced", ocr="auto")
+engine.process(
+    video="input.mp4",
+    targets=["subtitle", "watermark"],
+    regions=["bottom"],
+    intent="remove Chinese subtitles and logo watermark",
+    output="result/",
+)
+engine.cleanup()
+```
+
+### Batch processing
+
+Reuse the engine to avoid reloading the model:
 
 ```python
 from videowipe import WipeEngine
@@ -105,7 +128,10 @@ videowipe clean input.mp4 --confirm
 | `--intent` | Natural-language cleanup intent | — |
 | `--preview` | Write detection artifacts only (no inpainting) | off |
 | `--confirm` | Show detected targets and confirm before processing | off |
+| `--detect-mode` | Detection preset: `fast` (24 frames), `balanced` (50), `sensitive` (80) | `balanced` |
+| `--ocr` | OCR text recognition: `auto`, `off`, `rapidocr` | `auto` |
 | `--agent` | Local LLM CLI for intent-based selection (e.g., `claude`, `codex`) | — |
+| `--external-command` | External inpainting command (bypasses built-in STTN) | — |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
 
@@ -119,6 +145,19 @@ videowipe clean input.mp4 --confirm
 | `-w, --weight` | Model weight path. PyTorch accepts `.pth`/`.pt`; ONNX expects a prefix path ending in `.onnx` with matching `_encoder`, `_transformer`, and `_decoder` files. | auto |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
+| `--external-command` | External inpainting command (bypasses built-in STTN) | — |
+
+## External models
+
+Pass `--external-command` to use any third-party inpainting model instead of the built-in STTN. The command receives `<video> <mask> <output_dir>` and must produce an output video in the output directory.
+
+```bash
+# Use ProPainter via a wrapper script
+videowipe clean input.mp4 --external-command "python propainter_wipe.py"
+
+# Use with detext as well
+videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
+```
 
 ## Preview
 
@@ -144,6 +183,9 @@ No Python? No problem. Run videowipe directly with Docker.
 
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:latest
+docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
+
+# Legacy detext command
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
 ```
 
@@ -151,7 +193,7 @@ docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/inpu
 
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:gpu
-docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
 Or use the included wrapper script (auto-detects GPU):
