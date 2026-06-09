@@ -1049,8 +1049,10 @@ def detect_clean_candidates(
     if detect_text and detector is not None:
         freq = np.zeros((h, w), dtype=np.float32)
         all_frame_boxes: list[list[TextBox]] = []
+        best_preview_idx = 0
+        best_preview_score = -1
 
-        for frame in frames:
+        for i, frame in enumerate(frames):
             try:
                 boxes = detector.detect(frame)
             except Exception as exc:
@@ -1062,6 +1064,11 @@ def detect_clean_candidates(
             for box in boxes:
                 cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
             freq += frame_mask
+
+            score = int(frame_mask.sum())
+            if score > best_preview_score:
+                best_preview_score = score
+                best_preview_idx = i
 
         if n_valid == 0:
             raise RuntimeError("Target detection failed on all sampled frames.")
@@ -1165,7 +1172,7 @@ def detect_clean_candidates(
     return CleanDetectionResult(
         candidates=candidates,
         frame_shape=(h, w),
-        preview_frame=frames[0].copy(),
+        preview_frame=frames[best_preview_idx].copy() if detect_text and detector is not None else frames[0].copy(),
     )
 
 
