@@ -151,13 +151,30 @@ videowipe clean input.mp4 --confirm
 
 Pass `--external-command` to use any third-party inpainting model instead of the built-in STTN. The command receives `<video> <mask> <output_dir>` and must produce an output video in the output directory.
 
-```bash
-# Use ProPainter via a wrapper script
-videowipe clean input.mp4 --external-command "python propainter_wipe.py"
+[ProPainter](https://github.com/sczhou/ProPainter) has been validated as a higher-quality alternative. A ready-to-use wrapper is included:
 
-# Use with detext as well
-videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
+```bash
+# Clone ProPainter outside this repo first
+git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
+
+# Use via the wrapper (requires CUDA PyTorch + fp16)
+videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 ```
+
+> **Note:** ProPainter requires a GPU with ~16GB VRAM for 480p video and is licensed under NTU S-Lab License 1.0 (non-commercial).
+
+<details>
+<summary><strong>Quality comparison: ProPainter vs STTN</strong></summary>
+
+Tested on a multilingual music video (Korean + Burmese subtitles, 852x480, 10s clip). Both models used the same mask.
+
+| Original | ProPainter (GPU fp16) | STTN (CPU ONNX) |
+|----------|----------------------|-----------------|
+| <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
+
+ProPainter removes all text including overlaid text on moving objects. STTN misses text on moving objects and shows visible blur in restored regions. Full evaluation details in `plans/candidate-eval-propainter.md`.
+
+</details>
 
 ## Preview
 

@@ -151,13 +151,30 @@ videowipe clean input.mp4 --confirm
 
 通过 `--external-command` 使用第三方修复模型代替内置 STTN。命令接收 `<video> <mask> <output_dir>` 三个参数，需要在输出目录中生成结果视频。
 
-```bash
-# 通过包装脚本使用 ProPainter
-videowipe clean input.mp4 --external-command "python propainter_wipe.py"
+[ProPainter](https://github.com/sczhou/ProPainter) 已通过验证，是更高质量的替代方案。附带开箱即用的包装脚本：
 
-# detext 也支持
-videowipe detext -v input.mp4 --external-command "python propainter_wipe.py"
+```bash
+# 先在仓库外克隆 ProPainter
+git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
+
+# 通过包装脚本调用（需要 CUDA PyTorch + fp16）
+videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 ```
+
+> **注意：** ProPainter 需要 ~16GB 显存的 GPU 处理 480p 视频，许可证为 NTU S-Lab License 1.0（非商业用途）。
+
+<details>
+<summary><strong>效果对比：ProPainter vs STTN</strong></summary>
+
+测试视频为多语言 MV（韩语 + 缅甸语字幕，852x480，10秒片段），两个模型使用相同 mask。
+
+| 原始画面 | ProPainter（GPU fp16） | STTN（CPU ONNX） |
+|----------|----------------------|-----------------|
+| <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
+
+ProPainter 能移除所有文字，包括运动物体上的叠加文字。STTN 会遗漏运动物体上的文字，且修复区域有明显模糊。完整评估细节见 `plans/candidate-eval-propainter.md`。
+
+</details>
 
 ## 效果预览
 
