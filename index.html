@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoWipe — Remove hardcoded subtitles, watermarks, and text from video</title>
+  <meta name="description" content="Auto-detect and remove hardcoded text, watermarks, logos, and timestamps from video. One command, no manual masks.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ══════════════════════════════════════════════
+       VideoWipe — Landing Page
+       Dark tech/utility · #0a0a0a + #FF6B35
+    ══════════════════════════════════════════════ */
+    :root {
+      --bg:       #0a0a0a;
+      --surface:  #111111;
+      --surface2: #181818;
+      --fg:       #e8e8e8;
+      --fg-dim:   #999999;
+      --muted:    #5a5a5a;
+      --border:   #1e1e1e;
+      --border2:  #2a2a2a;
+      --accent:   #FF6B35;
+      --accent-dim: rgba(255, 107, 53, 0.12);
+      --accent-glow: rgba(255, 107, 53, 0.06);
+      --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+      --font-body:    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono:    'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+      --radius:  10px;
+      --radius-lg: 16px;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-body);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Utility ── */
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffa657;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    /* ── Nav ── */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10, 10, 10, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--fg);
+      text-decoration: none;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+    .nav-brand svg { width: 28px; height: 28px; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      font-size: 14px;
+      color: var(--fg-dim);
+    }
+    .nav-links a {
+      color: var(--fg-dim);
+      transition: color 0.15s;
+    }
+    .nav-links a:hover { color: var(--fg); text-decoration: none; }
+    a.nav-cta {
+      background: var(--accent);
+      color: var(--bg);
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      transition: opacity 0.15s;
+    }
+    a.nav-cta:hover { opacity: 0.85; text-decoration: none; }
+
+    /* ── Lang switch ── */
+    .lang-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--fg-dim);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 2px;
+      user-select: none;
+    }
+    .lang-switch button {
+      background: none;
+      border: none;
+      color: var(--fg-dim);
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: inherit;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      line-height: 1;
+    }
+    .lang-switch button.active {
+      background: var(--accent);
+      color: var(--bg);
+      font-weight: 600;
+    }
+    .lang-switch button:hover:not(.active) {
+      color: var(--fg);
+    }
+
+    /* ── Section shared ── */
+    .section {
+      padding: 96px 0;
+    }
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+    .section-dek {
+      font-size: 16px;
+      color: var(--fg-dim);
+      max-width: 560px;
+      line-height: 1.7;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 120px 0 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -200px;
+      right: -100px;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+      position: relative;
+    }
+    .hero-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(36px, 5.5vw, 56px);
+      font-weight: 800;
+      letter-spacing: -0.035em;
+      line-height: 1.08;
+      margin-bottom: 20px;
+    }
+    .hero h1 .accent { color: var(--accent); }
+    .hero-lead {
+      font-size: 17px;
+      color: var(--fg-dim);
+      line-height: 1.7;
+      margin-bottom: 32px;
+      max-width: 480px;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: var(--font-body);
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { opacity: 0.88; text-decoration: none; color: #fff; }
+    .btn-ghost {
+      background: transparent;
+      color: var(--fg-dim);
+      border: 1px solid var(--border2);
+    }
+    .btn-ghost:hover { border-color: var(--fg-dim); color: var(--fg); text-decoration: none; }
+
+    .hero-code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .code-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .code-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--border2);
+    }
+    .code-dots span:first-child { background: #ff5f57; }
+    .code-dots span:nth-child(2) { background: #febc2e; }
+    .code-dots span:nth-child(3) { background: #28c840; }
+    .code-body {
+      padding: 20px 24px;
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      line-height: 1.75;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .code-body .comment { color: #6a737d; font-style: italic; }
+    .code-body .keyword { color: #d2a8ff; font-weight: 500; }
+    .code-body .fn { color: #79c0ff; }
+    .code-body .string { color: #a5d6ff; }
+    .code-body .param { color: #ffa657; }
+    .code-body .op { color: #ff7b72; }
+    .code-body .num { color: #79c0ff; }
+
+    /* ── Logo strip (pip install badge) ── */
+    .install-strip {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 32px 0;
+    }
+    .install-inner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .install-cmd {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      color: var(--fg);
+      background: var(--surface2);
+      padding: 10px 24px;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .install-cmd .dollar { color: var(--muted); }
+    .install-cmd .cmd { color: var(--accent); }
+
+    /* ── Features ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 48px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 32px 28px;
+      transition: border-color 0.2s;
+    }
+    .feature-card:hover {
+      border-color: var(--border2);
+    }
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-dim);
+      border-radius: 10px;
+      margin-bottom: 20px;
+      color: var(--accent);
+    }
+    .feature-card h3 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 10px;
+    }
+    .feature-card p {
+      font-size: 14px;
+      color: var(--fg-dim);
+      line-height: 1.7;
+    }
+
+    /* ── Pipeline ── */
+    .pipeline-steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 32px;
+      margin-top: 48px;
+      position: relative;
+    }
+    .pipeline-steps::before {
+      content: '';
+      position: absolute;
+      top: 36px;
+      left: calc(16.66% + 20px);
+      right: calc(16.66% + 20px);
+      height: 1px;
+      background: var(--border2);
+    }
+    .step {
+      position: relative;
+      text-align: center;
+    }
+    .step-num {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--accent);
+      position: relative;
+      z-index: 1;
+    }
+    .step h3 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .step p {
+      font-size: 14px;
+      color: var(--fg-dim);
+      line-height: 1.7;
+      max-width: 280px;
+      margin: 0 auto;
+    }
+
+    /* ── Code examples ── */
+    .examples-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 48px;
+    }
+
+    /* ── Stats ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      margin-top: 48px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--accent);
+      margin-bottom: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-label {
+      font-size: 13px;
+      color: var(--fg-dim);
+    }
+
+    /* ── CTA ── */
+    .cta-section {
+      padding: 96px 0;
+      text-align: center;
+    }
+    .cta-section .section-title {
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .cta-section .section-dek {
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+      margin-bottom: 32px;
+    }
+    .cta-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+    }
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .footer-copy {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      font-size: 13px;
+    }
+    .footer-links a { color: var(--fg-dim); }
+    .footer-links a:hover { color: var(--fg); text-decoration: none; }
+
+    /* ── Responsive ── */
+    @media (max-width: 920px) {
+      .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .pipeline-steps { grid-template-columns: 1fr; gap: 40px; }
+      .pipeline-steps::before { display: none; }
+      .examples-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .hero { padding: 80px 0 48px; }
+      .section { padding: 64px 0; }
+    }
+    @media (max-width: 600px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .hero h1 { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ NAV ═══ -->
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a href="#" class="nav-brand">
+        <svg viewBox="0 0 64 64" fill="none" color="#e8e8e8">
+          <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+          <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        VideoWipe
+      </a>
+      <div class="nav-links">
+        <a href="#features" data-i18n="nav_features">Features</a>
+        <a href="#how-it-works" data-i18n="nav_how">How it works</a>
+        <a href="#usage" data-i18n="nav_usage">Usage</a>
+        <div class="lang-switch">
+          <button data-lang="en" class="active">EN</button>
+          <button data-lang="zh">中</button>
+        </div>
+        <a href="https://github.com/kkenny0/videowipe" class="nav-cta">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══ HERO ═══ -->
+  <section class="hero" data-od-id="hero">
+    <div class="container hero-grid">
+      <div class="hero-text">
+        <div class="hero-eyebrow" data-i18n="hero_eyebrow">Open-source video inpainting tool</div>
+        <h1 data-i18n-html="hero_h1">Remove text from video.<br><span class="accent">One command.</span></h1>
+        <p class="hero-lead" data-i18n="hero_lead">
+          Auto-detect hardcoded subtitles, watermarks, logos, and timestamps. Generate masks and inpaint — no manual work needed. Multilingual out of the box.
+        </p>
+        <div class="hero-actions">
+          <a href="#usage" class="btn btn-primary" data-i18n="hero_cta_start">Get started</a>
+          <a href="https://github.com/kkenny0/videowipe" class="btn btn-ghost" data-i18n="hero_cta_github">View on GitHub</a>
+        </div>
+      </div>
+      <div class="hero-code">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <span>quickstart.py</span>
+        </div>
+        <div class="code-body">
+<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">remove_text</span>
+
+<span class="comment"># Mask is optional — subtitle regions</span>
+<span class="comment"># are auto-detected if omitted</span>
+<span class="fn">remove_text</span><span class="op">(</span>
+    <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span>
+    <span class="param">output</span><span class="op">=</span><span class="string">"result/"</span><span class="op">,</span>
+<span class="op">)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ INSTALL STRIP ═══ -->
+  <div class="install-strip" data-od-id="install">
+    <div class="container install-inner">
+      <div class="install-cmd">
+        <span class="dollar">$</span> pip install <span class="cmd">videowipe</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FEATURES ═══ -->
+  <section class="section" id="features" data-od-id="features">
+    <div class="container">
+      <div class="section-label" data-i18n="feat_label">Features</div>
+      <div class="section-title" data-i18n="feat_title">Detect. Select. Inpaint.</div>
+      <p class="section-dek" data-i18n="feat_dek">
+        A complete pipeline from frame sampling to mask generation to background restoration. Built for production use.
+      </p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </div>
+          <h3 data-i18n="feat1_title">Auto-detection</h3>
+          <p data-i18n="feat1_desc">
+            DBNet-based text detector samples frames across the video, finds text regions, and clusters them by position. No manual mask drawing. Works with Chinese, English, Korean, Burmese, and more.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h3 data-i18n="feat2_title">Pluggable backends</h3>
+          <p data-i18n-html="feat2_desc">
+            Default STTN backend runs on CPU. Swap in ProPainter, LaMa, or any external model via <code class="mono">--external-command</code>. Same mask pipeline, better quality when you have GPU.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+            </svg>
+          </div>
+          <h3 data-i18n="feat3_title">Intent-driven cleanup</h3>
+          <p data-i18n-html="feat3_desc">
+            Tell it what to remove in plain English: <code class="mono">--intent "remove bottom Chinese subtitles"</code>. Optional OCR reads text content. LLM-backed selection via <code class="mono">--agent</code>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ HOW IT WORKS ═══ -->
+  <section class="section" id="how-it-works" data-od-id="how-it-works" style="background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+    <div class="container">
+      <div class="section-label" data-i18n="pipe_label">Pipeline</div>
+      <div class="section-title" data-i18n="pipe_title">Three stages, zero config</div>
+      <p class="section-dek" data-i18n="pipe_dek">
+        The full pipeline runs in one command. Here's what happens under the hood.
+      </p>
+      <div class="pipeline-steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3 data-i18n="step1_title">Detection</h3>
+          <p data-i18n="step1_desc">
+            Sample frames across the video. Run DBNet text detection on each. Cluster results by spatial position and select the best preview frame.
+          </p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3 data-i18n="step2_title">Target selection</h3>
+          <p data-i18n="step2_desc">
+            Classify regions as subtitle, watermark, logo, or timestamp. Optional OCR reads the text. Intent parser maps your instructions to specific targets.
+          </p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3 data-i18n="step3_title">Inpainting</h3>
+          <p data-i18n="step3_desc">
+            Generate masks from selected regions. Fill in using temporal information from neighboring frames via STTN or your preferred external model.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ USAGE ═══ -->
+  <section class="section" id="usage" data-od-id="usage">
+    <div class="container">
+      <div class="section-label" data-i18n="usage_label">Usage</div>
+      <div class="section-title" data-i18n="usage_title">Python API or CLI</div>
+      <p class="section-dek" data-i18n="usage_dek">
+        Two ways to use VideoWipe — pick whichever fits your workflow.
+      </p>
+      <div class="examples-grid">
+        <div class="hero-code">
+          <div class="code-header">
+            <div class="code-dots"><span></span><span></span><span></span></div>
+            <span>python — full pipeline</span>
+          </div>
+          <div class="code-body">
+<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">WipeEngine</span>
+
+engine <span class="op">=</span> <span class="fn">WipeEngine</span><span class="op">(</span>
+    <span class="param">task</span><span class="op">=</span><span class="string">"clean"</span><span class="op">,</span>
+    <span class="param">detect_mode</span><span class="op">=</span><span class="string">"balanced"</span><span class="op">,</span>
+    <span class="param">ocr</span><span class="op">=</span><span class="string">"auto"</span><span class="op">,</span>
+<span class="op">)</span>
+engine<span class="op">.</span><span class="fn">process</span><span class="op">(</span>
+    <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span>
+    <span class="param">targets</span><span class="op">=</span><span class="op">[</span><span class="string">"subtitle"</span><span class="op">,</span> <span class="string">"watermark"</span><span class="op">]</span><span class="op">,</span>
+    <span class="param">intent</span><span class="op">=</span><span class="string">"remove Chinese subtitles"</span><span class="op">,</span>
+    <span class="param">output</span><span class="op">=</span><span class="string">"result/"</span><span class="op">,</span>
+<span class="op">)</span>
+engine<span class="op">.</span><span class="fn">cleanup</span><span class="op">()</span>
+          </div>
+        </div>
+        <div class="hero-code">
+          <div class="code-header">
+            <div class="code-dots"><span></span><span></span><span></span></div>
+            <span>terminal — quick clean</span>
+          </div>
+          <div class="code-body">
+<span class="comment"># Auto-detect and remove all text</span>
+videowipe clean input.mp4 <span class="param">-o</span> result/
+
+<span class="comment"># Target specific types</span>
+videowipe clean input.mp4 <span class="param">--target</span> subtitle
+
+<span class="comment"># Natural language intent</span>
+videowipe clean input.mp4 \
+  <span class="param">--intent</span> <span class="string">"remove bottom Chinese subtitles"</span>
+
+<span class="comment"># Preview without processing</span>
+videowipe clean input.mp4 <span class="param">--preview</span> <span class="param">-o</span> result/
+
+<span class="comment"># Docker (CPU)</span>
+docker run <span class="param">--rm</span> <span class="param">-v</span> <span class="string">"$(pwd)"</span>:/data \
+  ghcr.io/kkenny0/videowipe:latest \
+  clean /data/input.mp4 <span class="param">-o</span> /data/result/
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ STATS ═══ -->
+  <section class="section" data-od-id="stats" style="background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">3.8+</div>
+          <div class="stat-label" data-i18n="stat1_label">Python version required</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">~480 MB</div>
+          <div class="stat-label" data-i18n="stat2_label">Docker CPU image</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">0</div>
+          <div class="stat-label" data-i18n="stat3_label">Manual masks needed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">MIT</div>
+          <div class="stat-label" data-i18n="stat4_label">Open-source license</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CTA ═══ -->
+  <section class="cta-section" data-od-id="cta">
+    <div class="container">
+      <div class="section-label" data-i18n="cta_label">Get started</div>
+      <div class="section-title" data-i18n="cta_title">Clean video, no manual work.</div>
+      <p class="section-dek" data-i18n="cta_dek">
+        Install with pip, run one command. Auto-detect handles the rest. Works on CPU, scales to GPU.
+      </p>
+      <div class="cta-actions">
+        <a href="https://pypi.org/project/videowipe/" class="btn btn-primary" data-i18n="cta_install">Install from PyPI</a>
+        <a href="https://github.com/kkenny0/videowipe" class="btn btn-ghost" data-i18n="cta_source">View source on GitHub</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-copy">
+        VideoWipe · MIT License · <span data-i18n="footer_tagline">Auto-detect + pluggable inpainting</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/kkenny0/videowipe">GitHub</a>
+        <a href="https://pypi.org/project/videowipe/">PyPI</a>
+        <a href="https://github.com/kkenny0/videowipe/blob/main/LICENSE">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+  (function() {
+    var i18n = {
+      en: {
+        nav_features: 'Features',
+        nav_how: 'How it works',
+        nav_usage: 'Usage',
+        hero_eyebrow: 'Open-source video inpainting tool',
+        hero_h1: 'Remove text from video.<br><span class="accent">One command.</span>',
+        hero_lead: 'Auto-detect hardcoded subtitles, watermarks, logos, and timestamps. Generate masks and inpaint — no manual work needed. Multilingual out of the box.',
+        hero_cta_start: 'Get started',
+        hero_cta_github: 'View on GitHub',
+        feat_label: 'Features',
+        feat_title: 'Detect. Select. Inpaint.',
+        feat_dek: 'A complete pipeline from frame sampling to mask generation to background restoration. Built for production use.',
+        feat1_title: 'Auto-detection',
+        feat1_desc: 'DBNet-based text detector samples frames across the video, finds text regions, and clusters them by position. No manual mask drawing. Works with Chinese, English, Korean, Burmese, and more.',
+        feat2_title: 'Pluggable backends',
+        feat2_desc: 'Default STTN backend runs on CPU. Swap in ProPainter, LaMa, or any external model via <code class="mono">--external-command</code>. Same mask pipeline, better quality when you have GPU.',
+        feat3_title: 'Intent-driven cleanup',
+        feat3_desc: 'Tell it what to remove in plain English: <code class="mono">--intent "remove bottom Chinese subtitles"</code>. Optional OCR reads text content. LLM-backed selection via <code class="mono">--agent</code>.',
+        pipe_label: 'Pipeline',
+        pipe_title: 'Three stages, zero config',
+        pipe_dek: 'The full pipeline runs in one command. Here\u2019s what happens under the hood.',
+        step1_title: 'Detection',
+        step1_desc: 'Sample frames across the video. Run DBNet text detection on each. Cluster results by spatial position and select the best preview frame.',
+        step2_title: 'Target selection',
+        step2_desc: 'Classify regions as subtitle, watermark, logo, or timestamp. Optional OCR reads the text. Intent parser maps your instructions to specific targets.',
+        step3_title: 'Inpainting',
+        step3_desc: 'Generate masks from selected regions. Fill in using temporal information from neighboring frames via STTN or your preferred external model.',
+        usage_label: 'Usage',
+        usage_title: 'Python API or CLI',
+        usage_dek: 'Two ways to use VideoWipe \u2014 pick whichever fits your workflow.',
+        stat1_label: 'Python version required',
+        stat2_label: 'Docker CPU image',
+        stat3_label: 'Manual masks needed',
+        stat4_label: 'Open-source license',
+        cta_label: 'Get started',
+        cta_title: 'Clean video, no manual work.',
+        cta_dek: 'Install with pip, run one command. Auto-detect handles the rest. Works on CPU, scales to GPU.',
+        cta_install: 'Install from PyPI',
+        cta_source: 'View source on GitHub',
+        footer_tagline: 'Auto-detect + pluggable inpainting'
+      },
+      zh: {
+        nav_features: '功能',
+        nav_how: '工作原理',
+        nav_usage: '使用方式',
+        hero_eyebrow: '开源视频文字擦除工具',
+        hero_h1: '一键去除视频中的文字。<br><span class="accent">只需一行命令。</span>',
+        hero_lead: '自动检测硬字幕、水印、Logo 和时间戳。生成遮罩并修复画面——无需手动操作，原生支持多语言。',
+        hero_cta_start: '开始使用',
+        hero_cta_github: '查看 GitHub',
+        feat_label: '功能',
+        feat_title: '检测 · 筛选 · 修复',
+        feat_dek: '从帧采样到遮罩生成再到背景修复的完整管线，为生产环境而设计。',
+        feat1_title: '自动检测',
+        feat1_desc: '基于 DBNet 的文字检测器对视频进行帧采样，定位文字区域并按位置聚类。无需手动绘制遮罩，支持中文、英文、韩文、缅甸语等多种语言。',
+        feat2_title: '可插拔后端',
+        feat2_desc: '默认 STTN 后端可在 CPU 上运行。通过 <code class="mono">--external-command</code> 切换 ProPainter、LaMa 或任何外部模型。同一套遮罩管线，GPU 环境下效果更好。',
+        feat3_title: '意图驱动',
+        feat3_desc: '用自然语言告诉它要去除什么：<code class="mono">--intent "去除底部中文字幕"</code>。可选 OCR 读取文字内容，通过 <code class="mono">--agent</code> 实现大模型辅助选择。',
+        pipe_label: '管线',
+        pipe_title: '三个阶段，零配置',
+        pipe_dek: '一条命令运行完整管线。以下是背后的工作流程。',
+        step1_title: '检测',
+        step1_desc: '对视频进行帧采样，在每一帧上运行 DBNet 文字检测。按空间位置聚类结果，选择最佳预览帧。',
+        step2_title: '目标选择',
+        step2_desc: '将区域分类为字幕、水印、Logo 或时间戳。可选 OCR 读取文字内容。意图解析器将你的指令映射到具体目标。',
+        step3_title: '修复',
+        step3_desc: '从选定区域生成遮罩。利用相邻帧的时域信息，通过 STTN 或你偏好的外部模型进行画面修复。',
+        usage_label: '使用方式',
+        usage_title: 'Python API 或命令行',
+        usage_dek: '两种使用方式——选适合你工作流的那一种。',
+        stat1_label: 'Python 版本要求',
+        stat2_label: 'Docker CPU 镜像',
+        stat3_label: '需要手动绘制的遮罩',
+        stat4_label: '开源许可证',
+        cta_label: '开始使用',
+        cta_title: '干净视频，无需手动操作。',
+        cta_dek: 'pip 安装，一行命令。自动检测处理剩下的事。支持 CPU，可扩展至 GPU。',
+        cta_install: '从 PyPI 安装',
+        cta_source: '在 GitHub 查看源码',
+        footer_tagline: '自动检测 + 可插拔修复引擎'
+      }
+    };
+
+    function applyLang(lang) {
+      var dict = i18n[lang];
+      if (!dict) return;
+      // textContent nodes
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n');
+        if (dict[key] !== undefined) el.textContent = dict[key];
+      });
+      // innerHTML nodes
+      document.querySelectorAll('[data-i18n-html]').forEach(function(el) {
+        var key = el.getAttribute('data-i18n-html');
+        if (dict[key] !== undefined) el.innerHTML = dict[key];
+      });
+      // toggle active button
+      document.querySelectorAll('.lang-switch button').forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-lang') === lang);
+      });
+      // update html lang
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      localStorage.setItem('vw-lang', lang);
+    }
+
+    // init from localStorage or browser preference
+    var saved = localStorage.getItem('vw-lang');
+    if (!saved) {
+      saved = navigator.language && navigator.language.startsWith('zh') ? 'zh' : 'en';
+    }
+    applyLang(saved);
+
+    // bind buttons
+    document.querySelectorAll('.lang-switch button').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        applyLang(btn.getAttribute('data-lang'));
+      });
+    });
+  })();
+  </script>
+
+</body>
+</html>
