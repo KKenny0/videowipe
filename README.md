@@ -172,7 +172,7 @@ Tested on a multilingual music video (Korean + Burmese subtitles, 852x480, 10s c
 |----------|----------------------|-----------------|
 | <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
 
-ProPainter removes all text including overlaid text on moving objects. STTN misses text on moving objects and shows visible blur in restored regions. Full evaluation details in `plans/candidate-eval-propainter.md`.
+Full evaluation details in `plans/candidate-eval-propainter.md`.
 
 </details>
 

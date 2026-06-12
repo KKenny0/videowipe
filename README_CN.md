@@ -172,7 +172,7 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 |----------|----------------------|-----------------|
 | <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
 
-ProPainter 能移除所有文字，包括运动物体上的叠加文字。STTN 会遗漏运动物体上的文字，且修复区域有明显模糊。完整评估细节见 `plans/candidate-eval-propainter.md`。
+完整评估细节见 `plans/candidate-eval-propainter.md`。
 
 </details>
 
