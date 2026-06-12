@@ -9,3 +9,4 @@ auto_mask.png
 result/
 benchmark_report.json
 AGENTS.md
+.gstack/
