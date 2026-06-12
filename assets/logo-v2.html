@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoWipe — Logo v2 打磨</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --fg: #f0f0f0;
+      --muted: #6b6b6b;
+      --border: #222;
+      --accent: #FF6B35;
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Outfit', system-ui, sans-serif;
+      line-height: 1.5;
+      padding: 48px 32px 80px;
+    }
+    .container { max-width: 1160px; margin: 0 auto; }
+
+    /* Header */
+    .header { margin-bottom: 48px; }
+    .header-label {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: var(--accent); margin-bottom: 6px;
+    }
+    .header h1 {
+      font-size: 28px; font-weight: 800;
+      letter-spacing: -0.02em; margin-bottom: 8px;
+    }
+    .header p { font-size: 15px; color: var(--muted); max-width: 640px; line-height: 1.7; }
+    .header .strategy {
+      margin-top: 16px; padding: 14px 18px;
+      background: rgba(255,107,53,0.06);
+      border: 1px solid rgba(255,107,53,0.15);
+      border-radius: 10px;
+      font-size: 14px; color: var(--fg); line-height: 1.7;
+      max-width: 640px;
+    }
+    .strategy em { color: var(--accent); font-style: normal; font-weight: 600; }
+
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 32px;
+    }
+    .card-head {
+      display: flex; align-items: baseline; gap: 10px;
+      margin-bottom: 24px;
+    }
+    .card-id {
+      font-size: 13px; font-weight: 700;
+      color: var(--accent); letter-spacing: 0.05em;
+    }
+    .card-name { font-size: 17px; font-weight: 700; }
+    .card-tag {
+      font-size: 11px; font-weight: 600;
+      color: var(--muted); background: rgba(255,255,255,0.04);
+      padding: 2px 8px; border-radius: 4px;
+      letter-spacing: 0.04em;
+    }
+
+    /* Preview contexts */
+    .contexts { display: flex; gap: 16px; margin-bottom: 24px; }
+    .ctx {
+      width: 96px; height: 96px;
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .ctx::after {
+      position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .ctx-dark { background: #111; }
+    .ctx-dark::after { content: 'dark'; }
+    .ctx-light { background: #f5f5f5; border: 1px solid var(--border); }
+    .ctx-light::after { content: 'light'; }
+    .ctx svg { width: 60px; height: 60px; }
+    .ctx-dark svg { color: #f0f0f0; }
+    .ctx-light svg { color: #111; }
+
+    /* Wordmark row */
+    .wordmark {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .wordmark svg { width: 32px; height: 32px; color: #f0f0f0; flex-shrink: 0; }
+    .wordmark span {
+      font-size: 24px; font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+
+    /* Sizes */
+    .sizes {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 18px;
+    }
+    .sizes-label {
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      min-width: 36px;
+    }
+    .size-chip {
+      display: flex; align-items: center; justify-content: center;
+      background: #111; border-radius: 6px; color: #f0f0f0;
+    }
+    .size-chip.s48 { width: 48px; height: 48px; }
+    .size-chip.s48 svg { width: 34px; height: 34px; }
+    .size-chip.s40 { width: 40px; height: 40px; }
+    .size-chip.s40 svg { width: 28px; height: 28px; }
+    .size-chip.s32 { width: 32px; height: 32px; }
+    .size-chip.s32 svg { width: 22px; height: 22px; }
+    .size-chip.s24 { width: 24px; height: 24px; }
+    .size-chip.s24 svg { width: 16px; height: 16px; }
+    .size-chip.s16 { width: 16px; height: 16px; }
+    .size-chip.s16 svg { width: 11px; height: 11px; }
+
+    /* Description */
+    .desc {
+      font-size: 13px; color: var(--muted); line-height: 1.7;
+    }
+    .desc strong { color: var(--fg); font-weight: 600; }
+
+    /* Recommendation badge */
+    .rec {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 11px; font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 3px 8px;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      opacity: 0.85;
+    }
+
+    /* Divider with comparison label */
+    .divider {
+      margin: 40px 0;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+    .divider span {
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted);
+    }
+
+    /* Refinement section */
+    .refine-card {
+      background: var(--surface);
+      border: 1px solid rgba(255,107,53,0.25);
+      border-radius: 14px;
+      padding: 32px;
+      grid-column: 1 / -1;
+    }
+    .refine-card .card-head { margin-bottom: 20px; }
+
+    /* Comparison row */
+    .compare {
+      display: flex; gap: 24px; align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .compare-item {
+      flex: 1; min-width: 200px;
+      text-align: center;
+    }
+    .compare-item .label {
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 12px;
+    }
+    .compare-item svg { width: 80px; height: 80px; }
+    .compare-item .note {
+      font-size: 12px; color: var(--muted);
+      margin-top: 8px; line-height: 1.5;
+    }
+
+    /* Palette section */
+    .palette {
+      margin-top: 48px; padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+    .palette h2 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: var(--muted); margin-bottom: 20px;
+    }
+    .swatches { display: flex; gap: 20px; flex-wrap: wrap; }
+    .swatch {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .swatch-color {
+      width: 52px; height: 52px; border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .swatch-info {
+      font-size: 11px; color: var(--muted);
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+      text-align: center;
+    }
+    .swatch-name {
+      font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* Notes */
+    .notes {
+      margin-top: 32px; font-size: 13px;
+      color: var(--muted); line-height: 1.8;
+      max-width: 640px;
+    }
+    .notes strong { color: var(--fg); }
+
+    /* Responsive */
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      .refine-card { grid-column: 1; }
+      body { padding: 24px 16px 48px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-label">Logo Design — v2 Refinement</div>
+      <h1>VideoWipe — A+B 组合打磨</h1>
+      <p>保留 A（画框 + 擦除）的功能直白性，融入 B（W 字母）的品牌辨识度。核心思路：<em>让擦除动作本身形成 W 的形态</em>。</p>
+      <div class="strategy">
+        组合策略：画框是视频（A 的核心），穿过画框的路径构成 W（B 的核心），左侧残存字幕条提供「擦除前」的语境。四个变体从不同角度探索这个组合。
+      </div>
+    </div>
+
+    <div class="grid">
+
+      <!-- ═══ Variant 1: W-Wipe Frame ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">1</span>
+          <span class="card-name">W-Wipe Frame</span>
+          <span class="card-tag">擦除路径 = W</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <!-- Frame -->
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <!-- Subtitle bars (left side, "before" zone) -->
+              <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+              <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+              <!-- W-shaped wipe path -->
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.16"/>
+              <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.16"/>
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+            <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s48">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.4"/>
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="3.2"/>
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="4"/>
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="5"/>
+              <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>最直接的 A+B 融合。</strong>画框不变，擦除线从 v1 的单斜线变成 W 形锯齿路径——左上切入，W 谷底扫过字幕区，右上穿出。W 就是擦除动作本身，不是外挂装饰。语义完整：画框 = 视频，W 路径 = 正在擦。
+        </p>
+        <div class="rec">推荐</div>
+      </div>
+
+      <!-- ═══ Variant 2: W-Arc Frame ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">2</span>
+          <span class="card-name">W-Arc Frame</span>
+          <span class="card-tag">弧线 W + 画框</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <!-- Frame -->
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <!-- Subtitle bars -->
+              <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+              <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+              <!-- Smooth W arc (from B's sweep, curved) -->
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.16"/>
+              <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.16"/>
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+            <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s48">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.4"/>
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="3.2"/>
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="3.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="4"/>
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="5"/>
+              <path d="M16 14 Q16 48 32 28 Q48 8 48 48" stroke="#FF6B35" stroke-width="5.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>柔和弧线版。</strong>用 B 的弧线语言替代锯齿 W，两条贝塞尔曲线构成流畅的 W 轮廓。比 Variant 1 更优雅，像一次连续的「扫描擦拭」动作。减少棱角感，增加动感。
+        </p>
+      </div>
+
+      <!-- ═══ Variant 3: Split Wipe ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">3</span>
+          <span class="card-name">Split Wipe</span>
+          <span class="card-tag">左右分割 + W 谷</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <!-- Frame -->
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <!-- Left zone: text bars (dirty) -->
+              <rect x="12" y="22" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+              <rect x="12" y="28" width="12" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+              <rect x="12" y="34" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+              <rect x="12" y="40" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+              <!-- W valley divider -->
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <!-- Right zone: clean (empty) -->
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+              <rect x="12" y="22" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.14"/>
+              <rect x="12" y="28" width="12" height="2.5" rx="1.25" fill="currentColor" opacity="0.14"/>
+              <rect x="12" y="34" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.14"/>
+              <rect x="12" y="40" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.14"/>
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+            <rect x="12" y="22" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="28" width="12" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="34" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="40" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s48">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.4"/>
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="3.2"/>
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="4"/>
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="5"/>
+              <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>最简洁的 A+B。</strong>画框内 W 形 V 字谷把画面分成「脏」和「净」两半——左边密密麻麻的文字条，右边一片空白。橙色 V 谷就是擦除的前沿。信息量最大，视觉冲击最干净。
+        </p>
+        <div class="rec">推荐</div>
+      </div>
+
+      <!-- ═══ Variant 4: W-Edge Frame ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">4</span>
+          <span class="card-name">W-Edge Frame</span>
+          <span class="card-tag">W 形底边 + 画框</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <!-- Frame with W-shaped bottom edge -->
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z"
+                    stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+              <!-- Subtitle bars in upper area -->
+              <rect x="12" y="22" width="14" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+              <rect x="12" y="28" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+              <!-- Orange accent on the W edge -->
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z"
+                    stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+              <rect x="12" y="22" width="14" height="2.5" rx="1.25" fill="currentColor" opacity="0.16"/>
+              <rect x="12" y="28" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.16"/>
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z"
+                  stroke="currentColor" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+            <rect x="12" y="22" width="14" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+            <rect x="12" y="28" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+            <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s48">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linejoin="round"/>
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z" stroke="currentColor" stroke-width="3.2" fill="none" stroke-linejoin="round"/>
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z" stroke="currentColor" stroke-width="4" fill="none" stroke-linejoin="round"/>
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M6 10 L58 10 L58 40 L46 54 L38 40 L32 54 L26 40 L18 54 L6 40 Z" stroke="currentColor" stroke-width="5" fill="none" stroke-linejoin="round"/>
+              <path d="M18 54 L26 40 L32 54 L38 40 L46 54" stroke="#FF6B35" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>W 镶入画框本身。</strong>画框底边被 W 的锯齿取代，橙色描出 W 轮廓——框架和品牌符号融为一体。最大胆的组合，结构感最强。适合做更有设计辨识度的版本。
+        </p>
+      </div>
+
+    </div><!-- /grid -->
+
+    <!-- Comparison with original A -->
+    <div class="divider"><span>对比原方案 A</span></div>
+
+    <div class="refine-card">
+      <div class="card-head">
+        <span class="card-id">A → 1/2/3/4</span>
+        <span class="card-name">演化对比</span>
+      </div>
+      <div class="compare">
+        <div class="compare-item">
+          <div class="label">原 A · Swipe Frame</div>
+          <svg viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="2.5"/>
+            <rect x="13" y="35" width="14" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+            <rect x="13" y="41" width="10" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+            <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <div class="note">单斜线擦除<br>功能直白，品牌感弱</div>
+        </div>
+        <div class="compare-item">
+          <div class="label">v2-1 · W-Wipe</div>
+          <svg viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+            <rect x="12" y="36" width="14" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <rect x="12" y="41" width="10" height="2.8" rx="1.4" fill="currentColor" opacity="0.2"/>
+            <path d="M18 10 L24 52 L32 28 L40 52 L46 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="note">W 路径替代斜线<br>品牌 + 功能平衡</div>
+        </div>
+        <div class="compare-item">
+          <div class="label">v2-3 · Split Wipe</div>
+          <svg viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="6" y="10" width="52" height="44" rx="5" stroke="currentColor" stroke-width="2.2"/>
+            <rect x="12" y="22" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="28" width="12" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="34" width="16" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <rect x="12" y="40" width="10" height="2.5" rx="1.25" fill="currentColor" opacity="0.18"/>
+            <path d="M24 10 L32 44 L40 10" stroke="#FF6B35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="note">V 谷分割脏/净<br>信息密度最高</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Palette -->
+    <div class="palette">
+      <h2>色板</h2>
+      <div class="swatches">
+        <div class="swatch">
+          <div class="swatch-color" style="background:#111111"></div>
+          <div class="swatch-info">#111111</div>
+          <div class="swatch-name">Base</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#1A1A1A"></div>
+          <div class="swatch-info">#1A1A1A</div>
+          <div class="swatch-name">Surface</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#F5F5F5"></div>
+          <div class="swatch-info">#F5F5F5</div>
+          <div class="swatch-name">Foreground</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#FF6B35"></div>
+          <div class="swatch-info">#FF6B35</div>
+          <div class="swatch-name">Accent</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#6B6B6B"></div>
+          <div class="swatch-info">#6B6B6B</div>
+          <div class="swatch-name">Muted</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="notes">
+      <strong>我的判断：</strong><br><br>
+      <strong>Variant 1（W-Wipe）</strong>是 A+B 的最佳平衡点——W 路径既是擦除动作（A 的语义），又是品牌标识（B 的辨识度）。不需要额外解释，看一眼就知道「这是个叫 W…什么的擦除工具」。<br><br>
+      <strong>Variant 3（Split Wipe）</strong>更极简，如果你偏好克制设计。V 谷分割的脏/净对比非常有力，但在小尺寸下 W 的辨识度不如 Variant 1 明显。<br><br>
+      两个推荐你选一个，或者告诉我你的直觉反应。选好了我就打磨到交付级（线宽、比例、圆角微调），然后直接进落地页。
+    </div>
+  </div>
+</body>
+</html>

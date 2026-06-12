@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoWipe — Logo Final</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #131313;
+      --fg: #f0f0f0;
+      --muted: #6b6b6b;
+      --border: #1e1e1e;
+      --accent: #FF6B35;
+      --accent-dim: rgba(255,107,53,0.12);
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Outfit', system-ui, sans-serif;
+      line-height: 1.5;
+      padding: 48px 32px 96px;
+    }
+    .container { max-width: 1120px; margin: 0 auto; }
+
+    /* === HEADER === */
+    .header { margin-bottom: 56px; }
+    .header-badge {
+      display: inline-block;
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: var(--accent); padding: 3px 10px;
+      border: 1px solid rgba(255,107,53,0.3);
+      border-radius: 4px; margin-bottom: 12px;
+    }
+    .header h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .header p { font-size: 15px; color: var(--muted); max-width: 560px; line-height: 1.7; }
+
+    /* === SECTIONS === */
+    .section { margin-bottom: 56px; }
+    .section-label {
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      color: var(--muted); margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* === HERO INSPECTION === */
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+    }
+    .hero-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      min-height: 260px;
+    }
+    .hero-card svg.hero-icon { width: 160px; height: 160px; }
+    .hero-card .label {
+      margin-top: 16px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    /* === CONTEXT ROW === */
+    .context-row {
+      display: flex; gap: 16px; flex-wrap: wrap;
+    }
+    .ctx-cell {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 10px;
+    }
+    .ctx-box {
+      width: 120px; height: 120px;
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border);
+    }
+    .ctx-box svg { width: 72px; height: 72px; }
+    .ctx-box.dark { background: #111; }
+    .ctx-box.dark svg { color: #f0f0f0; }
+    .ctx-box.light { background: #f5f5f5; }
+    .ctx-box.light svg { color: #1a1a1a; }
+    .ctx-box.mono-w { background: #000; }
+    .ctx-box.mono-w svg { color: #fff; }
+    .ctx-box.mono-b { background: #fff; }
+    .ctx-box.mono-b svg { color: #000; }
+    .ctx-box.accent-bg { background: var(--accent); }
+    .ctx-box.accent-bg svg { color: #fff; }
+    .ctx-label {
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    /* === WORDMARK ROW === */
+    .wm-row {
+      display: flex; flex-direction: column; gap: 24px;
+    }
+    .wm-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 32px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .wm-item svg { flex-shrink: 0; }
+    .wm-item .wm-text {
+      font-family: 'Outfit', system-ui, sans-serif;
+      font-weight: 800; letter-spacing: -0.03em;
+      color: #f0f0f0;
+    }
+    .wm-item.stacked { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .wm-item.stacked .wm-inner { display: flex; align-items: center; gap: 14px; }
+    .wm-note {
+      margin-left: auto;
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* === SIZE PROGRESSION === */
+    .size-row {
+      display: flex; align-items: flex-end; gap: 24px;
+      flex-wrap: wrap;
+    }
+    .size-cell {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 8px;
+    }
+    .size-chip {
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px;
+    }
+    .size-chip.dark-bg { background: #111; }
+    .size-chip svg { color: #f0f0f0; }
+
+    .s160 { width: 160px; height: 160px; }
+    .s160 svg { width: 160px; height: 160px; }
+    .s96 { width: 96px; height: 96px; }
+    .s96 svg { width: 96px; height: 96px; }
+    .s64 { width: 64px; height: 64px; }
+    .s64 svg { width: 64px; height: 64px; }
+    .s48 { width: 48px; height: 48px; }
+    .s48 svg { width: 48px; height: 48px; }
+    .s32 { width: 32px; height: 32px; }
+    .s32 svg { width: 32px; height: 32px; }
+    .s24 { width: 24px; height: 24px; }
+    .s24 svg { width: 24px; height: 24px; }
+    .s16 { width: 16px; height: 16px; }
+    .s16 svg { width: 16px; height: 16px; }
+
+    .size-label {
+      font-size: 10px; font-weight: 600;
+      color: var(--muted); font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+    }
+
+    /* === CONSTRUCTION GRID === */
+    .construction {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      display: flex; justify-content: center;
+    }
+    .construction svg { width: 280px; height: 280px; }
+
+    /* === PALETTE === */
+    .palette-row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .swatch {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 8px;
+    }
+    .swatch-color {
+      width: 56px; height: 56px; border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .swatch-hex {
+      font-size: 11px; color: var(--muted);
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+    }
+    .swatch-name {
+      font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* === SPEC TABLE === */
+    .spec-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .spec-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+    .spec-key {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    .spec-val {
+      font-size: 14px; color: var(--fg); line-height: 1.6;
+    }
+    .spec-val code {
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+      font-size: 12px; background: rgba(255,255,255,0.04);
+      padding: 1px 6px; border-radius: 4px;
+    }
+
+    /* === RESPONSIVE === */
+    @media (max-width: 780px) {
+      .hero-grid { grid-template-columns: 1fr; }
+      .spec-grid { grid-template-columns: 1fr; }
+      body { padding: 24px 16px 48px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- ═══ HEADER ═══ -->
+    <div class="header">
+      <div class="header-badge">Final · Delivery</div>
+      <h1>VideoWipe — Logo 交付</h1>
+      <p>W-Wipe Frame（A+B 融合）。画框 = 视频，W 路径 = 擦除动作。橙色 W 同时承载品牌辨识度和功能语义。</p>
+    </div>
+
+    <!-- ═══ HERO INSPECTION ═══ -->
+    <div class="section">
+      <div class="section-label">大图检验</div>
+      <div class="hero-grid">
+        <div class="hero-card" style="background:#111">
+          <svg class="hero-icon" viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"/>
+            <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+            <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+            <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="label">暗色底</div>
+        </div>
+        <div class="hero-card" style="background:#f5f5f5; border-color:#ddd;">
+          <svg class="hero-icon" viewBox="0 0 64 64" fill="none" color="#1a1a1a">
+            <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"/>
+            <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.18"/>
+            <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.18"/>
+            <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="label">亮色底</div>
+        </div>
+        <div class="hero-card" style="background:var(--accent)">
+          <svg class="hero-icon" viewBox="0 0 64 64" fill="none" color="#fff">
+            <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"/>
+            <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.2"/>
+            <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.2"/>
+            <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="label">品牌色底</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ CONTEXTS ═══ -->
+    <div class="section">
+      <div class="section-label">使用场景</div>
+      <div class="context-row">
+        <div class="ctx-cell">
+          <div class="ctx-box dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="ctx-label">Dark</span>
+        </div>
+        <div class="ctx-cell">
+          <div class="ctx-box light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.16"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.16"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="ctx-label">Light</span>
+        </div>
+        <div class="ctx-cell">
+          <div class="ctx-box mono-w">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="ctx-label">Mono White</span>
+        </div>
+        <div class="ctx-cell">
+          <div class="ctx-box mono-b">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="ctx-label">Mono Black</span>
+        </div>
+        <div class="ctx-cell">
+          <div class="ctx-box accent-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="ctx-label">On Accent</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ WORDMARK COMBOS ═══ -->
+    <div class="section">
+      <div class="section-label">Icon + Wordmark 组合</div>
+      <div class="wm-row">
+        <div class="wm-item">
+          <svg width="36" height="36" viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+            <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+            <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+            <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="wm-text" style="font-size:26px;">VideoWipe</span>
+          <span class="wm-note">Horizontal · 默认</span>
+        </div>
+        <div class="wm-item">
+          <svg width="28" height="28" viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+            <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+            <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="wm-text" style="font-size:20px; font-weight:700; letter-spacing:-0.02em; color:#6b6b6b;">VideoWipe</span>
+          <span class="wm-note">Small · Navbar</span>
+        </div>
+        <div class="wm-item stacked">
+          <div class="wm-inner">
+            <svg width="52" height="52" viewBox="0 0 64 64" fill="none" color="#f0f0f0">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="wm-text" style="font-size:28px;">VideoWipe</span>
+          </div>
+          <span class="wm-note" style="margin:0;">Stacked · 社交头像 / OG Image</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SIZE PROGRESSION ═══ -->
+    <div class="section">
+      <div class="section-label">缩放表现</div>
+      <div class="size-row">
+        <div class="size-cell">
+          <div class="size-chip s160 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.2"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">160</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s96 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.4"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">96</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s64 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.8"/>
+              <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="currentColor" opacity="0.22"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">64</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s48 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2.2"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">48</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s32 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="2.8"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">32 · Favicon</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s24 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="3.6"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">24</span>
+        </div>
+        <div class="size-cell">
+          <div class="size-chip s16 dark-bg">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="4.5"/>
+              <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="size-label">16 · Min</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ CONSTRUCTION GRID ═══ -->
+    <div class="section">
+      <div class="section-label">几何构造</div>
+      <div class="construction">
+        <svg viewBox="0 0 64 64" fill="none">
+          <!-- Grid lines -->
+          <line x1="32" y1="0" x2="32" y2="64" stroke="#333" stroke-width="0.3" stroke-dasharray="1 2"/>
+          <line x1="0" y1="32" x2="64" y2="32" stroke="#333" stroke-width="0.3" stroke-dasharray="1 2"/>
+          <!-- Frame -->
+          <rect x="7" y="10" width="50" height="44" rx="4" stroke="#f0f0f0" stroke-width="1.2"/>
+          <!-- Subtitle bars -->
+          <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="#f0f0f0" opacity="0.18"/>
+          <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="#f0f0f0" opacity="0.18"/>
+          <!-- W path -->
+          <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Key points -->
+          <circle cx="17" cy="10" r="1.5" fill="#FF6B35" opacity="0.6"/>
+          <circle cx="23" cy="50" r="1.5" fill="#FF6B35" opacity="0.6"/>
+          <circle cx="32" cy="26" r="1.5" fill="#FF6B35" opacity="0.6"/>
+          <circle cx="41" cy="50" r="1.5" fill="#FF6B35" opacity="0.6"/>
+          <circle cx="47" cy="10" r="1.5" fill="#FF6B35" opacity="0.6"/>
+          <!-- Dimension notes -->
+          <text x="32" y="62" text-anchor="middle" fill="#6b6b6b" font-size="4" font-family="monospace">64 × 64 viewBox</text>
+          <text x="32" y="8" text-anchor="middle" fill="#FF6B35" font-size="3.5" font-family="monospace" opacity="0.7">W-wipe path: 5 keypoints</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- ═══ PALETTE ═══ -->
+    <div class="section">
+      <div class="section-label">品牌色板</div>
+      <div class="palette-row">
+        <div class="swatch">
+          <div class="swatch-color" style="background:#0a0a0a"></div>
+          <div class="swatch-hex">#0A0A0A</div>
+          <div class="swatch-name">Background</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#111111"></div>
+          <div class="swatch-hex">#111111</div>
+          <div class="swatch-name">Surface</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#F0F0F0"></div>
+          <div class="swatch-hex">#F0F0F0</div>
+          <div class="swatch-name">Foreground</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#FF6B35"></div>
+          <div class="swatch-hex">#FF6B35</div>
+          <div class="swatch-name">Accent</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#6B6B6B"></div>
+          <div class="swatch-hex">#6B6B6B</div>
+          <div class="swatch-name">Muted</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#1E1E1E"></div>
+          <div class="swatch-hex">#1E1E1E</div>
+          <div class="swatch-name">Border</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SPEC ═══ -->
+    <div class="section">
+      <div class="section-label">规格</div>
+      <div class="spec-grid">
+        <div class="spec-item">
+          <div class="spec-key">图标字体</div>
+          <div class="spec-val">Outfit 800 · <code>font-weight: 800</code><br>几何感强，适合开发者工具品牌</div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-key">ViewBox</div>
+          <div class="spec-val"><code>0 0 64 64</code><br>画框 <code>7,10 50×44 rx4</code></div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-key">W 路径关键点</div>
+          <div class="spec-val">
+            <code>(17,10) → (23,50) → (32,26) → (41,50) → (47,10)</code><br>
+            两谷对称于中轴 x=32，峰高 y=26
+          </div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-key">使用规则</div>
+          <div class="spec-val">
+            最小尺寸 <code>16px</code>（去掉字幕条）<br>
+            单色版本保留 W 路径 + 画框<br>
+            品牌色底上用白色 W
+          </div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-key">导出格式</div>
+          <div class="spec-val">SVG（主）· PNG @16/32/64/128/256/512<br>ICO @16/32/48（favicon）</div>
+        </div>
+        <div class="spec-item">
+          <div class="spec-key">安全区</div>
+          <div class="spec-val">图标四周保留 <code>10%</code> 间距<br>Wordmark 右侧不小于图标宽度</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

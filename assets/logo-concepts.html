@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoWipe — Logo 方案</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --fg: #f0f0f0;
+      --muted: #6b6b6b;
+      --border: #222;
+      --accent: #FF6B35;
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Outfit', system-ui, sans-serif;
+      line-height: 1.5;
+      padding: 48px 32px 80px;
+    }
+    .container { max-width: 1120px; margin: 0 auto; }
+
+    /* Header */
+    .header { margin-bottom: 48px; }
+    .header-label {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: var(--accent); margin-bottom: 6px;
+    }
+    .header h1 {
+      font-size: 28px; font-weight: 800;
+      letter-spacing: -0.02em; margin-bottom: 8px;
+    }
+    .header p { font-size: 15px; color: var(--muted); max-width: 560px; line-height: 1.7; }
+
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 32px;
+    }
+    .card-head {
+      display: flex; align-items: baseline; gap: 10px;
+      margin-bottom: 24px;
+    }
+    .card-id {
+      font-size: 13px; font-weight: 700;
+      color: var(--accent); letter-spacing: 0.05em;
+    }
+    .card-name { font-size: 17px; font-weight: 700; }
+
+    /* Preview contexts */
+    .contexts { display: flex; gap: 16px; margin-bottom: 24px; }
+    .ctx {
+      width: 96px; height: 96px;
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .ctx::after {
+      position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .ctx-dark { background: #111; }
+    .ctx-dark::after { content: 'dark'; }
+    .ctx-light { background: #f5f5f5; border: 1px solid var(--border); }
+    .ctx-light::after { content: 'light'; }
+    .ctx svg { width: 60px; height: 60px; }
+    .ctx-dark svg { color: #f0f0f0; }
+    .ctx-light svg { color: #111; }
+
+    /* Wordmark row */
+    .wordmark {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .wordmark svg { width: 32px; height: 32px; color: #f0f0f0; flex-shrink: 0; }
+    .wordmark span {
+      font-size: 24px; font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+
+    /* Sizes */
+    .sizes {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 18px;
+    }
+    .sizes-label {
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      min-width: 36px;
+    }
+    .size-chip {
+      display: flex; align-items: center; justify-content: center;
+      background: #111; border-radius: 6px; color: #f0f0f0;
+    }
+    .size-chip.s40 { width: 40px; height: 40px; }
+    .size-chip.s40 svg { width: 28px; height: 28px; }
+    .size-chip.s32 { width: 32px; height: 32px; }
+    .size-chip.s32 svg { width: 22px; height: 22px; }
+    .size-chip.s24 { width: 24px; height: 24px; }
+    .size-chip.s24 svg { width: 16px; height: 16px; }
+    .size-chip.s16 { width: 16px; height: 16px; }
+    .size-chip.s16 svg { width: 11px; height: 11px; }
+
+    /* Description */
+    .desc {
+      font-size: 13px; color: var(--muted); line-height: 1.7;
+    }
+    .desc strong { color: var(--fg); font-weight: 600; }
+
+    /* Recommendation badge */
+    .rec {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 11px; font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 3px 8px;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      opacity: 0.85;
+    }
+
+    /* Palette section */
+    .palette {
+      margin-top: 48px; padding-top: 32px;
+      border-top: 1px solid var(--border);
+    }
+    .palette h2 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: var(--muted); margin-bottom: 20px;
+    }
+    .swatches { display: flex; gap: 20px; flex-wrap: wrap; }
+    .swatch {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .swatch-color {
+      width: 52px; height: 52px; border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .swatch-info {
+      font-size: 11px; color: var(--muted);
+      font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+      text-align: center;
+    }
+    .swatch-name {
+      font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* Notes */
+    .notes {
+      margin-top: 32px; font-size: 13px;
+      color: var(--muted); line-height: 1.8;
+      max-width: 640px;
+    }
+    .notes strong { color: var(--fg); }
+
+    /* Responsive */
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+      body { padding: 24px 16px 48px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-label">Logo Design</div>
+      <h1>VideoWipe — 4 个方向</h1>
+      <p>四个方案分别从功能直译、品牌字母、抽象符号、隐喻四个角度切入，共用同一套色板和字体。每个都展示了暗色/亮色背景、搭配 Wordmark 的效果，以及缩小到 16px 的辨识度。</p>
+    </div>
+
+    <div class="grid">
+
+      <!-- ═══ Concept A: Swipe Frame ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">A</span>
+          <span class="card-name">Swipe Frame</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="2.5"/>
+              <rect x="13" y="35" width="14" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+              <rect x="13" y="41" width="10" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+              <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="2.5"/>
+              <rect x="13" y="35" width="14" height="3" rx="1.5" fill="currentColor" opacity="0.18"/>
+              <rect x="13" y="41" width="10" height="3" rx="1.5" fill="currentColor" opacity="0.18"/>
+              <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="2.5"/>
+            <rect x="13" y="35" width="14" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+            <rect x="13" y="41" width="10" height="3" rx="1.5" fill="currentColor" opacity="0.22"/>
+            <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s40">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="2.8"/>
+              <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="3.2"/>
+              <line x1="28" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="3.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="3.8"/>
+              <line x1="29" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="3.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="6" y="12" width="52" height="40" rx="5" stroke="currentColor" stroke-width="4.5"/>
+              <line x1="30" y1="12" x2="34" y2="52" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>视频画框 + 对角擦除线。</strong>左边残存字幕文字的灰色横条，右边被擦干净。橙色的对角线就是「擦」的动作本身。功能语义最直接，一眼就能看懂产品做什么。
+        </p>
+        <div class="rec">推荐</div>
+      </div>
+
+      <!-- ═══ Concept B: W Sweep ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">B</span>
+          <span class="card-name">W Sweep</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s40">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="3.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18 42 Q32 14 46 42" stroke="#FF6B35" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M10 18 L20 46 L32 28 L44 46 L54 18" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>W 字母 + 横扫弧线。</strong>W 是产品名首字母，弧线从左谷到右谷，暗示一次性擦过的动作。品牌辨识度最高，适合做独立图标（favicon、GitHub avatar）。
+        </p>
+      </div>
+
+      <!-- ═══ Concept C: Clean Reveal ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">C</span>
+          <span class="card-name">Clean Reveal</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="2.5"/>
+              <rect x="13" y="37" width="13" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+              <rect x="13" y="42" width="9" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+              <path d="M32 32 L32 6 A26 26 0 0 1 54.5 19 Z" fill="#FF6B35" opacity="0.12"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="2.5"/>
+              <rect x="13" y="37" width="13" height="2.5" rx="1.25" fill="currentColor" opacity="0.16"/>
+              <rect x="13" y="42" width="9" height="2.5" rx="1.25" fill="currentColor" opacity="0.16"/>
+              <path d="M32 32 L32 6 A26 26 0 0 1 54.5 19 Z" fill="#FF6B35" opacity="0.12"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="2.5"/>
+            <rect x="13" y="37" width="13" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+            <rect x="13" y="42" width="9" height="2.5" rx="1.25" fill="currentColor" opacity="0.2"/>
+            <path d="M32 32 L32 6 A26 26 0 0 1 54.5 19 Z" fill="#FF6B35" opacity="0.12"/>
+            <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s40">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="2.8"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="3.2"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="3.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="3.8"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="3.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="26" stroke="currentColor" stroke-width="4.5"/>
+              <path d="M32 6 A26 26 0 0 1 54.5 19" stroke="#FF6B35" stroke-width="4.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>圆形画布 + 扫过揭示弧。</strong>底部残留文字条，右上角的扇形区域已经被「擦干净」。抽象、完整，天然适合做 App 图标和圆形头像。
+        </p>
+      </div>
+
+      <!-- ═══ Concept D: Lens Clean ═══ -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-id">D</span>
+          <span class="card-name">Lens Clean</span>
+        </div>
+        <div class="contexts">
+          <div class="ctx ctx-dark">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="2.5"/>
+              <circle cx="32" cy="32" r="15" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="ctx ctx-light">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="2.5"/>
+              <circle cx="32" cy="32" r="15" stroke="currentColor" stroke-width="1.5" opacity="0.25"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="wordmark">
+          <svg viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="2.5"/>
+            <circle cx="32" cy="32" r="15" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+            <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <span>VideoWipe</span>
+        </div>
+        <div class="sizes">
+          <span class="sizes-label">缩放</span>
+          <div class="size-chip s40">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="2.8"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="3.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s32">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="3.2"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="3.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s24">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="3.8"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="size-chip s16">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" stroke-width="4.5"/>
+              <line x1="18" y1="18" x2="46" y2="46" stroke="#FF6B35" stroke-width="5" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <p class="desc">
+          <strong>镜头双圆环 + 擦拭对角线。</strong>同心圆暗示摄影/视频镜头，橙色对角线是「正在擦拭」的动态感。最优雅抽象，像一个「正在被清洁」的镜头。
+        </p>
+      </div>
+
+    </div><!-- /grid -->
+
+    <!-- Palette -->
+    <div class="palette">
+      <h2>色板</h2>
+      <div class="swatches">
+        <div class="swatch">
+          <div class="swatch-color" style="background:#111111"></div>
+          <div class="swatch-info">#111111</div>
+          <div class="swatch-name">Base</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#1A1A1A"></div>
+          <div class="swatch-info">#1A1A1A</div>
+          <div class="swatch-name">Surface</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#F5F5F5"></div>
+          <div class="swatch-info">#F5F5F5</div>
+          <div class="swatch-name">Foreground</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#FF6B35"></div>
+          <div class="swatch-info">#FF6B35</div>
+          <div class="swatch-name">Accent</div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background:#6B6B6B"></div>
+          <div class="swatch-info">#6B6B6B</div>
+          <div class="swatch-name">Muted</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="notes">
+      <strong>字体：</strong>Outfit 800（几何无衬线），比 Inter/Roboto 更有设计个性但不会太花哨，正文明体用系统字体。<br><br>
+      <strong>我的倾向：</strong>A 方案（Swipe Frame）功能传达最直接——画框是视频，对角线是擦除，不需要解释。如果你更看重品牌辨识度，B 方案的 W 字母图标作为 GitHub avatar 会更有记忆点。两个也可以组合：A 做产品内 LOGO，B 做 favicon。<br><br>
+      选一个方向（或组合），我来打磨到交付级。然后直接进入落地页。
+    </div>
+  </div>
+</body>
+</html>

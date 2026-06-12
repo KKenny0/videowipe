@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "logo-final.html",
+  "entry": "logo-final.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-06-12T06:59:35.001Z",
+  "updatedAt": "2026-06-12T06:59:35.001Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

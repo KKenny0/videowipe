@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="80" height="80" alt="videowipe">
+</p>
+
 <h1 align="center">videowipe</h1>
 
 <p align="center">
