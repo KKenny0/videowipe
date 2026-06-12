@@ -1,8 +1,14 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  基于 STTN 的视频修复库。<br>
-  擦除硬字幕、水印和文字叠加，<code>pip install videowipe</code> 即可使用。
+  擦除视频中的硬字幕、水印和文字叠加。<br>
+  自动检测目标、生成 mask、修复画面 — <code>pip install videowipe</code> 即可使用。
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/v/videowipe.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/pyversions/videowipe.svg" alt="Python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
 </p>
 
 <p align="center">
@@ -13,7 +19,11 @@
 
 ## 功能
 
-videowipe 使用时空 Transformer 网络擦除视频中的硬字幕。你可以提供标记擦除区域的 mask 图片，也可以让内置检测器自动生成，模型利用前后帧的时域信息填充背景。
+videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间戳。一条命令完成完整流水线：采样帧 → 检测文字区域 → 选择目标（支持 OCR 和自然语言意图解析）→ 生成 mask → 修复背景。
+
+无需手动提供 mask。内置检测器开箱即用，支持多语种内容。
+
+默认使用 STTN 作为修复后端。通过 `--external-command` 可接入任何外部模型 — [ProPainter](https://github.com/sczhou/ProPainter) 已验证为更高质量的替代方案。
 
 ## 安装
 
@@ -56,7 +66,7 @@ remove_text(
 )
 ```
 
-### clean 命令
+### 完整流水线（目标选择）
 
 使用 `task="clean"` 启用完整检测流水线，支持目标选择、意图解析和 OCR：
 
@@ -93,11 +103,8 @@ engine.cleanup()
 # 自动检测并清除所有文字叠加（推荐）
 videowipe clean input.mp4 -o result/
 
-# 旧命令：仅自动检测字幕
-videowipe detext -v input.mp4 -o result/
-
 # 手动指定 mask
-videowipe detext -v input.mp4 -m mask.png -o result/
+videowipe clean input.mp4 -m mask.png -o result/
 ```
 
 #### `clean` 命令选项
@@ -134,8 +141,20 @@ videowipe clean input.mp4 --confirm
 | `--external-command` | 外部修复命令（绕过内置 STTN） | — |
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
+| `-m, --mask` | Mask 图片路径（省略时自动检测） | 自动检测 |
 
-#### `detext` 命令参数
+<details>
+<summary><strong>旧命令：detext</strong></summary>
+
+`detext` 仅自动检测字幕。新项目建议使用 `clean`。
+
+```bash
+# 自动检测字幕
+videowipe detext -v input.mp4 -o result/
+
+# 手动指定 mask
+videowipe detext -v input.mp4 -m mask.png -o result/
+```
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
@@ -146,6 +165,8 @@ videowipe clean input.mp4 --confirm
 | `-g, --gap` | 每轮处理的分段长度，值越大效果越好、速度越慢 | `200` |
 | `-d, --dual` | 输出中同时显示原视频 | 关闭 |
 | `--external-command` | 外部修复命令（绕过内置 STTN） | — |
+
+</details>
 
 ## 外部模型
 
@@ -204,11 +225,15 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 
 使用 `--detect-mode balanced`（采样 50 帧）测试。绿框为选中待修复区域。
 
-## 原理
+## 工作原理
 
-模型基于 STTN（时空 Transformer 网络），8 层 transformer block 对多尺度 patch 做时域注意力。CNN 编码器提取帧特征，跨帧注意力机制利用邻近帧和参考帧信息，解码器生成修复结果。
+流水线分三个阶段：
 
-性能优化：AMP 混合精度推理、`channels_last` 内存布局。23 秒测试视频处理时间 125s。
+1. **检测** — 基于 DBNet 的文字检测器对视频进行多帧采样，逐帧定位文字区域，按位置聚类，选出最佳预览帧。开箱即用，支持多语种。
+
+2. **目标选择** — 检测到的区域按类型分类（字幕、水印、Logo、时间戳）。可选 OCR 读取文字内容。意图解析器（基于规则或通过 `--agent` 接入 LLM）支持用自然语言指定要清除什么。
+
+3. **修复** — 利用前后帧的时域信息填充被 mask 的区域。默认后端为 STTN（8 层时空 Transformer + CNN 编码器）。通过 `--external-command` 可替换为任何外部模型。
 
 ## Docker
 
@@ -219,9 +244,6 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:latest
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
-
-# 旧命令
-docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
 ```
 
 **GPU（需要 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)）：**
@@ -234,7 +256,7 @@ docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean
 或者使用自带的 wrapper 脚本（自动检测 GPU）：
 
 ```bash
-./scripts/docker-videowipe.sh detext -v input.mp4 -o result/
+./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | 镜像 | 大小 | GPU | 说明 |
@@ -260,10 +282,10 @@ docker build --target runtime-gpu --build-arg VARIANT=gpu -t videowipe:gpu .
 
 ```bash
 # CPU
-docker run --rm -v "$(pwd)":/data videowipe:latest detext -v /data/input.mp4 -o /data/result/
+docker run --rm -v "$(pwd)":/data videowipe:latest clean /data/input.mp4 -o /data/result/
 
 # GPU
-docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
 ## 致谢

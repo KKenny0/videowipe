@@ -1,8 +1,14 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  Video inpainting library powered by STTN.<br>
-  Remove hardcoded subtitles, watermarks, and text overlays. <code>pip install videowipe</code> and go.
+  Remove hardcoded subtitles, watermarks, and text overlays from video.<br>
+  Auto-detect targets, generate masks, and inpaint — <code>pip install videowipe</code> and go.
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/v/videowipe.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/pyversions/videowipe.svg" alt="Python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
 </p>
 
 <p align="center">
@@ -13,7 +19,11 @@
 
 ## What it does
 
-videowipe uses a Spatial-Temporal Transformer Network to erase hardcoded subtitles from video. You provide a video and a mask image marking the region to erase, or let the built-in detector generate one. The model fills in the background using temporal information from surrounding frames.
+videowipe detects and removes hardcoded text, watermarks, logos, and timestamps from video. A full pipeline runs in one command: sample frames → detect text regions → select targets (with optional OCR and natural-language intent parsing) → generate masks → inpaint the background.
+
+No manual mask required. The built-in detector handles multilingual content out of the box.
+
+STTN is the default inpainting backend. Any external model can be plugged in via `--external-command` — [ProPainter](https://github.com/sczhou/ProPainter) has been validated as a higher-quality alternative.
 
 ## Install
 
@@ -56,9 +66,9 @@ remove_text(
 )
 ```
 
-### Clean command
+### Full pipeline with target selection
 
-Use `task="clean"` for the full detection pipeline with target selection, intent parsing, and OCR:
+Use `task="clean"` for the complete detection pipeline with target selection, intent parsing, and OCR:
 
 ```python
 from videowipe import WipeEngine
@@ -93,11 +103,8 @@ engine.cleanup()
 # Auto-detect and remove all text overlays (recommended)
 videowipe clean input.mp4 -o result/
 
-# Legacy command: auto-detect subtitles only
-videowipe detext -v input.mp4 -o result/
-
 # With manual mask
-videowipe detext -v input.mp4 -m mask.png -o result/
+videowipe clean input.mp4 -m mask.png -o result/
 ```
 
 #### `clean` command options
@@ -134,8 +141,20 @@ videowipe clean input.mp4 --confirm
 | `--external-command` | External inpainting command (bypasses built-in STTN) | — |
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
+| `-m, --mask` | Mask image path (auto-detect if omitted) | auto |
 
-#### `detext` command arguments
+<details>
+<summary><strong>Legacy: detext command</strong></summary>
+
+The `detext` command auto-detects subtitles only. Prefer `clean` for new usage.
+
+```bash
+# Auto-detect subtitles
+videowipe detext -v input.mp4 -o result/
+
+# With manual mask
+videowipe detext -v input.mp4 -m mask.png -o result/
+```
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -146,6 +165,8 @@ videowipe clean input.mp4 --confirm
 | `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
 | `-d, --dual` | Show original video side-by-side in output | off |
 | `--external-command` | External inpainting command (bypasses built-in STTN) | — |
+
+</details>
 
 ## External models
 
@@ -206,9 +227,13 @@ Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show selec
 
 ## How it works
 
-The model is an STTN (Spatial-Temporal Transformer Network) with 8 stacked transformer blocks operating on multi-scale patches. It encodes video frames with a CNN backbone, runs temporal attention across neighboring and reference frames, then decodes the inpainted result.
+The pipeline has three stages:
 
-Key optimizations in this fork: AMP mixed-precision inference and `channels_last` memory layout. A 23-second test clip processes in 125s (down from 200s in the original).
+1. **Detection** — A DBNet-based text detector samples frames across the video, finds text regions in each frame, clusters them by position, and selects the best preview frame. Supports multilingual content out of the box.
+
+2. **Target selection** — Detected regions are classified by type (subtitle, watermark, logo, timestamp). Optional OCR reads the text content. An intent parser (rule-based or LLM-backed via `--agent`) lets you specify what to remove in natural language.
+
+3. **Inpainting** — Masked regions are filled in using temporal information from neighboring frames. The default backend is STTN (8-layer spatial-temporal transformer with CNN encoder). Any external model can be substituted via `--external-command`.
 
 ## Docker
 
@@ -219,9 +244,6 @@ No Python? No problem. Run videowipe directly with Docker.
 ```bash
 docker pull ghcr.io/kkenny0/videowipe:latest
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
-
-# Legacy detext command
-docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe detext -v /data/input.mp4 -o /data/result/
 ```
 
 **GPU (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)):**
@@ -234,7 +256,7 @@ docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean
 Or use the included wrapper script (auto-detects GPU):
 
 ```bash
-./scripts/docker-videowipe.sh detext -v input.mp4 -o result/
+./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | Image | Size | GPU | Notes |
@@ -260,10 +282,10 @@ Run after building:
 
 ```bash
 # CPU
-docker run --rm -v "$(pwd)":/data videowipe:latest detext -v /data/input.mp4 -o /data/result/
+docker run --rm -v "$(pwd)":/data videowipe:latest clean /data/input.mp4 -o /data/result/
 
 # GPU
-docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu detext -v /data/input.mp4 -o /data/result/
+docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
 ## Credits
