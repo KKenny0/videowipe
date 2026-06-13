@@ -56,6 +56,7 @@ class BaseTask:
         self.neighbor_stride = neighbor_stride
         self.dual = dual
         self.backend = None
+        self.inpainter = None
         self._bm = None
 
     def load_model(self, weight_path: str, device: str = "auto"):
@@ -98,7 +99,17 @@ class BaseTask:
         return out_path
 
     def cleanup(self):
-        """Release model and GPU memory."""
-        if self.backend is not None:
+        """Release model and GPU memory.
+
+        When an Inpainter is injected (the registry path), it owns the backend
+        and is responsible for cleaning it up; we only drop the reference. The
+        direct-backend branch keeps the legacy ``run()``/``load_model()`` path
+        working.
+        """
+        if self.inpainter is not None:
+            self.inpainter.cleanup()
+            self.inpainter = None
+            self.backend = None
+        elif self.backend is not None:
             self.backend.cleanup()
             self.backend = None

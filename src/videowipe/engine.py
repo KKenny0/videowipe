@@ -16,6 +16,7 @@ from videowipe.tasks.base import (
     validate_mask_shape,
 )
 from videowipe.tasks.detext import DetextTask
+from videowipe.inpainters import get_registry
 from videowipe.weights import ensure_onnx_weights, ensure_weight
 
 if TYPE_CHECKING:
@@ -52,6 +53,8 @@ class WipeEngine:
         external_command: External inpainting command string. When set,
             bypasses built-in STTN and calls the command with
             ``<command> <video> <mask> <output_dir>``.
+        model: Inpainter name resolved via the registry. Default "sttn".
+            Takes effect only when external_command is not set.
         detect_mode: Detection preset: "fast", "balanced", or "sensitive".
             Controls sample count, consistency threshold, and subtitle fallback.
             Only used for the "clean" task. Default is "balanced".
@@ -69,6 +72,7 @@ class WipeEngine:
         dual: bool = False,
         detector: Optional[TextDetector] = None,
         external_command: Optional[str] = None,
+        model: str = "sttn",
         detect_mode: str = "balanced",
         ocr: str = "auto",
     ):
@@ -80,6 +84,7 @@ class WipeEngine:
         self._device = device
         self._detector = detector
         self._external_command = external_command
+        self._model = model
         self._detect_mode = detect_mode
         self._ocr = ocr
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
@@ -106,7 +111,10 @@ class WipeEngine:
                         "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
                         "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
                     ) from None
-        self._task_impl.load_model(weight_path, device=self._device)
+        inpainter = get_registry().create(self._model)
+        inpainter.load(weight_path, device=self._device)
+        self._task_impl.inpainter = inpainter
+        self._task_impl.backend = inpainter.backend
         self._model_loaded = True
 
     def process(self, video: str, mask: str | None = None,

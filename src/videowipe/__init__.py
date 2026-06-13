@@ -3,6 +3,14 @@
 __version__ = "0.1.0"
 
 from videowipe.engine import WipeEngine, remove_text
+from videowipe.inpainters import (
+    InpaintJob,
+    InpaintOutcome,
+    Inpainter,
+    STTNInpainter,
+    get_registry,
+    register_inpainter,
+)
 from videowipe.detect import (
     CleanCandidate,
     CleanDetectionResult,
@@ -22,6 +30,12 @@ from videowipe.detect import (
 __all__ = [
     "WipeEngine",
     "remove_text",
+    "Inpainter",
+    "InpaintJob",
+    "InpaintOutcome",
+    "STTNInpainter",
+    "get_registry",
+    "register_inpainter",
     "detect_clean_candidates",
     "detect_subtitle_mask",
     "infer_regions_from_text",

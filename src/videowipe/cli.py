@@ -24,6 +24,8 @@ def _build_parser():
                      help="Show original video side-by-side")
     sub.add_argument("--external-command", default=None,
                      help="External inpainting command (bypasses built-in STTN)")
+    sub.add_argument("--model", default="sttn",
+                     help="Inpainter name from the registry (default: sttn)")
 
     clean = subparsers.add_parser("clean", help="Clean subtitles and text overlays")
     clean.add_argument("video", help="Input video path")
@@ -69,6 +71,8 @@ def _build_parser():
     )
     clean.add_argument("--external-command", default=None,
                        help="External inpainting command (bypasses built-in STTN)")
+    clean.add_argument("--model", default="sttn",
+                       help="Inpainter name from the registry (default: sttn)")
 
     return parser
 
@@ -87,6 +91,7 @@ def main():
         gap=args.gap,
         dual=args.dual,
         external_command=args.external_command,
+        model=getattr(args, "model", "sttn"),
         detect_mode=getattr(args, "detect_mode", "balanced"),
         ocr=getattr(args, "ocr", "auto"),
     )

@@ -22,6 +22,7 @@ from videowipe.detect import (
     select_clean_candidates,
 )
 from videowipe.engine import WipeEngine, remove_text
+from videowipe.inpainters import STTNInpainter, get_registry
 from videowipe.external import ExternalModelError, run_external
 from videowipe.tasks.base import read_mask, validate_mask_shape
 
@@ -84,6 +85,21 @@ def test_backend_extension_detection_is_explicit():
     assert _detect_backend("model.pt") == "torch"
     with pytest.raises(ValueError, match="Unsupported weight file"):
         _detect_backend("model.bin")
+
+
+def test_registry_exposes_sttn():
+    """The built-in STTN inpainter is registered under the name 'sttn'."""
+    registry = get_registry()
+    assert "sttn" in registry.names()
+    inpainter = registry.create("sttn")
+    assert isinstance(inpainter, STTNInpainter)
+    assert inpainter.name == "sttn"
+
+
+def test_registry_rejects_unknown_model():
+    """Creating an unregistered model name raises a clear ValueError."""
+    with pytest.raises(ValueError, match="Unknown inpainter"):
+        get_registry().create("nonexistent-model")
 
 
 def test_remove_text_cleans_up_when_processing_fails(monkeypatch):
