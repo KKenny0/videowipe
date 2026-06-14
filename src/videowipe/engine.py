@@ -54,7 +54,11 @@ class WipeEngine:
             bypasses built-in STTN and calls the command with
             ``<command> <video> <mask> <output_dir>``.
         model: Inpainter name resolved via the registry. Default "sttn".
-            Takes effect only when external_command is not set.
+            Use "propainter" for the ProPainter external model (requires a
+            ProPainter source checkout; see ``propainter_dir``).
+        propainter_dir: Path to a ProPainter source checkout, used only when
+            ``model == "propainter"``. Falls back to the wrapper script's own
+            resolution (``VIDEOWIPE_PROPINTER_DIR`` / default) when None.
         detect_mode: Detection preset: "fast", "balanced", or "sensitive".
             Controls sample count, consistency threshold, and subtitle fallback.
             Only used for the "clean" task. Default is "balanced".
@@ -73,6 +77,7 @@ class WipeEngine:
         detector: Optional[TextDetector] = None,
         external_command: Optional[str] = None,
         model: str = "sttn",
+        propainter_dir: Optional[str] = None,
         detect_mode: str = "balanced",
         ocr: str = "auto",
     ):
@@ -85,6 +90,7 @@ class WipeEngine:
         self._detector = detector
         self._external_command = external_command
         self._model = model
+        self._propainter_dir = propainter_dir
         self._detect_mode = detect_mode
         self._ocr = ocr
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
@@ -116,6 +122,23 @@ class WipeEngine:
         self._task_impl.inpainter = inpainter
         self._task_impl.backend = inpainter.backend
         self._model_loaded = True
+
+    def _resolve_file_inpainter(self):
+        """Return a file-based Inpainter for this run, or None for frame-based.
+
+        File-based inpainters (external command, ProPainter) consume a video
+        file and a mask file path rather than an in-memory frame stream, and
+        share the mask-path preparation + benchmark path in process().
+        """
+        if self._external_command:
+            return get_registry().create(
+                "external", command=self._external_command
+            )
+        if self._model == "propainter":
+            return get_registry().create(
+                "propainter", propainter_dir=self._propainter_dir
+            )
+        return None
 
     def process(self, video: str, mask: str | None = None,
                 output: str = "result/",
@@ -254,13 +277,12 @@ class WipeEngine:
         else:
             mask_path_saved = os.path.join(output, "auto_mask.png")
 
-        if self._external_command:
-            bm["model_type"] = "external"
-            bm["external_command"] = self._external_command
+        file_inpainter = self._resolve_file_inpainter()
+        if file_inpainter is not None:
+            bm["model_type"] = file_inpainter.name
+            if self._external_command:
+                bm["external_command"] = self._external_command
             t_ext_start = time.monotonic()
-            external_inpainter = get_registry().create(
-                "external", command=self._external_command
-            )
             ext_job = InpaintJob(
                 video_path=video,
                 mask=mask_arr,
@@ -271,9 +293,9 @@ class WipeEngine:
                 width=0,
                 height=0,
             )
-            out_path = external_inpainter.inpaint(ext_job).output_path
+            out_path = file_inpainter.inpaint(ext_job).output_path
             bm["timing"]["external_s"] = round(time.monotonic() - t_ext_start, 3)
-            bm["backend"] = "external"
+            bm["backend"] = file_inpainter.name
             bm["output_path"] = out_path
             bm["error"] = None
             bm["timing"]["total_s"] = round(time.monotonic() - t_total_start, 3)

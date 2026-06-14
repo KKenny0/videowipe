@@ -1,13 +1,22 @@
 """Wrapper to run ProPainter as a VideoWipe external model adapter.
 
-Usage (called by VideoWipe --external-command):
-    python scripts/propainter_wipe.py <video_path> <mask_path> <output_dir>
+Usage (called by ``videowipe --model propainter``, or directly)::
 
-ProPainter saves to <output>/<video_name>/inpaint_out.mp4.
-This wrapper extracts frames (workaround for torchvision.io.read_video removal),
-runs ProPainter, and moves the result to <output_dir>.
+    python scripts/propainter_wipe.py <video_path> <mask_path> <output_dir> \\
+        [--propainter-dir /path/to/ProPainter]
+
+ProPainter saves to ``<output>/<video_name>/inpaint_out.mp4``. This wrapper
+extracts frames (workaround for ``torchvision.io.read_video`` removal), runs
+ProPainter, and copies the result to ``<output_dir>/inpaint_out.mp4``.
+
+The ProPainter source directory is resolved in priority order:
+
+1. ``--propainter-dir`` argument
+2. ``VIDEOWIPE_PROPINTER_DIR`` environment variable
+3. ``../../models/ProPainter`` relative to this script (matches the README
+   clone instruction)
 """
-import glob
+import argparse
 import os
 import shutil
 import subprocess
@@ -17,15 +26,24 @@ import tempfile
 import cv2
 import imageio
 
-PROPINTER_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "..", "..", "models", "ProPainter",
-)
-PROPINTER_DIR = os.path.normpath(PROPINTER_DIR)
 
-if not os.path.isfile(os.path.join(PROPINTER_DIR, "inference_propainter.py")):
-    print(f"ERROR: ProPainter not found at {PROPINTER_DIR}", file=sys.stderr)
-    sys.exit(1)
+def _resolve_propainter_dir(arg=None):
+    """Resolve the ProPainter source directory.
+
+    Priority: explicit argument > ``VIDEOWIPE_PROPINTER_DIR`` env > default
+    ``../../models/ProPainter`` relative to this script.
+    """
+    if arg:
+        return arg
+    env = os.environ.get("VIDEOWIPE_PROPINTER_DIR")
+    if env:
+        return env
+    return os.path.normpath(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "..", "..", "models", "ProPainter",
+        )
+    )
 
 
 def extract_frames(video_path, frames_dir):
@@ -43,6 +61,7 @@ def extract_frames(video_path, frames_dir):
 
 def frames_to_video(frames_dir, output_path, fps):
     """Combine frames back to video using imageio."""
+    import glob
     paths = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
     if not paths:
         raise FileNotFoundError(f"No frames found in {frames_dir}")
@@ -52,13 +71,31 @@ def frames_to_video(frames_dir, output_path, fps):
 
 
 def main():
-    if len(sys.argv) != 4:
-        print(f"Usage: {sys.argv[0]} <video_path> <mask_path> <output_dir>", file=sys.stderr)
+    parser = argparse.ArgumentParser(
+        description="Run ProPainter as a VideoWipe external model adapter.",
+    )
+    parser.add_argument("video_path")
+    parser.add_argument("mask_path")
+    parser.add_argument("output_dir")
+    parser.add_argument(
+        "--propainter-dir", default=None,
+        help="Path to the ProPainter source checkout "
+             "(or set VIDEOWIPE_PROPINTER_DIR)",
+    )
+    args = parser.parse_args()
+
+    propainter_dir = _resolve_propainter_dir(args.propainter_dir)
+    if not os.path.isfile(os.path.join(propainter_dir, "inference_propainter.py")):
+        print(
+            f"ERROR: ProPainter not found at {propainter_dir}. "
+            f"Pass --propainter-dir or set VIDEOWIPE_PROPINTER_DIR.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    video_path = os.path.abspath(sys.argv[1])
-    mask_path = os.path.abspath(sys.argv[2])
-    output_dir = os.path.abspath(sys.argv[3])
+    video_path = os.path.abspath(args.video_path)
+    mask_path = os.path.abspath(args.mask_path)
+    output_dir = os.path.abspath(args.output_dir)
 
     if not os.path.isfile(video_path):
         print(f"ERROR: video not found: {video_path}", file=sys.stderr)
@@ -83,7 +120,7 @@ def main():
 
         cmd = [
             sys.executable,
-            os.path.join(PROPINTER_DIR, "inference_propainter.py"),
+            os.path.join(propainter_dir, "inference_propainter.py"),
             "-i", frames_dir,
             "-m", mask_path,
             "-o", pp_tmp,
@@ -92,7 +129,7 @@ def main():
         ]
         print(f"Running ProPainter: {' '.join(cmd)}")
         result = subprocess.run(
-            cmd, cwd=PROPINTER_DIR, capture_output=True, text=True, check=False,
+            cmd, cwd=propainter_dir, capture_output=True, text=True, check=False,
         )
         if result.stdout:
             print(result.stdout)
@@ -102,31 +139,23 @@ def main():
                 print(result.stderr, file=sys.stderr)
             sys.exit(1)
 
-        # ProPainter saves to <pp_tmp>/<video_name>/inpaint_out.mp4
+        # ProPainter saves to <pp_tmp>/<video_name>/inpaint_out.mp4 (fixed name).
         video_name = os.path.splitext(os.path.basename(video_path))[0]
         pp_output = os.path.join(pp_tmp, video_name, "inpaint_out.mp4")
-
-        if not os.path.isfile(pp_output):
-            # Search for any mp4
-            for root, dirs, files in os.walk(pp_tmp):
-                for f in files:
-                    if f.endswith(".mp4"):
-                        pp_output = os.path.join(root, f)
-                        break
 
         if os.path.isfile(pp_output):
             dest = os.path.join(output_dir, "inpaint_out.mp4")
             shutil.copy2(pp_output, dest)
             print(f"Output: {dest}")
         else:
-            # ProPainter may have saved frames but not video (imageio issue)
-            # Try to find output frames and encode ourselves
+            # ProPainter may have saved frames but not a video (imageio issue);
+            # re-encode from the frames directory as a fallback.
             out_frames_dir = os.path.join(pp_tmp, video_name, "frames")
             if os.path.isdir(out_frames_dir):
                 dest = os.path.join(output_dir, "inpaint_out.mp4")
                 frames_to_video(out_frames_dir, dest, fps)
             else:
-                print(f"ERROR: ProPainter output not found", file=sys.stderr)
+                print("ERROR: ProPainter output not found", file=sys.stderr)
                 sys.exit(1)
     finally:
         shutil.rmtree(work, ignore_errors=True)

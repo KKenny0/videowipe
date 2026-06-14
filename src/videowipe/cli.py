@@ -26,6 +26,8 @@ def _build_parser():
                      help="External inpainting command (bypasses built-in STTN)")
     sub.add_argument("--model", default="sttn",
                      help="Inpainter name from the registry (default: sttn)")
+    sub.add_argument("--propainter-dir", default=None,
+                     help="Path to ProPainter source (used with --model propainter)")
 
     clean = subparsers.add_parser("clean", help="Clean subtitles and text overlays")
     clean.add_argument("video", help="Input video path")
@@ -73,6 +75,8 @@ def _build_parser():
                        help="External inpainting command (bypasses built-in STTN)")
     clean.add_argument("--model", default="sttn",
                        help="Inpainter name from the registry (default: sttn)")
+    clean.add_argument("--propainter-dir", default=None,
+                       help="Path to ProPainter source (used with --model propainter)")
 
     return parser
 
@@ -92,6 +96,7 @@ def main():
         dual=args.dual,
         external_command=args.external_command,
         model=getattr(args, "model", "sttn"),
+        propainter_dir=getattr(args, "propainter_dir", None),
         detect_mode=getattr(args, "detect_mode", "balanced"),
         ocr=getattr(args, "ocr", "auto"),
     )

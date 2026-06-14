@@ -182,7 +182,10 @@ Pass `--external-command` to use any third-party inpainting model instead of the
 # Clone ProPainter outside this repo first
 git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
 
-# Use via the wrapper (requires CUDA PyTorch + fp16)
+# Use via the named model (recommended)
+videowipe clean input.mp4 --model propainter --propainter-dir ../models/ProPainter
+
+# Or via the generic external command (equivalent, now argv-form)
 videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 ```
 
@@ -197,7 +200,7 @@ Tested on a multilingual music video (Korean + Burmese subtitles, 852x480, 10s c
 |----------|----------------------|-----------------|
 | <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
 
-Full evaluation details in `plans/candidate-eval-propainter.md`.
+Comparison images are in `pics/comparison/`.
 
 </details>
 

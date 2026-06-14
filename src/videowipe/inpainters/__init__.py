@@ -1,4 +1,8 @@
-"""Inpainter package: protocol, registry, and built-in STTN inpainter."""
+"""Inpainter package: protocol, registry, and built-in inpainters."""
+import os
+import shlex
+import sys
+
 from videowipe.inpainters.base import InpaintJob, InpaintOutcome, Inpainter
 from videowipe.inpainters.registry import (
     InpainterRegistry,
@@ -12,6 +16,33 @@ from videowipe.inpainters.sttn import STTNInpainter
 # "external" available to the registry.
 register_inpainter("sttn", STTNInpainter)
 register_inpainter("external", ExternalInpainter)
+
+
+def _make_propainter_inpainter(propainter_dir=None, **_options):
+    """Build an ExternalInpainter that runs ``scripts/propainter_wipe.py``.
+
+    ProPainter is an optional external model; this factory only assembles the
+    command string. The wrapper script resolves the ProPainter source directory
+    from ``--propainter-dir`` / ``VIDEOWIPE_PROPINTER_DIR`` / default at run
+    time. The instance ``name`` is overridden to ``"propainter"`` so benchmark
+    output labels the model distinctly from a raw ``--external-command``.
+    """
+    script = os.path.normpath(
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "scripts",
+            "propainter_wipe.py",
+        )
+    )
+    parts = [sys.executable, script]
+    if propainter_dir:
+        parts += ["--propainter-dir", propainter_dir]
+    command = " ".join(shlex.quote(p) for p in parts)
+    inpainter = ExternalInpainter(command=command)
+    inpainter.name = "propainter"
+    return inpainter
+
+
+register_inpainter("propainter", _make_propainter_inpainter)
 
 __all__ = [
     "Inpainter",

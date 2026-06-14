@@ -112,6 +112,26 @@ def test_registry_exposes_external():
     assert inpainter.command == "echo noop"
 
 
+def test_registry_exposes_propainter():
+    """ProPainter is registered as an ExternalInpainter named 'propainter'."""
+    registry = get_registry()
+    assert "propainter" in registry.names()
+    inpainter = registry.create("propainter", propainter_dir="/some/path")
+    assert isinstance(inpainter, ExternalInpainter)
+    assert inpainter.name == "propainter"  # overridden by the factory
+    assert "propainter_wipe.py" in inpainter.command
+    assert "--propainter-dir /some/path" in inpainter.command
+
+
+def test_propainter_factory_omits_dir_flag_when_unset():
+    """Without propainter_dir, the command has no --propainter-dir flag."""
+    inpainter = get_registry().create("propainter")
+    assert isinstance(inpainter, ExternalInpainter)
+    assert inpainter.name == "propainter"
+    assert "--propainter-dir" not in inpainter.command
+    assert "propainter_wipe.py" in inpainter.command
+
+
 def test_remove_text_cleans_up_when_processing_fails(monkeypatch):
     calls = []
 

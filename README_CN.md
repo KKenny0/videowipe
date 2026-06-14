@@ -182,7 +182,10 @@ videowipe detext -v input.mp4 -m mask.png -o result/
 # 先在仓库外克隆 ProPainter
 git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
 
-# 通过包装脚本调用（需要 CUDA PyTorch + fp16）
+# 通过命名模型调用（推荐）
+videowipe clean input.mp4 --model propainter --propainter-dir ../models/ProPainter
+
+# 或通过通用外部命令（等价，现为 argv 形式）
 videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 ```
 
@@ -197,7 +200,7 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 |----------|----------------------|-----------------|
 | <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
 
-完整评估细节见 `plans/candidate-eval-propainter.md`。
+对比截图位于 `pics/comparison/` 目录。
 
 </details>
 
