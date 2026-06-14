@@ -779,6 +779,7 @@ def test_eval_clean_detection_reports_golden_iou(tmp_path):
         capture_output=True, text=True, cwd=str(
             pathlib.Path(__file__).resolve().parent.parent
         ),
+        env={**os.environ, "PYTHONPATH": "src"},
     )
     # Script should succeed (may find 0 candidates but that's ok)
     assert result.returncode in (0, 2)  # 0 = success, 2 = abnormal bbox
@@ -802,6 +803,7 @@ def test_eval_clean_detection_flags_missing_golden(tmp_path):
         capture_output=True, text=True, cwd=str(
             pathlib.Path(__file__).resolve().parent.parent
         ),
+        env={**os.environ, "PYTHONPATH": "src"},
     )
     assert "MISSING GOLDEN" in result.stdout
 
