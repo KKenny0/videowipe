@@ -23,7 +23,7 @@ from videowipe.detect import (
 )
 from videowipe.engine import WipeEngine, remove_text
 from videowipe.inpainters import STTNInpainter, get_registry
-from videowipe.external import ExternalModelError, run_external
+from videowipe.external import ExternalInpainter, ExternalModelError, run_external
 from videowipe.tasks.base import read_mask, validate_mask_shape
 
 
@@ -100,6 +100,16 @@ def test_registry_rejects_unknown_model():
     """Creating an unregistered model name raises a clear ValueError."""
     with pytest.raises(ValueError, match="Unknown inpainter"):
         get_registry().create("nonexistent-model")
+
+
+def test_registry_exposes_external():
+    """The external inpainter is registered under 'external'."""
+    registry = get_registry()
+    assert "external" in registry.names()
+    inpainter = registry.create("external", command="echo noop")
+    assert isinstance(inpainter, ExternalInpainter)
+    assert inpainter.name == "external"
+    assert inpainter.command == "echo noop"
 
 
 def test_remove_text_cleans_up_when_processing_fails(monkeypatch):
@@ -805,9 +815,59 @@ def test_run_external_nonzero_exit(tmp_path):
     """Non-zero exit raises ExternalModelError with stderr."""
     output_dir = tmp_path / "output"
     output_dir.mkdir()
+    # list-form invocation cannot run shell builtins like `exit`; use a real
+    # executable that exits non-zero.
+    fail_cmd = f'{sys.executable} -c "import sys; sys.exit(1)"'
 
     with pytest.raises(ExternalModelError, match="exited with code"):
-        run_external("exit 1", "video.mp4", "mask.png", str(output_dir))
+        run_external(fail_cmd, "video.mp4", "mask.png", str(output_dir))
+
+
+def test_run_external_invokes_subprocess_without_shell(monkeypatch, tmp_path):
+    """Injection fix: the command runs as an argv list with shell disabled, so
+    shell metacharacters are never interpreted and paths stay verbatim."""
+    captured = {}
+
+    class _OK:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def spy(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell", False)
+        out_dir = cmd[-1]
+        os.makedirs(out_dir, exist_ok=True)
+        # run_external only checks the file extension; create a placeholder.
+        with open(os.path.join(out_dir, "out.mp4"), "wb"):
+            pass
+        return _OK()
+
+    monkeypatch.setattr("videowipe.external.subprocess.run", spy)
+    run_external(
+        "python propainter.py --fp16",
+        "my video.mp4",        # space in name
+        "m; rm -rf x.png",     # shell metacharacters
+        str(tmp_path / "out"),
+    )
+
+    assert captured["shell"] is False
+    assert isinstance(captured["cmd"], list)
+    # Command split by shlex; paths appended verbatim as single argv entries.
+    assert captured["cmd"][:3] == ["python", "propainter.py", "--fp16"]
+    assert captured["cmd"][-3:] == [
+        "my video.mp4", "m; rm -rf x.png", str(tmp_path / "out"),
+    ]
+
+
+def test_run_external_missing_command(tmp_path):
+    """A command whose executable does not exist raises ExternalModelError."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    with pytest.raises(ExternalModelError, match="not found"):
+        run_external(
+            "nonexistent-binary-xyz-12345", "v.mp4", "m.png", str(output_dir)
+        )
 
 
 def test_run_external_no_output(tmp_path):
@@ -1138,4 +1198,31 @@ def test_engine_detect_mode_override_in_process(tmp_path, monkeypatch):
 
     assert captured["sample_count"] == 80
     assert captured["consistency"] == 0.30
+
+
+# --- ExternalInpainter unit tests ---
+
+
+def test_external_inpainter_requires_nonempty_command():
+    """ExternalInpainter rejects an empty command string."""
+    with pytest.raises(ValueError, match="non-empty command"):
+        ExternalInpainter(command="")
+
+
+def test_external_inpainter_requires_mask_path():
+    """ExternalInpainter.inpaint raises if job.mask_path is missing."""
+    from videowipe.inpainters.base import InpaintJob
+
+    inpainter = ExternalInpainter(command="echo noop")
+    job = InpaintJob(
+        video_path="v.mp4",
+        mask=np.zeros((4, 4, 1), dtype=np.uint8),
+        output_dir=".",
+        fps=0.0,
+        frame_count=0,
+        width=0,
+        height=0,
+    )
+    with pytest.raises(ValueError, match="mask_path"):
+        inpainter.inpaint(job)
 

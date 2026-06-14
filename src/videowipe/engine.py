@@ -16,7 +16,7 @@ from videowipe.tasks.base import (
     validate_mask_shape,
 )
 from videowipe.tasks.detext import DetextTask
-from videowipe.inpainters import get_registry
+from videowipe.inpainters import InpaintJob, get_registry
 from videowipe.weights import ensure_onnx_weights, ensure_weight
 
 if TYPE_CHECKING:
@@ -258,10 +258,20 @@ class WipeEngine:
             bm["model_type"] = "external"
             bm["external_command"] = self._external_command
             t_ext_start = time.monotonic()
-            from videowipe.external import run_external, ExternalModelError
-            out_path = run_external(
-                self._external_command, video, mask_path_saved, output
+            external_inpainter = get_registry().create(
+                "external", command=self._external_command
             )
+            ext_job = InpaintJob(
+                video_path=video,
+                mask=mask_arr,
+                mask_path=mask_path_saved,
+                output_dir=output,
+                fps=0.0,
+                frame_count=0,
+                width=0,
+                height=0,
+            )
+            out_path = external_inpainter.inpaint(ext_job).output_path
             bm["timing"]["external_s"] = round(time.monotonic() - t_ext_start, 3)
             bm["backend"] = "external"
             bm["output_path"] = out_path

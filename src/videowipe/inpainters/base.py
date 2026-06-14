@@ -38,6 +38,8 @@ class InpaintJob:
         progress: optional ``(frames_done, frames_total)`` callback.
         metrics: mutable dict (typically the benchmark ``timing`` dict) the
             inpainter writes phase timings into.
+        mask_path: mask file path for file-based inpainters (e.g. the external
+            subprocess); the ``mask`` ndarray is ignored by those inpainters.
     """
 
     video_path: str
@@ -54,6 +56,7 @@ class InpaintJob:
     reader: object = None
     progress: Optional[Callable[[int, int], None]] = None
     metrics: dict = field(default_factory=dict)
+    mask_path: Optional[str] = None
 
 
 @dataclass
