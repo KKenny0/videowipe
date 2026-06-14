@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "videowipe"
-version = "0.2.0"
+version = "0.3.0"
 description = "Video inpainting library for removing subtitles, watermarks, and text overlays"
 requires-python = ">=3.8"
 dependencies = [
