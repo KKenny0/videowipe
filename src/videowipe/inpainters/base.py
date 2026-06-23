@@ -40,6 +40,9 @@ class InpaintJob:
             inpainter writes phase timings into.
         mask_path: mask file path for file-based inpainters (e.g. the external
             subprocess); the ``mask`` ndarray is ignored by those inpainters.
+        feather_radius: Gaussian alpha radius applied to bbox-only mask
+            candidates so the inpainting blend produces a soft seam. ``0``
+            keeps the legacy hard binary mask (used by the eval IoU path).
     """
 
     video_path: str
@@ -57,6 +60,7 @@ class InpaintJob:
     progress: Optional[Callable[[int, int], None]] = None
     metrics: dict = field(default_factory=dict)
     mask_path: Optional[str] = None
+    feather_radius: int = 0
 
 
 @dataclass

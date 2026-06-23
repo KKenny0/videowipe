@@ -58,6 +58,10 @@ class BaseTask:
         self.backend = None
         self.inpainter = None
         self._bm = None
+        # Gaussian alpha radius applied to bbox-only mask candidates so the
+        # STTN blend produces a soft seam instead of a hard rectangle. Set by
+        # WipeEngine; 0 keeps the legacy hard binary mask (eval path).
+        self.feather_radius = 0
 
     def load_model(self, weight_path: str, device: str = "auto"):
         """Load model from a weight file (.pth or .onnx)."""

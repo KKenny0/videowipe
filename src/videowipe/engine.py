@@ -36,6 +36,12 @@ _DEFAULT_WEIGHTS_ONNX = {
     "clean": "sttn",
 }
 
+# Gaussian alpha radius applied to bbox-only mask candidates. A small default
+# is enough to remove the hard rectangle seam from STTN's blend without
+# softening so much that the filled region bleeds into surrounding detail.
+# This is a "finished feel" default, not a user-facing knob.
+_DEFAULT_FEATHER_RADIUS = 4
+
 
 class WipeEngine:
     """Reusable engine for video inpainting tasks.
@@ -96,6 +102,11 @@ class WipeEngine:
         self._task_impl: BaseTask = _TASK_CLASSES[task](gap=gap, dual=dual)
         if task == "clean":
             setattr(self._task_impl, "output_suffix", "clean")
+        # Soft alpha seam at mask boundaries: non-zero by default so the STTN
+        # blend no longer produces a hard rectangle. This is a "finished feel"
+        # default, not a user-facing knob. Set to 0 only for the eval path,
+        # which compares against binary ground-truth masks.
+        self._task_impl.feather_radius = _DEFAULT_FEATHER_RADIUS
         self._model_loaded = False
 
     def _ensure_model(self):
@@ -249,7 +260,10 @@ class WipeEngine:
                 if confirm:
                     selected = self._confirm_candidates(result.candidates, selected)
                     write_clean_artifacts(result, selected, output)
-                mask_arr = mask_from_candidates(selected, result.frame_shape)
+                mask_arr = mask_from_candidates(
+                    selected, result.frame_shape,
+                    feather_radius=self._task_impl.feather_radius,
+                )
                 cv2.imwrite(
                     os.path.join(output, "auto_mask.png"),
                     (mask_arr * 255).astype(np.uint8),

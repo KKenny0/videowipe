@@ -168,8 +168,24 @@ class STTNInpainter:
             "-s", f"{out_w}x{out_h}", "-pix_fmt", "bgr24",
             "-r", str(fps),
             "-i", "-",
+        ]
+        # Attach the original video as a second input so its audio stream (and
+        # metadata) survives. The trailing "?" on "1:a?" makes ffmpeg tolerate
+        # videos with no audio track instead of erroring out.
+        if job.video_path:
+            ffmpeg_cmd += ["-i", job.video_path]
+        ffmpeg_cmd += [
+            "-map", "0:v",
+        ]
+        if job.video_path:
+            ffmpeg_cmd += ["-map", "1:a?"]
+        ffmpeg_cmd += [
             "-c:v", "libx264", "-crf", "18", "-preset", "medium",
             "-pix_fmt", "yuv420p",
+        ]
+        if job.video_path:
+            ffmpeg_cmd += ["-c:a", "aac"]
+        ffmpeg_cmd += [
             "-movflags", "+faststart",
             video_out_path,
         ]
@@ -222,21 +238,28 @@ class STTNInpainter:
 
                     for j in range(len(frames_hr)):
                         frame_ori = frames_hr[j].copy()
-                        frame = frames_hr[j]
+                        frame = frames_hr[j].astype(np.float32)
                         for k in range(len(mode)):
                             if comps.get(k) and j < len(comps[k]):
                                 comp = cv2.resize(comps[k][j], (ori_w, split_h))
                                 comp = cv2.cvtColor(
                                     np.array(comp).astype(np.uint8), cv2.COLOR_BGR2RGB
-                                )
-                                mask_area = job.mask[mode[k][0]:mode[k][1], :]
-                                frame[mode[k][0]:mode[k][1], :, :] = (
+                                ).astype(np.float32)
+                                # Soft alpha blend: mask is float32 in [0,1]
+                                # when feather_radius > 0, else uint8 in {0,1}.
+                                mask_area = job.mask[mode[k][0]:mode[k][1], :].astype(np.float32)
+                                blended = (
                                     mask_area * comp
-                                    + (1 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]
+                                    + (1.0 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]
                                 )
+                                frame[mode[k][0]:mode[k][1], :, :] = blended
+                        frame = np.clip(frame, 0, 255).astype(np.uint8)
                         if job.dual:
                             frame = np.vstack([frame_ori, frame])
                         pipe.stdin.write(frame.tobytes())
+
+                    if job.progress is not None:
+                        job.progress(end_f, video_length)
 
             pipe.stdin.close()
             stdin_closed = True

@@ -1238,17 +1238,50 @@ def select_candidates_by_intent(
 def mask_from_candidates(
     candidates: Iterable[CleanCandidate],
     frame_shape: tuple[int, int],
+    feather_radius: int = 0,
 ) -> np.ndarray:
-    """Merge candidate masks into the mask format used by inpainting tasks."""
+    """Merge candidate masks into the mask format used by inpainting tasks.
+
+    Candidates are merged first (``np.maximum``). When ``feather_radius > 0``,
+    the *merged* mask's outer boundary is then blurred with a Gaussian so the
+    inpainting blend produces a soft seam instead of a hard edge. The interior
+    (mask >= 1.0) is pinned back to full opacity so thin candidates (e.g. a
+    4-pixel-tall subtitle band) are not eroded inward.
+
+    Earlier revisions feathered each bbox-only candidate independently. That
+    was a no-op in practice because the clean-task detector emits a full-image
+    ``mask`` for every candidate, so the bbox-only branch never ran. Feathering
+    the final merged mask fixes this and also softens seams around candidates
+    whose detector-provided mask already has a hard edge.
+
+    Output dtype is ``float32`` with values in ``[0, 1]`` when
+    ``feather_radius > 0``, and ``uint8`` with values in ``{0, 1}`` when
+    ``feather_radius == 0`` (backwards-compatible with the eval IoU path,
+    which compares against binary ground-truth masks).
+    """
     h, w = frame_shape
-    mask = np.zeros((h, w, 1), dtype=np.uint8)
+    # Always merge candidates as float32 internally; cast down to uint8 only
+    # for the legacy binary path at the end.
+    mask = np.zeros((h, w, 1), dtype=np.float32)
     for candidate in candidates:
         if candidate.mask is not None:
-            mask = np.maximum(mask, candidate.mask.astype(np.uint8))
+            mask = np.maximum(mask, candidate.mask.astype(np.float32))
             continue
         x1, y1, x2, y2 = candidate.bbox
-        mask[y1:y2 + 1, x1:x2 + 1, 0] = 1
-    return mask
+        mask[y1:y2 + 1, x1:x2 + 1, 0] = 1.0
+
+    if feather_radius > 0:
+        # Feather the OUTER boundary of the merged mask: blur it, then pin
+        # the original interior (mask >= 1.0) back to full opacity so the
+        # filled region's core stays 1.0 and only the edge gets a soft
+        # falloff into the surrounding frame.
+        flat = mask[:, :, 0]
+        k = max(3, feather_radius * 2 + 1)
+        blurred = cv2.GaussianBlur(flat, (k, k), feather_radius / 2.0)
+        flat = np.where(flat >= 1.0, 1.0, blurred)
+        return np.clip(flat[:, :, None], 0.0, 1.0)
+
+    return np.clip(mask, 0, 1).astype(np.uint8)
 
 
 def write_clean_artifacts(

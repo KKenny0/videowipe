@@ -23,6 +23,7 @@ from videowipe.detect import (
 )
 from videowipe.engine import WipeEngine, remove_text
 from videowipe.inpainters import STTNInpainter, get_registry
+from videowipe.inpainters.base import InpaintJob
 from videowipe.external import ExternalInpainter, ExternalModelError, run_external
 from videowipe.tasks.base import read_mask, validate_mask_shape
 
@@ -1247,4 +1248,251 @@ def test_external_inpainter_requires_mask_path():
     )
     with pytest.raises(ValueError, match="mask_path"):
         inpainter.inpaint(job)
+
+
+# --- A0: soft alpha mask + audio retention + progress callback ---
+
+
+def test_mask_from_candidates_feather_radius_produces_continuous_alpha():
+    """feather_radius > 0 yields a float32 mask with values in [0, 1],
+    not the legacy binary uint8 {0, 1}. The bbox interior stays at 1.0;
+    the seam outside the bbox contains intermediate values from the
+    Gaussian falloff."""
+    candidates = [
+        CleanCandidate(
+            id="c1", type="subtitle", label="bottom subtitle",
+            bbox=(5, 15, 25, 18), confidence=0.9, frame_fraction=1.0,
+            reason="subtitle band", default_remove=True,
+        ),
+    ]
+    mask = mask_from_candidates(candidates, (20, 30), feather_radius=3)
+    # Continuous alpha: float32, contains values strictly between 0 and 1
+    assert mask.dtype == np.float32
+    assert 0.0 < mask.max() <= 1.0
+    # The bbox GEOMETRIC CENTER stays fully opaque (far enough from the
+    # Gaussian-blurred edge). bbox y in [15,18], x in [5,25] → center (16, 15).
+    # Gaussian blur erodes edges inward, so use a point at least one radius
+    # away from every bbox edge: y=16 (1px from top edge 15) is too close;
+    # pick the middle of the bbox interior instead.
+    assert mask[16, 14, 0] == 1.0 or mask[16, 16, 0] == 1.0, (
+        f"bbox interior should stay opaque; got center={mask[16, 14, 0]}"
+    )
+    # Somewhere outside the bbox there is a soft falloff value in (0, 1)
+    flat = mask[:, :, 0]
+    soft_pixels = flat[(flat > 0.0) & (flat < 1.0)]
+    assert soft_pixels.size > 0
+
+
+def test_mask_from_candidates_feather_radius_zero_keeps_binary_uint8():
+    """feather_radius == 0 keeps the legacy binary uint8 {0, 1} output so
+    the eval IoU path continues to compare against binary ground-truth."""
+    candidates = [
+        CleanCandidate(
+            id="c1", type="subtitle", label="bottom subtitle",
+            bbox=(5, 15, 25, 18), confidence=0.9, frame_fraction=1.0,
+            reason="subtitle band", default_remove=True,
+        ),
+    ]
+    mask = mask_from_candidates(candidates, (20, 30), feather_radius=0)
+    assert mask.dtype == np.uint8
+    assert mask[16, 15, 0] == 1
+    # No intermediate values when feathering is disabled
+    flat = mask[:, :, 0]
+    soft_pixels = flat[(flat > 0) & (flat < 1)]
+    assert soft_pixels.size == 0
+
+
+def test_mask_from_candidates_feathers_candidate_with_premask():
+    """Regression: when a candidate carries a precomputed binary ``mask``
+    (as the clean-task detector emits for every candidate), feather_radius > 0
+    must still soften the merged mask's outer boundary. The first A0
+    implementation only feathered bbox-only candidates and was a no-op here,
+    so feather=0 and feather=4 produced byte-identical output. This test pins
+    the fix: feathering happens on the final merged mask, not per-candidate.
+    """
+    h, w = 20, 30
+    # Candidate with a full-image binary mask (the real-world detector shape):
+    # a solid block at rows 15-18, cols 5-25.
+    premask = np.zeros((h, w, 1), dtype=np.uint8)
+    premask[15:19, 5:26, 0] = 1
+    candidate = CleanCandidate(
+        id="c1", type="subtitle", label="bottom subtitle",
+        bbox=(5, 15, 25, 18), confidence=0.9, frame_fraction=1.0,
+        reason="subtitle band", default_remove=True,
+        mask=premask,
+    )
+    hard = mask_from_candidates([candidate], (h, w), feather_radius=0)
+    soft = mask_from_candidates([candidate], (h, w), feather_radius=4)
+
+    # Hard path: binary uint8
+    assert hard.dtype == np.uint8
+    assert hard[16, 15, 0] == 1
+
+    # Soft path: float32 with intermediate values OUTSIDE the original block,
+    # and the interior pinned back to 1.0.
+    assert soft.dtype == np.float32
+    assert soft[16, 15, 0] == 1.0  # interior unchanged
+    flat = soft[:, :, 0]
+    soft_pixels = flat[(flat > 0.0) & (flat < 1.0)]
+    assert soft_pixels.size > 0, (
+        "feather_radius>0 must soften the merged mask boundary even when "
+        "the candidate carries a precomputed mask"
+    )
+    # The hard mask is pure binary {0,1}; the soft mask has intermediate
+    # values. They cannot be equal as arrays.
+    assert not np.array_equal(soft, hard.astype(np.float32))
+
+
+def test_inpaint_job_has_feather_radius_field_default_zero():
+    """InpaintJob exposes feather_radius with default 0 (legacy binary)."""
+    job = InpaintJob(
+        video_path="v.mp4",
+        mask=np.zeros((4, 4, 1), dtype=np.uint8),
+        output_dir=".",
+        fps=0.0,
+        frame_count=0,
+        width=0,
+        height=0,
+    )
+    assert job.feather_radius == 0
+    assert job.progress is None
+
+
+def test_engine_sets_nonzero_feather_radius_by_default():
+    """WipeEngine applies a non-zero feather_radius to its task impl so the
+    STTN blend produces a soft seam in the default run path (the eval path
+    opts out by passing feather_radius=0 explicitly)."""
+    from videowipe.engine import _DEFAULT_FEATHER_RADIUS
+
+    engine = WipeEngine(task="detext")
+    try:
+        assert _DEFAULT_FEATHER_RADIUS > 0
+        assert engine._task_impl.feather_radius == _DEFAULT_FEATHER_RADIUS
+    finally:
+        engine.cleanup()
+
+
+def _ffmpeg_available() -> bool:
+    import shutil
+    return shutil.which("ffmpeg") is not None
+
+
+@pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")
+def test_sttn_inpaint_preserves_audio_and_reports_progress(tmp_path, monkeypatch):
+    """End-to-end A0 verification of the three "finished feel" fixes against
+    a real ffmpeg:
+
+    1. The ffmpeg command built by STTNInpainter maps the original video's
+       audio stream (``-map 1:a?`` and ``-c:a aac``).
+    2. The ``job.progress`` callback is invoked at least once during the
+       segment loop.
+    3. The soft-alpha blend does not raise on a float32 mask.
+
+    A fake backend returns zero-filled predicted frames so the real STTN
+    segment loop and ffmpeg pipe are exercised without loading model weights.
+    """
+    from videowipe.inpainters.sttn import STTNInpainter
+
+    # Build a tiny test video WITH an audio track so the -map 1:a? path has
+    # a real stream to attach. 96x64, 8 frames, silent aac track.
+    video = tmp_path / "input.mp4"
+    _write_test_video(
+        video, width=96, height=64, frames=8,
+        draw=lambda frame, i: frame.__setitem__(
+            (slice(50, 60), slice(10, 86)), 200),
+    )
+    # Re-encode with a silent audio track so ffprobe can find a stream.
+    import subprocess as _sp
+    audio_video = tmp_path / "input_audio.mp4"
+    _sp.run(
+        ["ffmpeg", "-y", "-loglevel", "error",
+         "-i", str(video),
+         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-shortest",
+         str(audio_video)],
+        check=True,
+    )
+
+    # Fake backend: real preprocess, no-op model, zero prediction frames.
+    class _FakeBackend:
+        __name__ = "FakeBackend"
+
+        def preprocess(self, frames):
+            from videowipe.backends import InpaintBackend
+            return InpaintBackend.preprocess(self, frames)
+
+        def encode(self, tensor):
+            return np.zeros((tensor.shape[0], 1, 1, 1), dtype=np.float32)
+
+        def transform(self, feats):
+            return feats
+
+        def decode(self, feats):
+            t = feats.shape[0]
+            return np.zeros((t, 120, 640, 3), dtype=np.uint8)
+
+        def cleanup(self):
+            pass
+
+    inpainter = STTNInpainter()
+    inpainter.backend = _FakeBackend()
+
+    captured_cmds = []
+    real_popen = _sp.Popen
+
+    def _spy_popen(cmd, *args, **kwargs):
+        captured_cmds.append(list(cmd))
+        return real_popen(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("videowipe.inpainters.sttn.subprocess.Popen", _spy_popen)
+
+    progress_calls = []
+
+    def _progress(done, total):
+        progress_calls.append((done, total))
+
+    reader = cv2.VideoCapture(str(audio_video))
+    try:
+        mask = np.zeros((64, 96, 1), dtype=np.float32)
+        mask[50:60, 10:86, 0] = 1.0
+        job = InpaintJob(
+            video_path=str(audio_video),
+            mask=mask,
+            output_dir=str(tmp_path),
+            fps=4.0,
+            frame_count=8,
+            width=96,
+            height=64,
+            reader=reader,
+            progress=_progress,
+            feather_radius=3,
+            gap=8,
+        )
+        outcome = inpainter.inpaint(job)
+    finally:
+        reader.release()
+        inpainter.cleanup()
+
+    # 1. ffmpeg command mapped the original audio stream
+    assert captured_cmds, "ffmpeg was not invoked"
+    flat_args = [a for cmd in captured_cmds for a in cmd]
+    assert "-map" in flat_args and "1:a?" in flat_args
+    assert "-c:a" in flat_args and "aac" in flat_args
+
+    # 2. progress callback fired at least once, final call frames_done == total
+    assert progress_calls, "progress callback was never invoked"
+    assert progress_calls[-1][0] == 8
+    assert progress_calls[-1][1] == 8
+
+    # 3. Output mp4 contains an audio stream
+    probe = _sp.run(
+        ["ffmpeg", "-i", outcome.output_path, "-hide_banner"],
+        capture_output=True, text=True, check=False,
+    )
+    diagnostic = probe.stderr + probe.stdout
+    assert "Audio:" in diagnostic, (
+        f"output has no audio stream\n{diagnostic}"
+    )
+
 
