@@ -484,6 +484,28 @@
       flex-wrap: wrap;
     }
 
+    /* ── Support ── */
+    .support-section {
+      padding: 72px 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    .support-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 32px;
+    }
+    .support-copy {
+      max-width: 620px;
+    }
+    .support-copy .section-title {
+      margin-bottom: 12px;
+    }
+    .support-actions {
+      flex-shrink: 0;
+    }
+
     /* ── Footer ── */
     .footer {
       border-top: 1px solid var(--border);
@@ -516,6 +538,7 @@
       .pipeline-steps::before { display: none; }
       .examples-grid { grid-template-columns: 1fr; }
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .support-inner { flex-direction: column; align-items: flex-start; }
       .hero { padding: 80px 0 48px; }
       .section { padding: 64px 0; }
     }
@@ -542,6 +565,7 @@
         <a href="#features" data-i18n="nav_features">Features</a>
         <a href="#how-it-works" data-i18n="nav_how">How it works</a>
         <a href="#usage" data-i18n="nav_usage">Usage</a>
+        <a href="#support" data-i18n="nav_support">Support</a>
         <div class="lang-switch">
           <button data-lang="en" class="active">EN</button>
           <button data-lang="zh">中</button>
@@ -773,6 +797,22 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
     </div>
   </section>
 
+  <!-- ═══ SUPPORT ═══ -->
+  <section class="support-section" id="support" data-od-id="support">
+    <div class="container support-inner">
+      <div class="support-copy">
+        <div class="section-label" data-i18n="support_label">Support</div>
+        <div class="section-title" data-i18n="support_title">Help keep VideoWipe maintained.</div>
+        <p class="section-dek" data-i18n="support_dek">
+          If VideoWipe saves you time on subtitle, watermark, or text-overlay cleanup, support helps keep model packaging, Docker images, detection tuning, and documentation maintained.
+        </p>
+      </div>
+      <div class="support-actions">
+        <a href="https://kkenny0.github.io/support/" class="btn btn-ghost" data-i18n="support_cta">Support the project</a>
+      </div>
+    </div>
+  </section>
+
   <!-- ═══ FOOTER ═══ -->
   <footer class="footer">
     <div class="container footer-inner">
@@ -782,6 +822,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
       <div class="footer-links">
         <a href="https://github.com/kkenny0/videowipe">GitHub</a>
         <a href="https://pypi.org/project/videowipe/">PyPI</a>
+        <a href="https://kkenny0.github.io/support/">Support</a>
         <a href="https://github.com/kkenny0/videowipe/blob/main/LICENSE">License</a>
       </div>
     </div>
@@ -794,6 +835,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         nav_features: 'Features',
         nav_how: 'How it works',
         nav_usage: 'Usage',
+        nav_support: 'Support',
         hero_eyebrow: 'Open-source video inpainting tool',
         hero_h1: 'Remove text from video.<br><span class="accent">One command.</span>',
         hero_lead: 'Auto-detect hardcoded subtitles, watermarks, logos, and timestamps. Generate masks and inpaint — no manual work needed. Multilingual out of the box.',
@@ -829,12 +871,17 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         cta_dek: 'Install with pip, run one command. Auto-detect handles the rest. Works on CPU, scales to GPU.',
         cta_install: 'Install from PyPI',
         cta_source: 'View source on GitHub',
+        support_label: 'Support',
+        support_title: 'Help keep VideoWipe maintained.',
+        support_dek: 'If VideoWipe saves you time on subtitle, watermark, or text-overlay cleanup, support helps keep model packaging, Docker images, detection tuning, and documentation maintained.',
+        support_cta: 'Support the project',
         footer_tagline: 'Auto-detect + pluggable inpainting'
       },
       zh: {
         nav_features: '功能',
         nav_how: '工作原理',
         nav_usage: '使用方式',
+        nav_support: '支持',
         hero_eyebrow: '开源视频文字擦除工具',
         hero_h1: '一键去除视频中的文字。<br><span class="accent">只需一行命令。</span>',
         hero_lead: '自动检测硬字幕、水印、Logo 和时间戳。生成遮罩并修复画面——无需手动操作，原生支持多语言。',
@@ -870,6 +917,10 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         cta_dek: 'pip 安装，一行命令。自动检测处理剩下的事。支持 CPU，可扩展至 GPU。',
         cta_install: '从 PyPI 安装',
         cta_source: '在 GitHub 查看源码',
+        support_label: '支持项目',
+        support_title: '帮助 VideoWipe 持续维护。',
+        support_dek: '如果 VideoWipe 帮你节省了字幕、水印或文字叠加清理时间，你的支持会帮助我继续维护模型打包、Docker 镜像、检测调优和文档。',
+        support_cta: '支持这个项目',
         footer_tagline: '自动检测 + 可插拔修复引擎'
       }
     };
