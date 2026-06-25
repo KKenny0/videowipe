@@ -295,6 +295,14 @@ docker run --rm -v "$(pwd)":/data videowipe:latest clean /data/input.mp4 -o /dat
 docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
+## Support
+
+If videowipe saves you time on subtitle, watermark, or text-overlay cleanup, you can support continued maintenance here:
+
+<https://kkenny0.github.io/support/>
+
+Support helps keep model packaging, Docker images, detection tuning, and documentation maintained.
+
 ## Credits
 
 This project builds on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) implementation. The built-in text detection model is from [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR).

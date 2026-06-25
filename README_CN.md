@@ -295,6 +295,14 @@ docker run --rm -v "$(pwd)":/data videowipe:latest clean /data/input.mp4 -o /dat
 docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
+## 支持项目
+
+如果 videowipe 帮你节省了字幕、水印或文字叠加清理时间，可以在这里支持后续维护：
+
+<https://kkenny0.github.io/support/>
+
+你的支持会帮助我继续维护模型打包、Docker 镜像、检测调优和文档。
+
 ## 致谢
 
 基于 [STTN](https://github.com/researchmm/STTN) 和 [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe)。内置文字检测模型来自 [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR)。
