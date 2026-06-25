@@ -4,11 +4,11 @@ Wraps an external inpainting command (``<command> <video> <mask>
 <output_dir>``) as both a plain function (:func:`run_external`) and an
 :class:`Inpainter` (:class:`ExternalInpainter`).
 
-Invocation uses :func:`shlex.split` plus an argv list with ``shell=False``, so
-shell metacharacters in the command string or the path arguments are never
-interpreted by a shell — this is an injection-safety property. A command whose
-executable cannot be found raises :class:`ExternalModelError`, as does a
-non-zero exit or a missing output video.
+Invocation uses a platform-aware argv split with ``shell=False``, so shell
+metacharacters in the command string or the path arguments are never interpreted
+by a shell — this is an injection-safety property. A command whose executable
+cannot be found raises :class:`ExternalModelError`, as does a non-zero exit or a
+missing output video.
 """
 from __future__ import annotations
 
@@ -25,20 +25,28 @@ class ExternalModelError(Exception):
     """Raised when the external model command fails."""
 
 
+def _split_command(command: str) -> list[str]:
+    if os.name != "nt":
+        return shlex.split(command)
+    return [
+        part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part
+        for part in shlex.split(command, posix=False)
+    ]
+
+
 def run_external(command: str, video_path: str, mask_path: str,
                  output_dir: str) -> str:
     """Run an external inpainting command and return the output video path.
 
-    The command is split with :func:`shlex.split` and invoked as an argv list
-    with ``shell=False``; the three path arguments are appended verbatim. No
-    shell is involved, so shell metacharacters in *command* or the paths are
-    not interpreted.
+    The command is split and invoked as an argv list with ``shell=False``; the
+    three path arguments are appended verbatim. No shell is involved, so shell
+    metacharacters in *command* or the paths are not interpreted.
 
     Returns the path to the output video file found in *output_dir*.
     Raises :class:`ExternalModelError` on a missing executable, a non-zero
     exit, or a missing output video.
     """
-    cmd = shlex.split(command) + [video_path, mask_path, output_dir]
+    cmd = _split_command(command) + [video_path, mask_path, output_dir]
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=False,

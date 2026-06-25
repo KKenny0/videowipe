@@ -78,6 +78,10 @@ def _build_parser():
     clean.add_argument("--propainter-dir", default=None,
                        help="Path to ProPainter source (used with --model propainter)")
 
+    serve = subparsers.add_parser("serve", help="Start local web server")
+    serve.add_argument("--host", default="127.0.0.1", help="Bind host")
+    serve.add_argument("--port", type=int, default=8000, help="Bind port")
+
     return parser
 
 
@@ -88,6 +92,22 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "serve":
+        try:
+            import uvicorn
+        except ImportError:
+            print(
+                "videowipe: install web support with `pip install videowipe[web]`",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        uvicorn.run(
+            "videowipe.server.app:app",
+            host=args.host,
+            port=args.port,
+        )
+        return
 
     engine = WipeEngine(
         task=args.command,

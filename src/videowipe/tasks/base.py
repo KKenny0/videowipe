@@ -69,7 +69,7 @@ class BaseTask:
         print(f"Loaded weight: {weight_path} (backend: {type(self.backend).__name__})")
 
     def process_video(self, reader, frame_info, mask, output_dir: str,
-                      video_path: str = "") -> str:
+                      video_path: str = "", progress=None) -> str:
         """Process video. Subclasses must implement this.
 
         Returns the output file path.

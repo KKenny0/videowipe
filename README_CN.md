@@ -111,6 +111,20 @@ videowipe clean input.mp4 -o result/
 videowipe clean input.mp4 -m mask.png -o result/
 ```
 
+### 本地 Web UI
+
+```bash
+pip install "videowipe[web,onnx]"
+videowipe serve
+# 打开 http://127.0.0.1:8000
+```
+
+浏览器流程完全在本地运行：上传视频、预览并确认检测到的目标、执行清理，然后下载保留原始音轨的 MP4。
+
+| 上传 | 预览目标 | 下载 |
+|------|----------|------|
+| <img src="pics/web-ui/01-upload.png" width="260" alt="VideoWipe 网页上传界面"> | <img src="pics/web-ui/02-preview.png" width="260" alt="VideoWipe 网页目标预览界面"> | <img src="pics/web-ui/03-download.png" width="260" alt="VideoWipe 网页下载界面"> |
+
 #### `clean` 命令选项
 
 ```bash

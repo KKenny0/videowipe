@@ -1,0 +1,1155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VideoWipe</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --paper: #fffdfa;
+      --panel: #ffffff;
+      --ink: #171513;
+      --muted: #6f675e;
+      --quiet: #948a7d;
+      --line: #ded6ca;
+      --line-strong: #b8aa9a;
+      --dark: #1e1d1a;
+      --dark-2: #292720;
+      --accent: #ff6b35;
+      --accent-dark: #b94720;
+      --green: #167864;
+      --blue: #244c9b;
+      --soft: #f3ebe3;
+      --soft-green: #e6f2ee;
+      --danger: #b42318;
+      --radius: 8px;
+      --shadow: 0 20px 50px rgba(42, 35, 25, 0.13);
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.18) 44%, rgba(255,255,255,0.36)),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+
+    .app {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 36px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .brand {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: var(--paper);
+      box-shadow: 0 8px 24px rgba(38, 31, 23, 0.12);
+    }
+
+    .brand-name {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .brand-subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.72);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--quiet);
+    }
+
+    .status[data-tone="error"] {
+      color: var(--danger);
+      border-color: rgba(180,35,24,0.24);
+      background: #fff4f2;
+    }
+
+    .status[data-tone="error"]::before { background: var(--danger); }
+
+    .status[data-tone="ok"] {
+      color: var(--green);
+      border-color: rgba(22,120,100,0.24);
+      background: var(--soft-green);
+    }
+
+    .status[data-tone="ok"]::before { background: var(--green); }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(255,107,53,0.11), transparent 36%),
+        rgba(255,253,250,0.74);
+    }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--accent-dark);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .intro h2 {
+      margin: 0;
+      max-width: 760px;
+      font-size: clamp(28px, 4vw, 46px);
+      line-height: 1.04;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .intro-lead {
+      margin: 12px 0 0;
+      max-width: 680px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .proofs {
+      display: grid;
+      gap: 8px;
+      min-width: 180px;
+    }
+
+    .proof {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid rgba(23,21,19,0.09);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.74);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .proof::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0 0 18px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,0.68);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .step-num {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--soft);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .step.is-active {
+      border-color: rgba(255,107,53,0.45);
+      background: #fff7f2;
+      color: var(--ink);
+    }
+
+    .step.is-active .step-num {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.94);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .controls {
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel-heading {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 2px;
+    }
+
+    .panel-heading h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 850;
+    }
+
+    .panel-heading p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .mini-badge {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--soft-green);
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .dropzone {
+      min-height: 174px;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: #fbfaf7;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    }
+
+    .dropzone:hover,
+    .dropzone.is-dragging {
+      border-color: var(--accent);
+      background: #fff8f3;
+    }
+
+    .dropzone:active { transform: translateY(1px); }
+
+    .drop-inner {
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .film {
+      width: 58px;
+      height: 42px;
+      border: 2px solid var(--ink);
+      border-radius: 6px;
+      position: relative;
+      background: linear-gradient(90deg, #fff 0 18%, #e9eee9 18% 82%, #fff 82%);
+    }
+
+    .film::before,
+    .film::after {
+      content: "";
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      width: 4px;
+      background: repeating-linear-gradient(
+        to bottom,
+        var(--ink) 0 3px,
+        transparent 3px 7px
+      );
+    }
+
+    .film::before { left: 6px; }
+    .film::after { right: 6px; }
+
+    .drop-title {
+      font-weight: 850;
+      font-size: 16px;
+    }
+
+    .file-name {
+      width: 100%;
+      max-width: 280px;
+      color: var(--muted);
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      outline: none;
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255,107,53,0.14);
+    }
+
+    .field-hint {
+      color: var(--quiet);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .primary,
+    .secondary {
+      height: 44px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-weight: 850;
+      transition: opacity 0.15s, transform 0.15s, background 0.15s;
+    }
+
+    .primary {
+      background: var(--green);
+      color: #fff;
+    }
+
+    .primary:hover:not(:disabled) { background: #126a57; }
+
+    .secondary {
+      background: #fff;
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    button:disabled {
+      opacity: 0.46;
+      cursor: not-allowed;
+    }
+
+    button:not(:disabled):active { transform: translateY(1px); }
+
+    .workspace {
+      min-height: 620px;
+      overflow: hidden;
+    }
+
+    .preview {
+      display: grid;
+      grid-template-rows: minmax(320px, auto) auto;
+    }
+
+    .preview-stage {
+      min-height: 420px;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(135deg, rgba(255,107,53,0.12), transparent 34%),
+        linear-gradient(45deg, rgba(22,120,100,0.12), transparent 46%),
+        var(--dark);
+      border-bottom: 1px solid var(--line);
+      position: relative;
+    }
+
+    .preview-stage img {
+      width: 100%;
+      height: 100%;
+      max-height: 560px;
+      object-fit: contain;
+      display: none;
+      background: #111;
+    }
+
+    .preview-empty {
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      max-width: 380px;
+      color: #efe8dc;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .empty-logo {
+      width: 76px;
+      height: 76px;
+      opacity: 0.92;
+      filter: drop-shadow(0 12px 24px rgba(0,0,0,0.25));
+    }
+
+    .preview-empty strong {
+      font-size: 16px;
+      line-height: 1.25;
+    }
+
+    .preview-empty span {
+      color: #bdb5a9;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .review {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(230px, 280px);
+      gap: 0;
+      min-height: 210px;
+    }
+
+    .candidates,
+    .run {
+      padding: 16px;
+    }
+
+    .candidates {
+      border-right: 1px solid var(--line);
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .section-title span {
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 11px;
+      text-transform: none;
+      font-weight: 700;
+    }
+
+    .candidate-list {
+      display: grid;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+    }
+
+    .empty-list {
+      color: var(--quiet);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 11px 0;
+    }
+
+    .candidate {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .candidate input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--green);
+    }
+
+    .candidate-main {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .candidate-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .candidate-meta {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .pill {
+      border-radius: 999px;
+      background: #f1f0ec;
+      color: var(--muted);
+      padding: 4px 8px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    progress {
+      width: 100%;
+      height: 12px;
+      accent-color: var(--green);
+    }
+
+    .run {
+      display: grid;
+      align-content: start;
+      gap: 14px;
+    }
+
+    .output-state {
+      min-height: 54px;
+      display: grid;
+      align-content: center;
+      gap: 3px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfaf7;
+    }
+
+    .output-state strong {
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .output-state span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .progress-row {
+      display: grid;
+      gap: 7px;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      color: var(--quiet);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .download {
+      display: none;
+      min-height: 44px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 850;
+      text-decoration: none;
+    }
+
+    .hidden-file { display: none; }
+
+    @media (max-width: 900px) {
+      .intro {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+
+      .proofs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .proof {
+        justify-content: center;
+      }
+
+      .layout,
+      .review {
+        grid-template-columns: 1fr;
+      }
+
+      .candidates {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .preview-stage {
+        min-height: 320px;
+      }
+
+      .workspace {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app {
+        width: min(100vw - 20px, 1180px);
+        padding-top: 14px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .brand {
+        grid-template-columns: 38px minmax(0, 1fr);
+      }
+
+      .brand-logo {
+        width: 38px;
+        height: 38px;
+      }
+
+      .brand-name {
+        font-size: 23px;
+      }
+
+      .intro {
+        padding: 14px;
+      }
+
+      .intro h2 {
+        font-size: 30px;
+      }
+
+      .proofs {
+        grid-template-columns: 1fr;
+      }
+
+      .steps {
+        grid-template-columns: 1fr;
+      }
+
+      .step {
+        min-height: 42px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <rect x="7" y="10" width="50" height="44" rx="4" stroke="#1a1a1a" stroke-width="1.6"/>
+          <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="#1a1a1a" opacity="0.18"/>
+          <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="#1a1a1a" opacity="0.18"/>
+          <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <h1 class="brand-name">VideoWipe</h1>
+          <div class="brand-subtitle">Local video cleanup studio</div>
+        </div>
+      </div>
+      <div id="status" class="status">Ready</div>
+    </header>
+
+    <section class="intro" aria-label="VideoWipe overview">
+      <div>
+        <p class="eyebrow">Local first web UI</p>
+        <h2>Remove subtitles, watermarks, and text overlays locally.</h2>
+        <p class="intro-lead">Upload a clip, review the detected targets, then download a cleaned MP4 with the original audio kept intact.</p>
+      </div>
+      <div class="proofs" aria-label="Key promises">
+        <span class="proof">Local files</span>
+        <span class="proof">Preview first</span>
+        <span class="proof">Keeps audio</span>
+      </div>
+    </section>
+
+    <ol id="steps" class="steps" aria-label="Workflow steps">
+      <li class="step is-active" data-step="upload"><span class="step-num">1</span><span>Upload</span></li>
+      <li class="step" data-step="preview"><span class="step-num">2</span><span>Preview</span></li>
+      <li class="step" data-step="download"><span class="step-num">3</span><span>Download</span></li>
+    </ol>
+
+    <div class="layout">
+      <section class="panel controls">
+        <div class="panel-heading">
+          <div>
+            <h3>Start a cleanup</h3>
+            <p>Choose a video and describe what should disappear.</p>
+          </div>
+          <span class="mini-badge">private</span>
+        </div>
+
+        <input id="fileInput" class="hidden-file" type="file" accept="video/*">
+        <button id="dropzone" class="dropzone" type="button">
+          <span class="drop-inner">
+            <span class="film" aria-hidden="true"></span>
+            <span class="drop-title">Choose video</span>
+            <span id="fileName" class="file-name">MP4, MOV, or WebM</span>
+          </span>
+        </button>
+
+        <div class="field">
+          <label for="intent">Intent</label>
+          <input id="intent" type="text" placeholder="Remove bottom subtitles">
+          <span class="field-hint">Examples: bottom subtitles, top-right logo, timestamp.</span>
+        </div>
+
+        <button id="submitBtn" class="primary" type="button">Detect targets</button>
+        <button id="resetBtn" class="secondary" type="button">Reset</button>
+      </section>
+
+      <section class="panel workspace">
+        <div class="preview">
+          <div class="preview-stage">
+            <img id="previewImage" alt="Detection preview">
+            <div id="previewEmpty" class="preview-empty">
+              <svg class="empty-logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <rect x="7" y="10" width="50" height="44" rx="4" stroke="#efe8dc" stroke-width="1.6"/>
+                <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="#efe8dc" opacity="0.25"/>
+                <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="#efe8dc" opacity="0.25"/>
+                <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <strong>Preview appears here after detection</strong>
+              <span>Selected targets will be highlighted before any cleaning starts.</span>
+            </div>
+          </div>
+
+          <div class="review">
+            <div class="candidates">
+              <p class="section-title">Targets <span id="candidateCount">0 found</span></p>
+              <div id="candidateList" class="candidate-list">
+                <div class="empty-list">Detected regions will appear here for review.</div>
+              </div>
+            </div>
+            <div class="run">
+              <p class="section-title">Output <span id="progressText">0%</span></p>
+              <div id="outputState" class="output-state">
+                <strong>Waiting for preview</strong>
+                <span>Run cleanup after targets are detected.</span>
+              </div>
+              <div class="progress-row">
+                <progress id="progressBar" value="0" max="100"></progress>
+              </div>
+              <button id="confirmBtn" class="primary" type="button" disabled>Clean video</button>
+              <a id="downloadLink" class="download" href="#">Download MP4</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const fileInput = document.querySelector("#fileInput");
+    const dropzone = document.querySelector("#dropzone");
+    const fileName = document.querySelector("#fileName");
+    const intent = document.querySelector("#intent");
+    const submitBtn = document.querySelector("#submitBtn");
+    const resetBtn = document.querySelector("#resetBtn");
+    const confirmBtn = document.querySelector("#confirmBtn");
+    const statusEl = document.querySelector("#status");
+    const previewImage = document.querySelector("#previewImage");
+    const previewEmpty = document.querySelector("#previewEmpty");
+    const candidateList = document.querySelector("#candidateList");
+    const candidateCount = document.querySelector("#candidateCount");
+    const outputState = document.querySelector("#outputState");
+    const progressBar = document.querySelector("#progressBar");
+    const progressText = document.querySelector("#progressText");
+    const downloadLink = document.querySelector("#downloadLink");
+    const steps = Array.from(document.querySelectorAll(".step"));
+
+    let selectedFile = null;
+    let currentJobId = null;
+    let stream = null;
+
+    function setStatus(text, tone = "") {
+      statusEl.textContent = text;
+      statusEl.dataset.tone = tone;
+    }
+
+    function setStep(stepName) {
+      steps.forEach((step) => {
+        step.classList.toggle("is-active", step.dataset.step === stepName);
+      });
+    }
+
+    function setOutput(title, detail) {
+      outputState.innerHTML = "";
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      const span = document.createElement("span");
+      span.textContent = detail;
+      outputState.append(strong, span);
+    }
+
+    function setProgress(value) {
+      const rounded = Math.max(0, Math.min(100, Math.round(value)));
+      progressBar.value = rounded;
+      progressText.textContent = `${rounded}%`;
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function cancelCurrentJob() {
+      const response = await fetch("/jobs/current", { method: "DELETE" });
+      if (response.ok) {
+        return true;
+      }
+      let message = "Current job cannot be reset yet.";
+      try {
+        const payload = await response.json();
+        message = payload.detail || message;
+      } catch (_) {
+        message = response.statusText || message;
+      }
+      throw new Error(message);
+    }
+
+    async function reset() {
+      try {
+        resetBtn.disabled = true;
+        await cancelCurrentJob();
+      } catch (error) {
+        setOutput("Reset paused", error.message);
+        setStatus(error.message, "error");
+        return;
+      } finally {
+        resetBtn.disabled = false;
+      }
+      if (stream) {
+        stream.close();
+        stream = null;
+      }
+      currentJobId = null;
+      selectedFile = null;
+      fileInput.value = "";
+      fileName.textContent = "MP4, MOV, or WebM";
+      candidateList.innerHTML = '<div class="empty-list">Detected regions will appear here for review.</div>';
+      candidateCount.textContent = "0 found";
+      previewImage.removeAttribute("src");
+      previewImage.style.display = "none";
+      previewEmpty.style.display = "grid";
+      setProgress(0);
+      setOutput("Waiting for preview", "Run cleanup after targets are detected.");
+      confirmBtn.disabled = true;
+      confirmBtn.style.display = "";
+      submitBtn.disabled = false;
+      downloadLink.style.display = "none";
+      downloadLink.removeAttribute("href");
+      setStep("upload");
+      setStatus("Ready");
+    }
+
+    function pickFile(file) {
+      selectedFile = file || null;
+      fileName.textContent = selectedFile ? selectedFile.name : "MP4, MOV, or WebM";
+      if (selectedFile) {
+        setStatus("File ready");
+        setStep("upload");
+      }
+    }
+
+    function renderCandidates(candidates) {
+      candidateList.innerHTML = "";
+      candidateCount.textContent = `${candidates.length} found`;
+      if (!candidates.length) {
+        candidateList.innerHTML = '<div class="empty-list">No targets were detected in this preview.</div>';
+        confirmBtn.disabled = true;
+        return;
+      }
+      candidates.forEach((candidate) => {
+        const row = document.createElement("label");
+        row.className = "candidate";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = candidate.id;
+        checkbox.checked = Boolean(candidate.selected);
+
+        const main = document.createElement("span");
+        main.className = "candidate-main";
+
+        const name = document.createElement("span");
+        name.className = "candidate-name";
+        name.textContent = `${candidate.id} - ${candidate.label || candidate.type}`;
+
+        const meta = document.createElement("span");
+        meta.className = "candidate-meta";
+        meta.textContent = `bbox ${candidate.bbox.join(",")}`;
+
+        const pill = document.createElement("span");
+        pill.className = "pill";
+        pill.textContent = candidate.type;
+
+        main.append(name, meta);
+        row.append(checkbox, main, pill);
+        candidateList.append(row);
+      });
+      confirmBtn.disabled = false;
+    }
+
+    async function postJson(url, data) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || response.statusText);
+      }
+      return response.json();
+    }
+
+    async function waitForPreview(jobId) {
+      while (true) {
+        const status = await fetch(`/jobs/${jobId}`).then((r) => r.json());
+        if (status.state === "error") {
+          throw new Error(status.error || "Preview failed");
+        }
+        if (status.state === "preview_ready") {
+          break;
+        }
+        await sleep(900);
+      }
+
+      const response = await fetch(`/jobs/${jobId}/preview`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || "Preview failed");
+      }
+      const preview = await response.json();
+      previewImage.src = `${preview.preview_url}?t=${Date.now()}`;
+      previewImage.style.display = "block";
+      previewEmpty.style.display = "none";
+      renderCandidates(preview.candidates);
+      setProgress(0);
+      setOutput("Ready to clean", "Review targets, then start video cleanup.");
+      confirmBtn.style.display = "";
+      setStep("preview");
+      setStatus("Preview ready", "ok");
+    }
+
+    async function submit() {
+      if (!selectedFile) {
+        setStatus("Choose a video first", "error");
+        return;
+      }
+      submitBtn.disabled = true;
+      confirmBtn.disabled = true;
+      confirmBtn.style.display = "";
+      downloadLink.style.display = "none";
+      setProgress(0);
+      setOutput("Detecting targets", "Sampling frames and preparing a preview.");
+      setStep("preview");
+      setStatus("Detecting");
+
+      const form = new FormData();
+      form.append("video", selectedFile);
+      if (intent.value.trim()) {
+        form.append("intent", intent.value.trim());
+      }
+
+      try {
+        const response = await fetch("/jobs", { method: "POST", body: form });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.detail || response.statusText);
+        }
+        const job = await response.json();
+        currentJobId = job.id;
+        await waitForPreview(currentJobId);
+      } catch (error) {
+        const isBusy = error.message.includes("server busy");
+        setStatus(error.message, "error");
+        setOutput(
+          isBusy ? "Another video is waiting" : "Detection stopped",
+          isBusy ? "Click Reset to release a preview that is no longer needed." : error.message,
+        );
+        submitBtn.disabled = false;
+        setStep("upload");
+      }
+    }
+
+    function selectedCandidateIds() {
+      return Array.from(candidateList.querySelectorAll("input:checked"))
+        .map((input) => input.value);
+    }
+
+    async function confirmRun() {
+      if (!currentJobId) {
+        return;
+      }
+      const selectedIds = selectedCandidateIds();
+      if (!selectedIds.length) {
+        setStatus("Select at least one target", "error");
+        return;
+      }
+      confirmBtn.disabled = true;
+      downloadLink.style.display = "none";
+      setStatus("Processing");
+      setStep("download");
+      setProgress(0);
+      setOutput("Cleaning video", "This can take a while on CPU.");
+      try {
+        await postJson(`/jobs/${currentJobId}/confirm`, { selected_ids: selectedIds });
+        stream = new EventSource(`/jobs/${currentJobId}/progress`);
+        stream.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          setProgress((data.progress || 0) * 100);
+          if (data.state === "done") {
+            stream.close();
+            stream = null;
+            setProgress(100);
+            downloadLink.href = `/jobs/${currentJobId}/download`;
+            downloadLink.style.display = "flex";
+            confirmBtn.style.display = "none";
+            setOutput("Cleaned MP4 ready", "Download includes the original audio track.");
+            setStatus("Done", "ok");
+          }
+          if (data.state === "error") {
+            stream.close();
+            stream = null;
+            setOutput("Cleanup stopped", data.error || "Processing failed");
+            setStatus(data.error || "Processing failed", "error");
+          }
+        };
+        stream.onerror = () => {
+          if (stream) {
+            stream.close();
+            stream = null;
+          }
+          setOutput("Connection closed", "Progress updates stopped before completion.");
+          setStatus("Progress stream closed", "error");
+        };
+      } catch (error) {
+        setOutput("Cleanup stopped", error.message);
+        setStatus(error.message, "error");
+        confirmBtn.disabled = false;
+      }
+    }
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => pickFile(fileInput.files[0]));
+    submitBtn.addEventListener("click", submit);
+    confirmBtn.addEventListener("click", confirmRun);
+    resetBtn.addEventListener("click", reset);
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("is-dragging");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("is-dragging");
+      });
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+      const file = event.dataTransfer.files[0];
+      if (file) {
+        pickFile(file);
+      }
+    });
+  </script>
+</body>
+</html>

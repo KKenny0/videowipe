@@ -30,6 +30,11 @@ headless = [
 ocr = [
     "rapidocr-onnxruntime",
 ]
+web = [
+    "fastapi>=0.138",
+    "uvicorn[standard]>=0.20",
+    "python-multipart>=0.0.6",
+]
 all = [
     "videowipe[torch]",
     "videowipe[onnx]",

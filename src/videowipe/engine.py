@@ -161,7 +161,8 @@ class WipeEngine:
                 preview: bool = False,
                 confirm: bool = False,
                 detect_mode: str | None = None,
-                ocr: str | None = None) -> str:
+                ocr: str | None = None,
+                progress=None) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -306,6 +307,7 @@ class WipeEngine:
                 frame_count=0,
                 width=0,
                 height=0,
+                progress=progress,
             )
             out_path = file_inpainter.inpaint(ext_job).output_path
             bm["timing"]["external_s"] = round(time.monotonic() - t_ext_start, 3)
@@ -341,8 +343,11 @@ class WipeEngine:
             total_pixels = frame_info["H_ori"] * frame_info["W_ori"]
             bm["mask_area_ratio"] = round(mask_pixels / total_pixels, 6) if total_pixels else 0.0
             self._task_impl._bm = bm
+            process_kwargs = {"video_path": video}
+            if progress is not None:
+                process_kwargs["progress"] = progress
             out_path = self._task_impl.process_video(
-                reader, frame_info, mask_arr, output, video_path=video
+                reader, frame_info, mask_arr, output, **process_kwargs
             )
         except Exception as exc:
             bm_error = str(exc)

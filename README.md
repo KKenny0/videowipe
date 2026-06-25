@@ -111,6 +111,21 @@ videowipe clean input.mp4 -o result/
 videowipe clean input.mp4 -m mask.png -o result/
 ```
 
+### Local web UI
+
+```bash
+pip install "videowipe[web,onnx]"
+videowipe serve
+# Open http://127.0.0.1:8000
+```
+
+The browser flow runs locally: upload a video, review detected targets, confirm, and download the cleaned MP4.
+Files stay on your machine, the preview step shows the detected regions before inpainting, and the downloaded MP4 keeps the original audio track.
+
+| Upload | Preview targets | Download |
+|--------|-----------------|----------|
+| <img src="pics/web-ui/01-upload.png" width="260" alt="VideoWipe web upload screen"> | <img src="pics/web-ui/02-preview.png" width="260" alt="VideoWipe web target preview screen"> | <img src="pics/web-ui/03-download.png" width="260" alt="VideoWipe web download screen"> |
+
 #### `clean` command options
 
 ```bash

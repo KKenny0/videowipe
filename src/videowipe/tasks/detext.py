@@ -11,7 +11,7 @@ class DetextTask(BaseTask):
     """
 
     def process_video(self, reader, frame_info, mask, output_dir: str,
-                      video_path: str = "") -> str:
+                      video_path: str = "", progress=None) -> str:
         from videowipe.inpainters.base import InpaintJob
 
         metrics = self._bm.get("timing", {}) if isinstance(self._bm, dict) else {}
@@ -27,6 +27,7 @@ class DetextTask(BaseTask):
             gap=self.gap,
             output_suffix=getattr(self, "output_suffix", "detext"),
             reader=reader,
+            progress=progress,
             metrics=metrics,
             feather_radius=getattr(self, "feather_radius", 0),
         )
