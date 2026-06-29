@@ -1,12 +1,14 @@
 import json
 import os
 import pathlib
+import re
 import sys
 
 import numpy as np
 import pytest
 import cv2
 
+import videowipe
 from videowipe.backends import _detect_backend
 from videowipe import cli
 from videowipe import agent as agent_module
@@ -60,6 +62,14 @@ def test_cli_exposes_detext_and_clean_commands():
     assert region.region == ["top-right"]
     with pytest.raises(SystemExit):
         parser.parse_args(["delogo", "-v", "input.mp4", "-m", "mask.png"])
+
+
+def test_version_fields_are_in_sync():
+    pyproject = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE)
+
+    assert match is not None, "pyproject version not found"
+    assert match.group(1) == videowipe.__version__
 
 
 def test_engine_rejects_unregistered_task():
@@ -741,8 +751,6 @@ def test_engine_writes_benchmark_json_on_error(tmp_path, monkeypatch):
 
 def test_compute_mask_iou_identical_and_disjoint():
     """IoU should be 1.0 for identical masks and 0.0 for disjoint."""
-    from videowipe.detect import mask_from_candidates
-
     mask_a = np.zeros((20, 30, 1), dtype=np.uint8)
     mask_a[5:15, 5:25] = 1
 

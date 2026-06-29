@@ -6,12 +6,10 @@
 
 <p align="center">
   擦除视频中的硬字幕、水印和文字叠加。<br>
-  自动检测目标、生成 mask、修复画面 — <code>pip install videowipe</code> 即可使用。
+  自动检测目标、生成 mask，并在本地修复画面。
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/v/videowipe.svg" alt="PyPI"></a>
-  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/pyversions/videowipe.svg" alt="Python"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
 </p>
 
@@ -31,20 +29,18 @@ videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间�
 
 ## 安装
 
-需要 Python 3.8+，以及 ONNX Runtime 或 PyTorch。
+需要 Python 3.8+，以及 ONNX Runtime 或 PyTorch。VideoWipe 目前还没有发布到 PyPI，请从源码安装：
 
 ```bash
-# 已有 PyTorch：
-pip install videowipe
+git clone https://github.com/KKenny0/videowipe.git
+cd videowipe
 
-# 轻量 ONNX Runtime 后端：
-pip install videowipe[onnx]
+# 本地 Web UI + 轻量 ONNX Runtime 后端：
+pip install -e ".[web,onnx]"
 
-# 或 PyTorch 后端：
-pip install videowipe[torch]
-
-# 可选：OCR 文字识别，提升检测准确率
-pip install videowipe[ocr]
+# 可选 extras：
+pip install -e ".[torch]"  # PyTorch 后端
+pip install -e ".[ocr]"    # OCR 文字识别
 ```
 
 模型权重在首次运行时自动下载到 `~/.videowipe/weights/`，无需手动配置。
@@ -114,7 +110,7 @@ videowipe clean input.mp4 -m mask.png -o result/
 ### 本地 Web UI
 
 ```bash
-pip install "videowipe[web,onnx]"
+pip install -e ".[web,onnx]"
 videowipe serve
 # 打开 http://127.0.0.1:8000
 ```
@@ -267,23 +263,21 @@ docker pull ghcr.io/kkenny0/videowipe:latest
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
 ```
 
-**GPU（需要 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)）：**
+**GPU：**
+
+`v0.4.0` 的预构建 GPU 镜像暂不可用；tag 构建达到了 GitHub Actions 时间限制。需要 GPU 运行时请先本地构建。
+
+CPU 场景可以使用自带的 wrapper 脚本：
 
 ```bash
-docker pull ghcr.io/kkenny0/videowipe:gpu
-docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
-```
-
-或者使用自带的 wrapper 脚本（自动检测 GPU）：
-
-```bash
+VIDEOWIPE_TAG=latest \
 ./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | 镜像 | 大小 | GPU | 说明 |
 |------|------|-----|------|
-| `videowipe:latest` | ~480 MB | 否 | 仅 CPU，体积最小 |
-| `videowipe:gpu` | ~1.4 GB | 是 | ONNX Runtime + CUDA |
+| `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | 否 | 仅 CPU，体积最小 |
+| `videowipe:gpu` | ~1.4 GB | 是 | 仅本地构建 |
 
 ### 从源码构建
 

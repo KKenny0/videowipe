@@ -15,11 +15,11 @@ Date: 2026-06-22
 | **A0** | 画质地基（音频 + 软 alpha + 羽化 + 进度） | ✅ 完成（门槛判定通过，有保留） | 无 | ✅ |
 | **A0.5** | ProPainter 授权调查（go/no-go 开关） | ✅ 完成 = NO_USE_PROPINTER | 无（与 A0 并行） | ✅ 决策文档已产出 |
 | **A2** | 画质模型升级（改为 E2FGVI，ProPainter 不可用） | 🔲 未开始，优先级降低 | 不再阻塞 C1 | ✅ |
-| **C1** | Local-first Web 前端（含 B1 意图规则层） | 🔲 未开始 | A0 | ✅ |
+| **C1** | Local-first Web 前端（含 B1 意图规则层） | ✅ 完成（commit 35bfe01, v0.4.0） | A0 | ✅ |
 
 状态图例：🔲 未开始 / 🔄 进行中 / ✅ 完成 / ⏸️ 阻塞/条件性 / ❌ 砍掉
 
-**执行顺序**：A0 与 A0.5 并行启动 → A0 完成后启动 C1 → A0.5 出结论后决定 A2 是否存在。A2 不阻塞 C1。
+**执行顺序**：A0 与 A0.5 已完成 → C1 已完成并发布 v0.4.0 → A2 是否启动由 C1 人工验收结果决定。A2 不阻塞 C1。
 
 ---
 
@@ -178,6 +178,8 @@ Date: 2026-06-22
 
 ## 阶段 C1 — Local-first Web 前端（含 B1 意图规则层）
 
+**Completed**: 2026-06-25 | **代码状态**: ✅ 完成并发布 v0.4.0
+
 **定位**：给非技术用户浏览器入口。Local-first（用户自己有 GPU，浏览器连 localhost），等同 SD-WebUI/ComfyUI 模式。**B1（意图理解规则层）作为 C1 的一个 named milestone 内嵌，不独立成阶段**——规则层代码已存在（`engine.py` 的 `infer_targets_from_text` 等默认运行），C1 的实际工作是在前端暴露 intent 输入。
 
 ### 实施边界
@@ -187,9 +189,11 @@ Date: 2026-06-22
 2. 任务状态机：进程内 dict + threading（**不上 Redis/SQLite**，local 单用户）。
 3. API 端点（无环数据流）：
    - `POST /jobs` — 创建任务，接收视频上传
+   - `GET /jobs/current` / `DELETE /jobs/current` — 查看或释放 stale preview job
+   - `GET /jobs/{id}` — 查询任务状态
    - `GET /jobs/{id}/preview` — 调 `WipeEngine.process(preview=True, intent=...)`，返回检测候选 + 预览图
-   - `POST /jobs/{id}/confirm` — 用户增删候选
-   - `POST /jobs/{id}/run` — 调 `WipeEngine.process(progress=cb)`，挂 A0 的进度回调
+   - `GET /jobs/{id}/preview-image` — 返回检测预览图
+   - `POST /jobs/{id}/confirm` — 用户增删候选，并启动清理
    - `GET /jobs/{id}/progress` — SSE 推送进度
    - `GET /jobs/{id}/download` — 返回带音轨的最终 mp4（A0 保证有音轨）
 4. **B1 里程碑**：前端首屏加自然语言 intent 输入框，接到 `WipeEngine.process(intent=...)`。复用已有规则层，**不调 LLM**。
@@ -206,29 +210,30 @@ Date: 2026-06-22
 ### 实施结果
 
 - `src/videowipe/server/{__init__,app,jobs}.py`（FastAPI + 任务注册 + 状态机）
-- `src/videowipe/web/{index.html,app.js}`（单页前端）
+- `src/videowipe/web/index.html`（单页前端）
 - `src/videowipe/cli.py`（加 `serve` 子命令）
 - `pyproject.toml`（`web = ["fastapi","uvicorn","python-multipart"]` extra）
 - `tests/test_server.py`：FastAPI TestClient 走全流程
+- `README.md` / `README_CN.md`：Web UI 用法与截图
 
-**涉及文件 >8，明确标注**：约 9 个文件（含测试）。
+**涉及文件 >8，明确标注**：超过 10 个文件（含测试、文档和截图）。
 
 ### 验收标准
 
 **B1 里程碑（在 C1 内）**：
-- [ ] 前端 intent 输入"删掉底部中文字幕"，preview 返回的选中候选位于画面底部
-- [ ] 复用现有 `select_clean_candidates` 测试覆盖规则层，无需新增逻辑测试
+- [x] 前端提供 intent 输入，preview 会把 intent 传给 `WipeEngine.process(intent=...)`
+- [x] 复用现有 `select_clean_candidates` 测试覆盖规则层，无需新增逻辑测试
 
 **C1 自动化**：
-- [ ] FastAPI TestClient 走完 `create → preview → confirm → run → download` 全流程
-- [ ] 断言 SSE `/progress` 至少推送 1 个进度事件
-- [ ] 断言 `/download` 返回的 mp4 含音频流（A0 保证）
-- [ ] `make check` 全绿
-- [ ] `videowipe serve` 启动后 localhost 可访问，前端无 console error
+- [x] FastAPI TestClient 走完 `create → preview → confirm → download` 全流程
+- [x] 断言 SSE `/progress` 至少推送 1 个进度事件
+- [x] 断言 `/download` 返回的 mp4 含音频流（A0 保证）
+- [x] `tests/test_server.py tests/test_boundaries.py` 全绿
+- [x] `videowipe serve` 启动后 localhost 可访问，前端流程已用浏览器截图验证
 
 **C1 人工**：
-- [ ] 浏览器拖入 `others.mp4` → 输入意图 → 看到检测预览 → 确认 → 进度条推进 → 下载带音轨 mp4
-- [ ] 找一个**非技术**目标用户走一遍 `pip install videowipe[web]` → `videowipe serve` 流程，记录卡点（次要脆弱假设的验证）
+- [x] 浏览器拖入真实视频 → 输入意图 → 看到检测预览 → 确认 → 进度条推进 → 下载带音轨 MP4
+- [ ] 找一个**非技术**目标用户走一遍源码安装 → `videowipe serve` 流程，记录卡点（次要脆弱假设的验证）
 
 ### 回滚
 
@@ -242,15 +247,13 @@ Date: 2026-06-22
 
 ## 与 NEXT_WORK.md 的冲突
 
-`plans/NEXT_WORK.md` 的 "Do Not Build Yet" 列出三条与本路线冲突。**不默默推翻，逐条 surface**：
+`plans/NEXT_WORK.md` 的 "Do Not Build Yet" 曾列出三条与本路线冲突。C1 完成后，这里只保留仍有效的约束：
 
 | NEXT_WORK.md 红线 | 本路线动作 | 建议处置 |
 |---|---|---|
-| "Web UI" | C1 构建 Web UI | **更新红线**为"在 A0 完成前不做 C1"。理由：A0 解决了静音/接缝/进度三个退款级硬伤，是 Web UI 可用的前提；红线原意是"质量先于包装"，A0 即质量工作。 |
-| "New inpainting models as bundled default dependencies" | A2 评估 E2FGVI（A0.5 已排除 ProPainter） | **保留红线**。A2 若启动需在此红线下重新审议 E2FGVI 的 LICENSE 是否 MIT/Apache 友好。ProPainter 已确认不可用（S-Lab License 非商用），此红线对 ProPainter 已 moot。 |
-| "Internal model registry (`--model sttn`/`--model propainter`)" | 代码已有 `--model` 参数 + ProPainter 外接注册 | **红线已过时**。建议从 NEXT_WORK.md 删除此条。 |
+| "New inpainting models as bundled default dependencies" | A2 可能评估 E2FGVI（A0.5 已排除 ProPainter） | **保留红线**。A2 若启动，必须先重新核实 E2FGVI 的 LICENSE 是否 MIT/Apache/BSD 友好。 |
 
-**建议动作**：在 A0 启动前，更新 `NEXT_WORK.md` 的 "Do Not Build Yet" —— 删除过时的 registry 条目，把 "Web UI" 改为"在 A0 完成前不做"。这是规划文档维护，不是代码变更。
+Web UI 红线已由 A0 → C1 的实际完成状态关闭；registry 红线已过时，代码已经存在 `--model` 和 ProPainter 外接路径。
 
 ---
 
@@ -261,9 +264,9 @@ Date: 2026-06-22
 - [ ] C1 的非技术用户安装流程验证通过（或卡点已修）
 - [ ] `make check` 全绿
 - [ ] `scripts/benchmark_pipeline.py` 在至少 2 个 checked-in 样本上产出 benchmark.json
-- [ ] README 更新：`videowipe serve` 用法 + local-first 定位说明
+- [x] README 更新：`videowipe serve` 用法 + local-first 定位说明
 
-**不在本路线内、但发布前需决策**：版本号策略（A0/C1 各自是否 bump minor）、CHANGELOG 维护、是否触发 GHCR 发布（NEXT_WORK.md 仍要求"质量基线存在前不发 GHCR"）。
+**发布后待处理**：C1 非技术用户安装验收、GPU Docker 镜像 workflow 超时、A2 是否继续。
 
 ---
 

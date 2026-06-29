@@ -6,12 +6,10 @@
 
 <p align="center">
   Remove hardcoded subtitles, watermarks, and text overlays from video.<br>
-  Auto-detect targets, generate masks, and inpaint — <code>pip install videowipe</code> and go.
+  Auto-detect targets, generate masks, and inpaint locally.
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/v/videowipe.svg" alt="PyPI"></a>
-  <a href="https://pypi.org/project/videowipe/"><img src="https://img.shields.io/pypi/pyversions/videowipe.svg" alt="Python"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
 </p>
 
@@ -32,19 +30,18 @@ STTN is the default inpainting backend. Any external model can be plugged in via
 ## Install
 
 Requires Python 3.8+ and either ONNX Runtime or PyTorch.
+VideoWipe is not published to PyPI yet; install it from source:
 
 ```bash
-# If you already have PyTorch:
-pip install videowipe
+git clone https://github.com/KKenny0/videowipe.git
+cd videowipe
 
-# Lightweight ONNX Runtime backend:
-pip install videowipe[onnx]
+# Local web UI with the lightweight ONNX Runtime backend:
+pip install -e ".[web,onnx]"
 
-# Or the PyTorch backend:
-pip install videowipe[torch]
-
-# Optional: OCR text recognition for better detection accuracy
-pip install videowipe[ocr]
+# Optional extras:
+pip install -e ".[torch]"  # PyTorch backend
+pip install -e ".[ocr]"    # OCR text recognition
 ```
 
 Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.
@@ -114,7 +111,7 @@ videowipe clean input.mp4 -m mask.png -o result/
 ### Local web UI
 
 ```bash
-pip install "videowipe[web,onnx]"
+pip install -e ".[web,onnx]"
 videowipe serve
 # Open http://127.0.0.1:8000
 ```
@@ -268,23 +265,21 @@ docker pull ghcr.io/kkenny0/videowipe:latest
 docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp4 -o /data/result/
 ```
 
-**GPU (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)):**
+**GPU:**
+
+The prebuilt GPU image is temporarily unavailable for `v0.4.0`; the tag build reached the GitHub Actions time limit. Build it locally if you need GPU runtime support.
+
+Use the included wrapper script for CPU runs:
 
 ```bash
-docker pull ghcr.io/kkenny0/videowipe:gpu
-docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
-```
-
-Or use the included wrapper script (auto-detects GPU):
-
-```bash
+VIDEOWIPE_TAG=latest \
 ./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | Image | Size | GPU | Notes |
 |-------|------|-----|-------|
-| `videowipe:latest` | ~480 MB | No | CPU only, smallest image |
-| `videowipe:gpu` | ~1.4 GB | Yes | ONNX Runtime with CUDA |
+| `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | No | CPU only, smallest image |
+| `videowipe:gpu` | ~1.4 GB | Yes | Local build only |
 
 ### Build from source
 
