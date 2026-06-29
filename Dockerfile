@@ -45,8 +45,14 @@ ENTRYPOINT ["videowipe"]
 # ── GPU runtime ──────────────────────────────────────────────────────────────
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime-gpu
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends software-properties-common && \
+ENV TZ=Etc/UTC
+
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common tzdata && \
+    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \

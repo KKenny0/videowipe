@@ -72,6 +72,19 @@ def test_version_fields_are_in_sync():
     assert match.group(1) == videowipe.__version__
 
 
+def test_gpu_docker_stage_disables_tzdata_prompt():
+    dockerfile = pathlib.Path("Dockerfile").read_text(encoding="utf-8")
+    gpu_stage = dockerfile.split(
+        "FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime-gpu",
+        maxsplit=1,
+    )[1]
+
+    assert "ENV TZ=Etc/UTC" in gpu_stage
+    assert "DEBIAN_FRONTEND=noninteractive" in gpu_stage
+    assert "tzdata" in gpu_stage
+    assert "dpkg-reconfigure --frontend noninteractive tzdata" in gpu_stage
+
+
 def test_engine_rejects_unregistered_task():
     with pytest.raises(ValueError, match="Unknown task"):
         WipeEngine(task="delogo")

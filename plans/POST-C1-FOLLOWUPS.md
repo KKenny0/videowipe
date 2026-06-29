@@ -76,20 +76,29 @@ docs: fix v0.4.0 post-release entrypoints
 
 ---
 
-## 剩余 P2：GPU Docker workflow 调查
+## P2：GPU Docker workflow 调查
 
 **现状**：CPU 镜像可用，GPU 镜像不可用。不要在 README 里恢复 `docker pull ghcr.io/kkenny0/videowipe:gpu`，直到 GPU 标签真实存在。
 
-建议调查顺序：
+### 已定位
 
-1. 拉取 `build-gpu` 日志，确认 6 小时内耗时集中在哪一步。
-2. 判断是否是 CUDA 基础镜像、权重预下载、ONNX Runtime GPU 依赖或 buildx cache 失效导致。
-3. 先让 GPU workflow 在手动触发下成功产出 `v0.4.0-gpu`，再恢复 README 的预构建 GPU 命令。
+- `build-gpu` 不是卡在 CUDA 镜像、权重下载、ONNX Runtime GPU 依赖或 buildx cache。
+- 日志显示 GPU runtime 的 `apt-get install` 阶段触发了 `tzdata` 交互式时区选择，停在 `Geographic area:` 等输入，直到 GitHub Actions 6 小时后取消。
+- 修复点：`Dockerfile` 的 GPU runtime stage 已设置 `TZ=Etc/UTC`，并在 apt 安装时使用 `DEBIAN_FRONTEND=noninteractive`，同时显式安装并非交互配置 `tzdata`。
+- 回归保护：`tests/test_boundaries.py` 已增加 Dockerfile 检查，防止 GPU stage 重新丢失非交互时区配置。
+
+### 仍需远端确认
+
+1. 推送包含 Dockerfile 修复的 commit。
+2. 触发 `Build & Push Docker Images` workflow。
+3. 确认 `build-gpu` 成功，并且 GHCR 出现 `gpu` / `v0.4.0-gpu` 或下一版本对应 GPU tag。
+4. 只有远端 GPU 标签真实存在后，README 才能恢复预构建 GPU 镜像命令。
 
 验证命令：
 
 ```bash
 gh run view 28168947697 --job 83427907164 --log
+python -m pytest tests/test_boundaries.py -k docker_stage -v --basetemp=.pytest_tmp
 ```
 
 GHCR 标签验证可用 registry API 或 Docker：
