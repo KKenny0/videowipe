@@ -3,9 +3,10 @@
 > 这份文档是 C1 的最新接力状态，不再是实施前计划。
 >
 > **当前实现 commit**: `35bfe015cef91a48a488b3099bfdcb237bb63881` (`feat: add local web UI`)
-> **准备发布版本**: `v0.4.0`
+> **发布版本**: `v0.4.0`（已发布）
 > **上一版 release**: `v0.3.0`
-> **当前边界**: GitHub release + tag；本轮不处理 PyPI。
+> **当前边界**: GitHub tag/release 已完成；PyPI 仍不处理。
+> **最新状态**: Docker CPU/GPU 浮动镜像和 fresh-clone Web UI 验收见 `plans/POST-C1-FOLLOWUPS.md`。
 
 ---
 
@@ -111,9 +112,9 @@ C1 已完成并提交。VideoWipe 现在有一个 local-first Web UI：用户可
 
 ---
 
-## Release 建议
+## Release 结果
 
-这批变化应作为 minor 版本发布：`v0.4.0`。
+这批变化已作为 minor 版本发布：`v0.4.0`。
 
 原因：
 
@@ -127,10 +128,13 @@ C1 已完成并提交。VideoWipe 现在有一个 local-first Web UI：用户可
 
 - GitHub tag: `v0.4.0`
 - GitHub release: `v0.4.0`
-- Docker workflow 会由 tag push 触发，需要 release 后检查 GitHub Actions 结果
+- Release URL: `https://github.com/KKenny0/videowipe/releases/tag/v0.4.0`
+- Docker CPU 版本标签存在：`v0.4.0`
+- Docker GPU 浮动标签已恢复：`gpu`、`main-gpu`
+- Docker GPU 版本标签缺失：`v0.4.0-gpu`
 - 不发布 PyPI
 
-建议 release notes：
+实际 release notes 可继续沿用：
 
 ```markdown
 ## What's new
@@ -161,22 +165,14 @@ C1 已完成并提交。VideoWipe 现在有一个 local-first Web UI：用户可
 - 全仓库 `ruff check src tests` 仍会报旧核心文件中的 unused import/变量；C1 相关文件 scoped ruff 已通过。
 - CPU STTN 对长视频仍慢，Web UI 只是把进度显示出来，没有改变模型速度。
 - 当前全局串行 job 模型适合 local-first 单用户，不适合 hosted 多用户服务。
-- tag 发布后必须检查 GitHub Actions，尤其 Docker workflow。历史上 `v0.3.0` 的 Docker workflow 显示为 cancelled。
+- Docker 已确认 CPU/GPU 浮动镜像可用，但当前没有 `v0.4.0-gpu` 版本镜像。
+- fresh-clone Web UI 验收已通过；A2 继续保持条件性推迟，除非后续真实样例明确反馈 STTN 输出质量不足。
 
 ---
 
-## 下一步入口
+## 当前接力入口
 
-1. bump `pyproject.toml` 到 `0.4.0`
-2. 跑 release gate：
-   - tests
-   - scoped ruff
-   - `git diff --check`
-   - wheel 包内容检查
-3. commit：`chore: prepare v0.4.0 release`
-4. push `main`
-5. tag `v0.4.0`
-6. push tag
-7. create GitHub release
-8. 检查 GitHub Actions / Docker workflow
-
+1. `plans/POST-C1-FOLLOWUPS.md` 是 post-C1 最新状态文档。
+2. 目前没有必须立即启动的新功能批次。
+3. A2/E2FGVI 不应默认启动；只有真实样例显示 STTN 输出质量不足时，才先核实 E2FGVI 授权再进入评估。
+4. PyPI 仍不在当前范围内，README 保持源码安装路径。

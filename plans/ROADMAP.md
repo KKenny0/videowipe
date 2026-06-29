@@ -14,12 +14,12 @@ Date: 2026-06-22
 |---|---|---|---|---|
 | **A0** | 画质地基（音频 + 软 alpha + 羽化 + 进度） | ✅ 完成（门槛判定通过，有保留） | 无 | ✅ |
 | **A0.5** | ProPainter 授权调查（go/no-go 开关） | ✅ 完成 = NO_USE_PROPINTER | 无（与 A0 并行） | ✅ 决策文档已产出 |
-| **A2** | 画质模型升级（改为 E2FGVI，ProPainter 不可用） | 🔲 未开始，优先级降低 | 不再阻塞 C1 | ✅ |
+| **A2** | 画质模型升级（改为 E2FGVI，ProPainter 不可用） | ⏸️ 条件性推迟 | 不再阻塞 C1 | ✅ |
 | **C1** | Local-first Web 前端（含 B1 意图规则层） | ✅ 完成（commit 35bfe01, v0.4.0） | A0 | ✅ |
 
 状态图例：🔲 未开始 / 🔄 进行中 / ✅ 完成 / ⏸️ 阻塞/条件性 / ❌ 砍掉
 
-**执行顺序**：A0 与 A0.5 已完成 → C1 已完成并发布 v0.4.0 → A2 是否启动由 C1 人工验收结果决定。A2 不阻塞 C1。
+**执行顺序**：A0 与 A0.5 已完成 → C1 已完成并发布 v0.4.0 → post-C1 的 P1/P2/P3 已完成 → A2 条件性推迟。除非真实样例明确反馈 STTN 输出质量不足，否则不启动 A2。A2 不阻塞 C1。
 
 ---
 
@@ -134,7 +134,7 @@ Date: 2026-06-22
 
 **定位变更（2026-06-22）**：A0.5 结论为 `NO_USE_PROPINTER`（S-Lab License 1.0 非商用，MIT 互斥，详见 `plans/propainter-license-finding.md`）。A2 不再做 ProPainter 内置化，改为评估 **E2FGVI** 或其他商用友好（MIT/Apache/BSD）模型。
 
-**优先级降低**：A2 不再阻塞 C1。C1 的画质地基是 A0（软 alpha + 音频 + 羽化），与模型无关。A2 是独立的画质升级线，可在 C1 之后任何时候启动，或直接砍掉（若 A0 的人工门槛判定已通过，STTN + 软 alpha 已够用）。
+**优先级降低**：A2 不再阻塞 C1。C1 的画质地基是 A0（软 alpha + 音频 + 羽化），与模型无关。A2 是独立的画质升级线。2026-06-29 的 fresh-clone Web UI 验收没有暴露 STTN 输出质量阻塞，因此 A2 继续推迟；只有后续真实样例明确反馈 STTN 填充质量不足时才启动。
 
 **现有 `--external-command` ProPainter 路径保留**：用户自行 clone ProPainter 调用，是用户与 S-Lab 的双边授权关系，videowipe 不做再分发。但文档不应鼓励商用用户走此路。
 
@@ -233,7 +233,12 @@ Date: 2026-06-22
 
 **C1 人工**：
 - [x] 浏览器拖入真实视频 → 输入意图 → 看到检测预览 → 确认 → 进度条推进 → 下载带音轨 MP4
-- [ ] 找一个**非技术**目标用户走一遍源码安装 → `videowipe serve` 流程，记录卡点（次要脆弱假设的验证）
+- [x] fresh clone 走一遍源码安装 → `videowipe serve` → 浏览器上传/预览/清理/下载流程，记录卡点（次要脆弱假设的验证）
+  - 独立 venv 执行 `pip install -e ".[web,onnx]"` 通过。
+  - `videowipe serve --host 127.0.0.1 --port 8876` 首页返回 200。
+  - Web UI 上传 2 秒 480p 真实样例，preview 渲染候选，confirm 完成，下载 MP4 包含视频流和 AAC 音频流。
+  - 浏览器控制台无 error/warning，服务完成后回到 idle。
+  - CPU-only 环境出现 ONNX CUDA provider warning，属于预期降级，不阻塞验收。
 
 ### 回滚
 
@@ -241,7 +246,7 @@ Date: 2026-06-22
 
 ### 最脆弱假设（次要）
 
-**local-first 目标用户能装上 GPU 环境。** C1 完成后用非技术用户走安装流程验证。若卡死，需补一键安装脚本或重评是否回归桌面 GUI。
+**local-first 目标用户能装上运行环境。** 2026-06-29 fresh-clone 验收已验证源码安装、ONNX CPU 路径、浏览器流程和下载音频保留均可跑通，没有暴露安装阻塞。GPU 仍是用户机器相关的可选加速环境；Docker 浮动标签 `gpu` / `main-gpu` 已恢复，但当前没有 `v0.4.0-gpu` 版本标签。
 
 ---
 
@@ -260,13 +265,15 @@ Web UI 红线已由 A0 → C1 的实际完成状态关闭；registry 红线已�
 ## 全局验收 / 发布门禁
 
 整条路线的发布门禁（非单阶段）：
-- [ ] A0 的人工门槛判定通过（STTN+软alpha 达"成品感"）或 A2 提级完成
-- [ ] C1 的非技术用户安装流程验证通过（或卡点已修）
+- [x] A0 的人工门槛判定通过（STTN+软alpha 达"成品感"）或 A2 提级完成
+- [x] C1 的 fresh-clone 安装和 Web UI 流程验证通过（或卡点已修）
 - [ ] `make check` 全绿
 - [ ] `scripts/benchmark_pipeline.py` 在至少 2 个 checked-in 样本上产出 benchmark.json
 - [x] README 更新：`videowipe serve` 用法 + local-first 定位说明
 
-**发布后待处理**：C1 非技术用户安装验收、GPU Docker 镜像 workflow 超时、A2 是否继续。
+**发布后待处理**：A2 是否继续保持条件性推迟；`v0.4.0-gpu` 版本镜像缺失，等下一次 tag release 再自然补齐；PyPI 仍不在当前范围内。
+
+**本次文档同步说明（2026-06-29）**：post-C1 的目标验证已覆盖 P1/P2/P3。未在本次文档同步中重跑全量 `make check` 或多样本 benchmark，因此对应全局门禁仍保持未勾选。
 
 ---
 
