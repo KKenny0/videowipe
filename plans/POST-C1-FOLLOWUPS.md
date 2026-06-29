@@ -86,12 +86,14 @@ docs: fix v0.4.0 post-release entrypoints
 - 日志显示 GPU runtime 的 `apt-get install` 阶段触发了 `tzdata` 交互式时区选择，停在 `Geographic area:` 等输入，直到 GitHub Actions 6 小时后取消。
 - 修复点：`Dockerfile` 的 GPU runtime stage 已设置 `TZ=Etc/UTC`，并在 apt 安装时使用 `DEBIAN_FRONTEND=noninteractive`，同时显式安装并非交互配置 `tzdata`。
 - 回归保护：`tests/test_boundaries.py` 已增加 Dockerfile 检查，防止 GPU stage 重新丢失非交互时区配置。
+- 远端复跑后，`build-gpu` 已越过 `tzdata` 阶段，但在下载权重前报错：`ModuleNotFoundError: No module named 'videowipe'`。
+- 新修复点：GPU runtime 使用 deadsnakes Python 3.11，需要显式设置 `PYTHONPATH=/usr/local/lib/python3.11/site-packages`，才能读取 builder stage 复制到 `/usr/local` 的包。
 
 ### 仍需远端确认
 
 1. 推送包含 Dockerfile 修复的 commit。
 2. 触发 `Build & Push Docker Images` workflow。
-3. 确认 `build-gpu` 成功，并且 GHCR 出现 `gpu` / `v0.4.0-gpu` 或下一版本对应 GPU tag。
+3. 确认 `build-gpu` 成功，并且 GHCR 出现 `gpu` / `main-gpu` 或下一版本对应 GPU tag。
 4. 只有远端 GPU 标签真实存在后，README 才能恢复预构建 GPU 镜像命令。
 
 验证命令：

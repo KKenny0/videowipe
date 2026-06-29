@@ -64,6 +64,7 @@ RUN update-alternatives --install /usr/local/bin/python python /usr/bin/python3.
 
 COPY --from=builder /install /usr/local
 
+ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 ENV VIDEOWIPE_WEIGHTS_DIR=/opt/videowipe/weights
 RUN python -c "\
 from videowipe.weights import ensure_onnx_weights, ensure_weight; \
