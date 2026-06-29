@@ -9,6 +9,7 @@
 > - A0 ✅ / A0.5 ✅ / C1 ✅ 全部落地
 > - PyPI 尚未发布，README 应使用源码安装路径
 > - GHCR CPU / GPU 浮动镜像存在；`v0.4.0-gpu` 版本镜像缺失
+> - P3 fresh-clone Web UI 验收已通过
 
 ---
 
@@ -56,23 +57,23 @@ https://github.com/KKenny0/videowipe/actions/runs/28346354905
 
 ---
 
-## 剩余 P1：验证并提交第一批修复
+## P1：验证并提交第一批修复（已完成）
 
-这一步是当前变更的收口，不应扩大范围。
+这一步已完成并提交，不应再扩大范围。
 
-建议验证：
+提交：
+
+```text
+cbbb52c docs: fix v0.4.0 post-release entrypoints
+```
+
+已验证：
 
 ```bash
 python -c "import videowipe; print(videowipe.__version__)"
 python -m pytest tests/test_server.py tests/test_boundaries.py -v --basetemp=.pytest_tmp_post_c1
 python -m ruff check src/videowipe/__init__.py tests/test_boundaries.py
 git diff --check
-```
-
-若全部通过，提交建议：
-
-```text
-docs: fix v0.4.0 post-release entrypoints
 ```
 
 ---
@@ -114,11 +115,11 @@ docker manifest inspect ghcr.io/kkenny0/videowipe:main-gpu
 
 ---
 
-## 剩余 P3：C1 非技术用户人工验收
+## P3：C1 非技术用户人工验收（已完成）
 
 这是最高价值的产品验收。目标不是再写功能，而是验证 local-first 安装和使用路径是否真的能被非技术用户走通。
 
-流程：
+### 验收流程
 
 1. `git clone https://github.com/KKenny0/videowipe.git`
 2. `cd videowipe`
@@ -127,11 +128,33 @@ docker manifest inspect ghcr.io/kkenny0/videowipe:main-gpu
 5. 浏览器打开 `http://127.0.0.1:8000`
 6. 上传真实视频、输入清理意图、预览、确认、等待进度、下载 MP4
 
-记录：
+### 结果
 
-- 卡在安装、模型下载、端口、浏览器、视频格式、检测结果、速度，还是输出质量。
-- 如果主要卡在安装/GPU 环境，优先考虑安装脚本或 Docker CPU 路径。
-- 如果主要卡在输出质量，再讨论 A2。
+- fresh clone HEAD：`3a3506c`
+- 独立 venv 安装：`pip install -e ".[web,onnx]"` 通过。
+- `videowipe serve --host 127.0.0.1 --port 8876` 启动成功，首页返回 200。
+- Web UI 自动化完整跑通：
+  - 上传 2 秒 480p 真实样例片段；
+  - intent：`Remove bottom subtitles`；
+  - preview 渲染 5 个候选，默认选中 1 个底部字幕候选；
+  - confirm 后清理完成，下载 MP4 成功；
+  - 下载文件经 ffmpeg 检查包含视频流和 AAC 音频流。
+- 页面首屏、预览态、下载态截图检查通过，无明显布局遮挡。
+- 浏览器控制台无 error/warning。
+- 服务完成后回到 idle，没有留下 busy job。
+
+### 发现
+
+- 当前 CPU 环境会出现 ONNX Runtime 的 CUDA provider warning：
+  `Specified provider 'CUDAExecutionProvider' is not in available provider names`。
+  这是 CPU-only 环境的预期降级，不影响本次 ONNX CPU 验收。
+- 未发现安装、模型下载、端口、浏览器、视频格式、检测结果、进度、下载或音频保留的阻塞问题。
+
+### 后续判断
+
+- 本次没有暴露安装/GPU 环境类阻塞，因此暂不需要新增安装脚本或调整 Docker CPU 路径。
+- 本次短样例没有暴露 Web UI 流程阻塞；更长视频的速度和输出质量仍属于后续真实用户反馈项。
+- 暂不启动 A2，除非后续真实样例明确反馈 STTN 输出质量不够。
 
 ---
 
