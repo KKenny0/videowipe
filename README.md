@@ -267,19 +267,24 @@ docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp
 
 **GPU:**
 
-The prebuilt GPU image is temporarily unavailable for `v0.4.0`; the tag build reached the GitHub Actions time limit. Build it locally if you need GPU runtime support.
+```bash
+docker pull ghcr.io/kkenny0/videowipe:gpu
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
+```
 
-Use the included wrapper script for CPU runs:
+The `gpu` tag tracks the current main build. A versioned `v0.4.0-gpu` image was not produced by the v0.4.0 tag run; use `gpu` or build locally until the next tagged release.
+
+Use the included wrapper script to auto-select the CPU or GPU image:
 
 ```bash
-VIDEOWIPE_TAG=latest \
 ./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | Image | Size | GPU | Notes |
 |-------|------|-----|-------|
 | `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | No | CPU only, smallest image |
-| `videowipe:gpu` | ~1.4 GB | Yes | Local build only |
+| `ghcr.io/kkenny0/videowipe:gpu` | ~1.4 GB | Yes | Latest prebuilt GPU image |
+| `videowipe:gpu` | ~1.4 GB | Yes | Local build tag |
 
 ### Build from source
 

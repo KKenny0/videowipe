@@ -265,19 +265,24 @@ docker run --rm -v "$(pwd)":/data ghcr.io/kkenny0/videowipe clean /data/input.mp
 
 **GPU：**
 
-`v0.4.0` 的预构建 GPU 镜像暂不可用；tag 构建达到了 GitHub Actions 时间限制。需要 GPU 运行时请先本地构建。
+```bash
+docker pull ghcr.io/kkenny0/videowipe:gpu
+docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
+```
 
-CPU 场景可以使用自带的 wrapper 脚本：
+`gpu` 标签跟随当前 main 构建。`v0.4.0` 的 tag 构建没有产出 `v0.4.0-gpu`，在下一次 tag 发布前请使用 `gpu` 或本地构建。
+
+也可以使用自带的 wrapper 脚本自动选择 CPU 或 GPU 镜像：
 
 ```bash
-VIDEOWIPE_TAG=latest \
 ./scripts/docker-videowipe.sh clean input.mp4 -o result/
 ```
 
 | 镜像 | 大小 | GPU | 说明 |
 |------|------|-----|------|
 | `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | 否 | 仅 CPU，体积最小 |
-| `videowipe:gpu` | ~1.4 GB | 是 | 仅本地构建 |
+| `ghcr.io/kkenny0/videowipe:gpu` | ~1.4 GB | 是 | 最新预构建 GPU 镜像 |
+| `videowipe:gpu` | ~1.4 GB | 是 | 本地构建标签 |
 
 ### 从源码构建
 

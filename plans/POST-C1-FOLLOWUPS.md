@@ -8,7 +8,7 @@
 > - `src/videowipe/__init__.py` version = `0.4.0`
 > - A0 ✅ / A0.5 ✅ / C1 ✅ 全部落地
 > - PyPI 尚未发布，README 应使用源码安装路径
-> - GHCR CPU 镜像存在；GPU 预构建镜像缺失
+> - GHCR CPU / GPU 浮动镜像存在；`v0.4.0-gpu` 版本镜像缺失
 
 ---
 
@@ -36,15 +36,16 @@ python -m pytest tests/test_boundaries.py -k version_fields -v --basetemp=.pytes
 
 ### Docker 发布状态
 
-- GHCR CPU 标签存在：`latest`、`v0.4.0`。
-- GHCR GPU 标签缺失：`gpu`、`v0.4.0-gpu`。
-- v0.4.0 Docker workflow 中 `build-cpu` 成功，`build-gpu` 在 GitHub Actions 6 小时限制处取消。
-- README 已保留 CPU Docker 用法，并把 GPU 预构建镜像改成“暂不可用，本地构建”。
+- GHCR CPU 标签存在：`latest`、`main`、`v0.4.0`。
+- GHCR GPU 标签存在：`gpu`、`main-gpu`。
+- `v0.4.0-gpu` 不存在，因为 v0.4.0 tag workflow 的 `build-gpu` 在 GitHub Actions 6 小时限制处取消，后续成功复跑是 `workflow_dispatch` on `main`。
+- README 已恢复 `gpu` 预构建镜像用法，但未声称 `v0.4.0-gpu` 可用。
 
 相关 run：
 
 ```text
 https://github.com/KKenny0/videowipe/actions/runs/28168947697
+https://github.com/KKenny0/videowipe/actions/runs/28346354905
 ```
 
 ### ROADMAP 状态同步
@@ -76,9 +77,9 @@ docs: fix v0.4.0 post-release entrypoints
 
 ---
 
-## P2：GPU Docker workflow 调查
+## P2：GPU Docker workflow 修复（已完成）
 
-**现状**：CPU 镜像可用，GPU 镜像不可用。不要在 README 里恢复 `docker pull ghcr.io/kkenny0/videowipe:gpu`，直到 GPU 标签真实存在。
+**现状**：CPU 镜像可用，GPU 浮动镜像可用。不要声称 `v0.4.0-gpu` 可用，直到下一次 tag workflow 真实产出版本化 GPU 标签。
 
 ### 已定位
 
@@ -89,17 +90,18 @@ docs: fix v0.4.0 post-release entrypoints
 - 远端复跑后，`build-gpu` 已越过 `tzdata` 阶段，但在下载权重前报错：`ModuleNotFoundError: No module named 'videowipe'`。
 - 新修复点：GPU runtime 使用 deadsnakes Python 3.11，需要显式设置 `PYTHONPATH=/usr/local/lib/python3.11/site-packages`，才能读取 builder stage 复制到 `/usr/local` 的包。
 
-### 仍需远端确认
+### 远端确认
 
-1. 推送包含 Dockerfile 修复的 commit。
-2. 触发 `Build & Push Docker Images` workflow。
-3. 确认 `build-gpu` 成功，并且 GHCR 出现 `gpu` / `main-gpu` 或下一版本对应 GPU tag。
-4. 只有远端 GPU 标签真实存在后，README 才能恢复预构建 GPU 镜像命令。
+- 已推送修复 commit：`6ddfbd7`、`9543cda`。
+- `Build & Push Docker Images` workflow 已手动触发并成功：`28346354905`。
+- `build-cpu` / `build-gpu` 均为 success。
+- GHCR 标签已确认：`latest`、`main`、`v0.2.0`、`v0.3.0`、`v0.4.0`、`gpu`、`main-gpu`。
 
 验证命令：
 
 ```bash
 gh run view 28168947697 --job 83427907164 --log
+gh run view 28346354905 --json status,conclusion,jobs,url
 python -m pytest tests/test_boundaries.py -k docker_stage -v --basetemp=.pytest_tmp
 ```
 
@@ -107,7 +109,7 @@ GHCR 标签验证可用 registry API 或 Docker：
 
 ```bash
 docker manifest inspect ghcr.io/kkenny0/videowipe:gpu
-docker manifest inspect ghcr.io/kkenny0/videowipe:v0.4.0-gpu
+docker manifest inspect ghcr.io/kkenny0/videowipe:main-gpu
 ```
 
 ---
