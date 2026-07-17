@@ -2,7 +2,9 @@
 
 Date: 2026-06-22
 
-本文件是 videowipe 从"开发者 CLI/库"演进为"local-first 可视化工具"的全阶段实施追踪文档。每阶段独立可发布、可独立 merge。状态字段供后续更新。
+本文件记录 v0.4.0 及以前从开发者库到 local-first Web 入口的历史实施过程。2026-07-17 起，产品主线已切换为 SDK-first；新的实施边界和验收门禁以 [`sdk-first-v0.5.md`](sdk-first-v0.5.md) 为准。本文后续章节保留为历史决策记录，不再作为下一阶段执行清单。
+
+Creator Remix 的 M0–M4 实验已封存在 `archive/creator-remix-m0-m4`。翻译工作台、时间线、Codex Workspace 和 M5 不进入当前主线；若以后继续，应作为调用 VideoWipe SDK 的独立上层产品评估。
 
 `plans/NEXT_WORK.md` 是规划假设的来源；本文件是实施追踪。当两者冲突时，冲突在下方 [与 NEXT_WORK.md 的冲突](#与-next_workmd-的冲突) 显式列出。
 

@@ -5,12 +5,12 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  擦除视频中的硬字幕、水印和文字叠加。<br>
-  自动检测目标、生成 mask，并在本地修复画面。
+  面向生产项目嵌入的视频清理引擎，用于擦除硬字幕、水印和文字叠加。<br>
+  通过 Python、CLI 或自有 Worker 完成目标检测、mask 生成和本地画面修复。
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -18,6 +18,12 @@
 </p>
 
 ---
+
+## SDK 优先
+
+videowipe 是可复用的 Python 视频清理引擎。一个 `WipeEngine` 可以在批处理中连续处理多个视频，避免重复加载模型；第三方修复模型也可以通过统一的整段视频协议接入。CLI、本地 Web UI 和 Docker 镜像只是 SDK 的适配入口，不是彼此独立的产品运行时。
+
+当前产品边界刻意保持收敛：检测不需要的画面叠加、生成 mask、修复被覆盖的视频区域。翻译工作台、时间线、发布流程和 Agent 聊天界面不属于核心 SDK。
 
 ## 功能
 
@@ -29,18 +35,22 @@ videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间�
 
 ## 安装
 
-需要 Python 3.8+，以及 ONNX Runtime 或 PyTorch。VideoWipe 目前还没有发布到 PyPI，请从源码安装：
+需要 Python 3.10+，以及 ONNX Runtime 或 PyTorch。基础 SDK 默认使用 `opencv-python-headless`，因此可以在没有桌面显示服务的 Worker 和容器中运行。VideoWipe 目前还没有发布到 PyPI，请从源码安装：
 
 ```bash
 git clone https://github.com/KKenny0/videowipe.git
 cd videowipe
 
-# 本地 Web UI + 轻量 ONNX Runtime 后端：
+# 无界面 SDK + 轻量 ONNX Runtime 后端：
+pip install -e ".[onnx]"
+
+# 需要时再添加本地 Web 适配入口：
 pip install -e ".[web,onnx]"
 
 # 可选 extras：
 pip install -e ".[torch]"  # PyTorch 后端
 pip install -e ".[ocr]"    # OCR 文字识别
+pip install -e ".[propainter]"  # 仅适配器依赖，不附带模型代码或权重
 ```
 
 模型权重在首次运行时自动下载到 `~/.videowipe/weights/`，无需手动配置。
@@ -86,16 +96,28 @@ engine.cleanup()
 
 ### 批量处理
 
-复用引擎避免重复加载模型：
+使用结构化 SDK 契约并复用引擎，避免重复加载模型。取消令牌只属于单次任务；下一项任务应创建新的令牌。
 
 ```python
-from videowipe import WipeEngine
+from videowipe import CancellationToken, WipeEngine, WipeRequest
 
-engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", output="result/")
-engine.process(video="clip2.mp4", mask="mask.png", output="result/")
-engine.cleanup()
+def report(event):
+    print(event.phase, event.completed, event.total)
+
+with WipeEngine(task="detext") as engine:
+    result = engine.run(
+        WipeRequest(
+            video="clip1.mp4",
+            mask="mask.png",
+            output_dir="result/clip1",
+        ),
+        on_progress=report,
+        cancellation=CancellationToken(),
+    )
+    print(result.output_path, result.backend, result.timings)
 ```
+
+`WipeEngine.run()` 返回 `WipeResult`；无效输入、缺少后端、取消和处理失败会抛出稳定的 `WipeError` 子类。兼容入口 `process()` 与 `remove_text()` 继续保留。长期 Worker 和第三方模型接入可参考可运行的[批处理示例](examples/batch_worker.py)与[自定义 Inpainter 示例](examples/custom_inpainter.py)。
 
 ### CLI
 
@@ -270,7 +292,7 @@ docker pull ghcr.io/kkenny0/videowipe:gpu
 docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
-`gpu` 标签跟随当前 main 构建。`v0.4.0` 的 tag 构建没有产出 `v0.4.0-gpu`，在下一次 tag 发布前请使用 `gpu` 或本地构建。
+浮动标签 `latest` 和 `gpu` 跟随当前 main 构建。只有对应版本的发布工作流成功后，才会提供版本化的 CPU 与 GPU 标签；固定版本前请先检查 GHCR package。
 
 也可以使用自带的 wrapper 脚本自动选择 CPU 或 GPU 镜像：
 
@@ -322,4 +344,6 @@ docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4
 
 ## License
 
-MIT
+GNU General Public License v3.0，详见 [LICENSE](LICENSE)。
+
+本仓库基于 GPL-3.0 授权的 Video-Auto-Wipe 代码演进。如果分发 videowipe 或与其组合的作品，需要根据实际分发方式确认并履行 GPL-3.0 的相关义务。

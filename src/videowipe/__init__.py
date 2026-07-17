@@ -1,8 +1,16 @@
 """videowipe - STTN-based video inpainting tool."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from videowipe.engine import WipeEngine, remove_text
+from videowipe.api import CancellationToken, ProgressEvent, WipeRequest, WipeResult
+from videowipe.errors import (
+    BackendUnavailableError,
+    InvalidInputError,
+    ProcessingCancelledError,
+    ProcessingError,
+    WipeError,
+)
 from videowipe.inpainters import (
     InpaintJob,
     InpaintOutcome,
@@ -30,6 +38,15 @@ from videowipe.detect import (
 __all__ = [
     "WipeEngine",
     "remove_text",
+    "WipeRequest",
+    "WipeResult",
+    "ProgressEvent",
+    "CancellationToken",
+    "WipeError",
+    "InvalidInputError",
+    "BackendUnavailableError",
+    "ProcessingCancelledError",
+    "ProcessingError",
     "Inpainter",
     "InpaintJob",
     "InpaintOutcome",

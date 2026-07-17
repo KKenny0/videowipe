@@ -5,12 +5,12 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  Remove hardcoded subtitles, watermarks, and text overlays from video.<br>
-  Auto-detect targets, generate masks, and inpaint locally.
+  An embeddable video-cleanup engine for hardcoded subtitles, watermarks, and text overlays.<br>
+  Detect targets, generate masks, and inpaint locally from Python, CLI, or your own worker.
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -18,6 +18,12 @@
 </p>
 
 ---
+
+## SDK first
+
+videowipe is a reusable Python engine for video-cleanup pipelines. Create one `WipeEngine`, reuse it across a batch so the model stays loaded, or register a different inpainting backend behind the same whole-video protocol. The CLI, local Web UI, and Docker images are adapters over that engine rather than separate product runtimes.
+
+The current product boundary is deliberately narrow: detect unwanted overlays, build a mask, and reconstruct the covered video region. Translation workspaces, timelines, publishing workflows, and agent chat interfaces are not part of the core SDK.
 
 ## What it does
 
@@ -29,19 +35,25 @@ STTN is the default inpainting backend. Any external model can be plugged in via
 
 ## Install
 
-Requires Python 3.8+ and either ONNX Runtime or PyTorch.
+Requires Python 3.10+ and either ONNX Runtime or PyTorch. The base SDK uses
+`opencv-python-headless`, so it can run in workers and containers without a
+desktop display server.
 VideoWipe is not published to PyPI yet; install it from source:
 
 ```bash
 git clone https://github.com/KKenny0/videowipe.git
 cd videowipe
 
-# Local web UI with the lightweight ONNX Runtime backend:
+# Headless SDK with the lightweight ONNX Runtime backend:
+pip install -e ".[onnx]"
+
+# Add the local Web adapter when needed:
 pip install -e ".[web,onnx]"
 
 # Optional extras:
 pip install -e ".[torch]"  # PyTorch backend
 pip install -e ".[ocr]"    # OCR text recognition
+pip install -e ".[propainter]"  # adapter dependencies; no model/code bundled
 ```
 
 Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.
@@ -87,16 +99,35 @@ engine.cleanup()
 
 ### Batch processing
 
-Reuse the engine to avoid reloading the model:
+Use the structured SDK contract and reuse the engine to avoid reloading the
+model. A cancellation token belongs to one request; create a new token for the
+next job.
 
 ```python
-from videowipe import WipeEngine
+from videowipe import CancellationToken, WipeEngine, WipeRequest
 
-engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", output="result/")
-engine.process(video="clip2.mp4", mask="mask.png", output="result/")
-engine.cleanup()
+def report(event):
+    print(event.phase, event.completed, event.total)
+
+with WipeEngine(task="detext") as engine:
+    result = engine.run(
+        WipeRequest(
+            video="clip1.mp4",
+            mask="mask.png",
+            output_dir="result/clip1",
+        ),
+        on_progress=report,
+        cancellation=CancellationToken(),
+    )
+    print(result.output_path, result.backend, result.timings)
 ```
+
+`WipeEngine.run()` returns `WipeResult` and raises stable `WipeError`
+subclasses for invalid input, missing backends, cancellation, and processing
+failures. The compatible `process()` and `remove_text()` entry points remain
+available. See the runnable [batch worker](examples/batch_worker.py) and
+[custom Inpainter](examples/custom_inpainter.py) examples for long-lived and
+registry-based integrations.
 
 ### CLI
 
@@ -272,7 +303,9 @@ docker pull ghcr.io/kkenny0/videowipe:gpu
 docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
-The `gpu` tag tracks the current main build. A versioned `v0.4.0-gpu` image was not produced by the v0.4.0 tag run; use `gpu` or build locally until the next tagged release.
+The floating `latest` and `gpu` tags track the current main build. Versioned
+CPU and GPU tags are published only after the matching release workflow
+succeeds; check the GHCR package before pinning a versioned image.
 
 Use the included wrapper script to auto-select the CPU or GPU image:
 
@@ -324,4 +357,6 @@ This project builds on [STTN](https://github.com/researchmm/STTN) and the origin
 
 ## License
 
-MIT
+GNU General Public License v3.0. See [LICENSE](LICENSE).
+
+This repository derives from GPL-3.0-licensed Video-Auto-Wipe code. If you distribute videowipe or a combined work, review the GPL-3.0 obligations that apply to your distribution model.

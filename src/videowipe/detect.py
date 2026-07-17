@@ -5,7 +5,8 @@ This module provides:
 - :class:`TextDetector` — a protocol for pluggable text-region detectors.
   Implement this to integrate custom detection models or external APIs.
 - :class:`DBNetDetector` — built-in detector that loads DBNet-family ONNX
-  models via OpenCV DNN (zero extra dependencies beyond ``opencv-python``).
+  models via OpenCV DNN (zero extra dependencies beyond the default
+  ``opencv-python-headless`` runtime).
 - :func:`detect_subtitle_mask` — high-level function that samples frames,
   runs detection, and produces a binary mask.
 

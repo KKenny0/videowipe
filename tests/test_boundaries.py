@@ -15,6 +15,7 @@ from videowipe import agent as agent_module
 from videowipe.cli import _build_parser
 from videowipe.detect import (
     CleanCandidate,
+    CleanDetectionResult,
     TextBox,
     _iou_bbox,
     detect_clean_candidates,
@@ -144,7 +145,7 @@ def test_registry_exposes_propainter():
     inpainter = registry.create("propainter", propainter_dir="/some/path")
     assert isinstance(inpainter, ExternalInpainter)
     assert inpainter.name == "propainter"  # overridden by the factory
-    assert "propainter_wipe.py" in inpainter.command
+    assert "-m videowipe.propainter_wipe" in inpainter.command
     assert "--propainter-dir /some/path" in inpainter.command
 
 
@@ -154,7 +155,19 @@ def test_propainter_factory_omits_dir_flag_when_unset():
     assert isinstance(inpainter, ExternalInpainter)
     assert inpainter.name == "propainter"
     assert "--propainter-dir" not in inpainter.command
-    assert "propainter_wipe.py" in inpainter.command
+    assert "-m videowipe.propainter_wipe" in inpainter.command
+
+
+def test_propainter_factory_preserves_directory_with_spaces(tmp_path):
+    from videowipe.external import _split_command
+
+    propainter_dir = tmp_path / "Pro Painter"
+    inpainter = get_registry().create(
+        "propainter", propainter_dir=str(propainter_dir)
+    )
+    argv = _split_command(inpainter.command)
+
+    assert argv[-2:] == ["--propainter-dir", str(propainter_dir)]
 
 
 def test_remove_text_cleans_up_when_processing_fails(monkeypatch):
@@ -781,7 +794,18 @@ def test_compute_mask_iou_identical_and_disjoint():
     assert intersection == 0
 
 
-def test_eval_clean_detection_reports_golden_iou(tmp_path):
+def _load_eval_clean_detection():
+    import importlib.util
+
+    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "eval_clean_detection.py"
+    spec = importlib.util.spec_from_file_location("eval_clean_detection", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_eval_clean_detection_reports_golden_iou(tmp_path, monkeypatch):
     """eval_clean_detection.py computes IoU when --mask-dir is given."""
     # Create a test video
     video = tmp_path / "test1.mp4"
@@ -794,23 +818,20 @@ def test_eval_clean_detection_reports_golden_iou(tmp_path):
     golden[50:60, 10:86] = 255
     cv2.imwrite(str(mask_dir / "test1_mask.png"), golden)
 
-    # Run eval script as subprocess
-    import subprocess
-    result = subprocess.run(
-        [sys.executable, "scripts/eval_clean_detection.py",
-         str(tmp_path), "--mask-dir", str(mask_dir)],
-        capture_output=True, text=True, cwd=str(
-            pathlib.Path(__file__).resolve().parent.parent
-        ),
-        env={**os.environ, "PYTHONPATH": "src"},
+    eval_module = _load_eval_clean_detection()
+    monkeypatch.setattr(
+        eval_module,
+        "detect_clean_candidates",
+        lambda *args, **kwargs: CleanDetectionResult([], (64, 96)),
     )
-    # Script should succeed (may find 0 candidates but that's ok)
-    assert result.returncode in (0, 2)  # 0 = success, 2 = abnormal bbox
-    # Should mention golden IoU in output
-    assert "Mask area ratio" in result.stdout
+    report = eval_module._eval_video(str(video), mask_dir=str(mask_dir))
+
+    assert report["generated_mask_area_ratio"] == 0.0
+    assert report["golden_mask_area_ratio"] > 0
+    assert report["mask_iou"] == 0.0
 
 
-def test_eval_clean_detection_flags_missing_golden(tmp_path):
+def test_eval_clean_detection_flags_missing_golden(tmp_path, monkeypatch, capsys):
     """eval_clean_detection.py reports missing goldens."""
     video = tmp_path / "test2.mp4"
     _write_test_video(video, width=96, height=64)
@@ -819,16 +840,16 @@ def test_eval_clean_detection_flags_missing_golden(tmp_path):
     mask_dir.mkdir()
     # No golden mask for test2
 
-    import subprocess
-    result = subprocess.run(
-        [sys.executable, "scripts/eval_clean_detection.py",
-         str(tmp_path), "--mask-dir", str(mask_dir)],
-        capture_output=True, text=True, cwd=str(
-            pathlib.Path(__file__).resolve().parent.parent
-        ),
-        env={**os.environ, "PYTHONPATH": "src"},
+    eval_module = _load_eval_clean_detection()
+    monkeypatch.setattr(
+        eval_module,
+        "detect_clean_candidates",
+        lambda *args, **kwargs: CleanDetectionResult([], (64, 96)),
     )
-    assert "MISSING GOLDEN" in result.stdout
+    report = eval_module._eval_video(str(video), mask_dir=str(mask_dir))
+    eval_module._print_report(report)
+
+    assert "MISSING GOLDEN" in capsys.readouterr().out
 
 
 # --- External model adapter tests ---
