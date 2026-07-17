@@ -81,8 +81,8 @@ class Inpainter(Protocol):
 
     name: str
 
-    def load(self, weight_path: str, device: str = "auto") -> None:
-        """Load model weights. Called once before the first inpaint()."""
+    def load(self, weight_path: Optional[str], device: str = "auto") -> None:
+        """Load once; custom adapters receive None when no weight was set."""
         ...
 
     def inpaint(self, job: InpaintJob) -> InpaintOutcome:

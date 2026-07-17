@@ -86,7 +86,8 @@ class WipeEngine:
     Args:
         task: Task type, currently "detext".
         weight: Path to model weight file (.pth for PyTorch, .onnx for ONNX).
-            None to auto-download the default.
+            For STTN, None auto-resolves the default weights. Custom adapters
+            receive None in their ``load()`` method when no weight is set.
         device: "auto", "cuda", or "cpu". Only used with .pth weights.
         gap: Segment length per pass. Higher = better quality, slower.
         dual: Show original video side-by-side in output.
@@ -331,29 +332,30 @@ class WipeEngine:
         if self._model_loaded:
             return
         weight_path = self._weight
-        if weight_path is None:
-            # Auto-detect: prefer ONNX if onnxruntime is available, else PyTorch
-            if _module_available("onnxruntime"):
-                base = ensure_onnx_weights(_DEFAULT_WEIGHTS_ONNX[self.task])
-                weight_path = base + ".onnx"
-            elif _module_available("torch") and _module_available("torchvision"):
-                weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
-            else:
+        if self._model == "sttn":
+            if weight_path is None:
+                # Auto-detect: prefer ONNX if available, otherwise PyTorch.
+                if _module_available("onnxruntime"):
+                    base = ensure_onnx_weights(_DEFAULT_WEIGHTS_ONNX[self.task])
+                    weight_path = base + ".onnx"
+                elif _module_available("torch") and _module_available("torchvision"):
+                    weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
+                else:
+                    raise BackendUnavailableError(
+                        "No inference backend found. Install one of:\n"
+                        "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
+                        "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
+                    )
+            elif weight_path.endswith(".onnx") and not _module_available("onnxruntime"):
                 raise BackendUnavailableError(
-                    "No inference backend found. Install one of:\n"
-                    "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
-                    "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
+                    "ONNX weights require: pip install videowipe[onnx]"
                 )
-        elif weight_path.endswith(".onnx") and not _module_available("onnxruntime"):
-            raise BackendUnavailableError(
-                "ONNX weights require: pip install videowipe[onnx]"
-            )
-        elif weight_path.endswith((".pth", ".pt")) and not (
-            _module_available("torch") and _module_available("torchvision")
-        ):
-            raise BackendUnavailableError(
-                "PyTorch weights require: pip install videowipe[torch]"
-            )
+            elif weight_path.endswith((".pth", ".pt")) and not (
+                _module_available("torch") and _module_available("torchvision")
+            ):
+                raise BackendUnavailableError(
+                    "PyTorch weights require: pip install videowipe[torch]"
+                )
         inpainter = get_registry().create(self._model)
         try:
             inpainter.load(weight_path, device=self._device)
@@ -363,7 +365,7 @@ class WipeEngine:
                 cause=exc,
             ) from exc
         self._task_impl.inpainter = inpainter
-        self._task_impl.backend = inpainter.backend
+        self._task_impl.backend = getattr(inpainter, "backend", inpainter)
         self._model_loaded = True
 
     def _resolve_file_inpainter(self):
@@ -584,11 +586,15 @@ class WipeEngine:
             total_pixels = frame_info["H_ori"] * frame_info["W_ori"]
             bm["mask_area_ratio"] = round(mask_pixels / total_pixels, 6) if total_pixels else 0.0
             self._task_impl._bm = bm
+            self._task_impl.mask_path = mask_path_saved
             process_kwargs = {"video_path": video}
             if progress is not None:
                 process_kwargs["progress"] = progress
             out_path = self._task_impl.process_video(
                 reader, frame_info, mask_arr, output, **process_kwargs
+            )
+            bm["backend"] = getattr(
+                self._task_impl, "backend_label", bm["backend"]
             )
             self._check_cancelled()
         except Exception as exc:

@@ -99,16 +99,35 @@ engine.cleanup()
 
 ### Batch processing
 
-Reuse the engine to avoid reloading the model:
+Use the structured SDK contract and reuse the engine to avoid reloading the
+model. A cancellation token belongs to one request; create a new token for the
+next job.
 
 ```python
-from videowipe import WipeEngine
+from videowipe import CancellationToken, WipeEngine, WipeRequest
 
-engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", output="result/")
-engine.process(video="clip2.mp4", mask="mask.png", output="result/")
-engine.cleanup()
+def report(event):
+    print(event.phase, event.completed, event.total)
+
+with WipeEngine(task="detext") as engine:
+    result = engine.run(
+        WipeRequest(
+            video="clip1.mp4",
+            mask="mask.png",
+            output_dir="result/clip1",
+        ),
+        on_progress=report,
+        cancellation=CancellationToken(),
+    )
+    print(result.output_path, result.backend, result.timings)
 ```
+
+`WipeEngine.run()` returns `WipeResult` and raises stable `WipeError`
+subclasses for invalid input, missing backends, cancellation, and processing
+failures. The compatible `process()` and `remove_text()` entry points remain
+available. See the runnable [batch worker](examples/batch_worker.py) and
+[custom Inpainter](examples/custom_inpainter.py) examples for long-lived and
+registry-based integrations.
 
 ### CLI
 

@@ -29,7 +29,11 @@ ALLOWED_SDIST_ROOT_FILES = {
     "README_CN.md",
     "pyproject.toml",
 }
-ALLOWED_SDIST_PREFIXES = ("scripts/", "src/", "tests/")
+ALLOWED_SDIST_PREFIXES = ("examples/", "scripts/", "src/", "tests/")
+REQUIRED_SDIST_FILES = {
+    "examples/batch_worker.py",
+    "examples/custom_inpainter.py",
+}
 
 
 def _reject_noise(names):
@@ -95,6 +99,9 @@ def verify(dist_dir: Path) -> None:
         _reject_noise(sdist_names)
         if "LICENSE" not in sdist_files:
             raise SystemExit("sdist does not include LICENSE")
+        missing_sdist = sorted(REQUIRED_SDIST_FILES.difference(sdist_files))
+        if missing_sdist:
+            raise SystemExit(f"sdist is missing required files: {missing_sdist}")
         disallowed = [
             name for name in sdist_files
             if name not in ALLOWED_SDIST_ROOT_FILES

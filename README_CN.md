@@ -96,16 +96,28 @@ engine.cleanup()
 
 ### 批量处理
 
-复用引擎避免重复加载模型：
+使用结构化 SDK 契约并复用引擎，避免重复加载模型。取消令牌只属于单次任务；下一项任务应创建新的令牌。
 
 ```python
-from videowipe import WipeEngine
+from videowipe import CancellationToken, WipeEngine, WipeRequest
 
-engine = WipeEngine(task="detext")
-engine.process(video="clip1.mp4", output="result/")
-engine.process(video="clip2.mp4", mask="mask.png", output="result/")
-engine.cleanup()
+def report(event):
+    print(event.phase, event.completed, event.total)
+
+with WipeEngine(task="detext") as engine:
+    result = engine.run(
+        WipeRequest(
+            video="clip1.mp4",
+            mask="mask.png",
+            output_dir="result/clip1",
+        ),
+        on_progress=report,
+        cancellation=CancellationToken(),
+    )
+    print(result.output_path, result.backend, result.timings)
 ```
+
+`WipeEngine.run()` 返回 `WipeResult`；无效输入、缺少后端、取消和处理失败会抛出稳定的 `WipeError` 子类。兼容入口 `process()` 与 `remove_text()` 继续保留。长期 Worker 和第三方模型接入可参考可运行的[批处理示例](examples/batch_worker.py)与[自定义 Inpainter 示例](examples/custom_inpainter.py)。
 
 ### CLI
 

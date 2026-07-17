@@ -57,6 +57,7 @@ packages = ["src/videowipe"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "/examples",
     "/scripts/propainter_wipe.py",
     "/scripts/smoke_installed.py",
     "/scripts/verify_package.py",
