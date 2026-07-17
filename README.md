@@ -5,12 +5,12 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  Remove hardcoded subtitles, watermarks, and text overlays from video.<br>
-  Auto-detect targets, generate masks, and inpaint locally.
+  An embeddable video-cleanup engine for hardcoded subtitles, watermarks, and text overlays.<br>
+  Detect targets, generate masks, and inpaint locally from Python, CLI, or your own worker.
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -18,6 +18,12 @@
 </p>
 
 ---
+
+## SDK first
+
+videowipe is a reusable Python engine for video-cleanup pipelines. Create one `WipeEngine`, reuse it across a batch so the model stays loaded, or register a different inpainting backend behind the same whole-video protocol. The CLI, local Web UI, and Docker images are adapters over that engine rather than separate product runtimes.
+
+The current product boundary is deliberately narrow: detect unwanted overlays, build a mask, and reconstruct the covered video region. Translation workspaces, timelines, publishing workflows, and agent chat interfaces are not part of the core SDK.
 
 ## What it does
 
@@ -324,4 +330,6 @@ This project builds on [STTN](https://github.com/researchmm/STTN) and the origin
 
 ## License
 
-MIT
+GNU General Public License v3.0. See [LICENSE](LICENSE).
+
+This repository derives from GPL-3.0-licensed Video-Auto-Wipe code. If you distribute videowipe or a combined work, review the GPL-3.0 obligations that apply to your distribution model.

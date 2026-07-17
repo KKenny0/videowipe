@@ -7,7 +7,7 @@ Status: **Final** — A0.5 完成
 
 **`NO_USE_PROPINTER`**
 
-ProPainter 不可进入 videowipe（MIT pip 包）的任何分发形态——既不能做 pip 默认，也不能做 `--model propainter` 可选档。任何形式的再分发（打包代码或权重）都违反 S-Lab License 1.0。
+ProPainter 不可进入 videowipe 的任何分发形态——既不能做 pip 默认，也不能做 `--model propainter` 可选档。VideoWipe 本体遵循 GPL-3.0，但 GPL-3.0 同样不能消除 ProPainter S-Lab License 1.0 的非商业限制；打包其代码或权重仍不具备可再分发依据。
 
 ## 依据（LICENSE 原文，非转述）
 
@@ -56,9 +56,9 @@ README License 段原文（来源 https://github.com/sczhou/ProPainter#license �
 
 同作者 sczhou 的 CodeFormer（NeurIPS 2022）LICENSE 与 ProPainter **逐字相同**（除年份外），均为 S-Lab License 1.0。这是该实验室统一政策，不存在"个别项目例外商用"。
 
-## 为什么 MIT 互斥
+## 为什么开源许可证不能覆盖该限制
 
-MIT 许可证承诺：可商用、可再分发、可闭源衍生。把 S-Lab 非商用代码/权重纳入 MIT pip 包（videowipe），MIT 的承诺与 S-Lab 的非商用限制直接矛盾——一旦 videowipe 携带 ProPainter 代码或权重并以 MIT 发布，即属"未经授权的商用再分发"，违反 S-Lab License 第 4 条。
+VideoWipe 的 GPL-3.0 允许商业使用和再分发，ProPainter 的 S-Lab License 1.0 却包含非商业限制。把 ProPainter 代码或权重纳入 VideoWipe 分发物，无法仅靠 GPL-3.0 为下游授予完整权利，许可证条件会发生冲突。因此 VideoWipe 只能保留用户自行安装后通过外部命令调用的边界。
 
 `--model propainter` 可选档也不能解决：可选档的本质仍是 pip 包内再分发 S-Lab 非商用代码/权重，授权冲突依旧。
 
@@ -70,7 +70,7 @@ MIT 许可证承诺：可商用、可再分发、可闭源衍生。把 S-Lab 非
 
 ## 唯一合规路径（若未来确需 ProPainter 能力）
 
-邮件 shangchenzhou@gmail.com / ccloy@ntu.edu.sg 谈商用授权。但即便取得授权，授权范围通常仅限申请方，**不能反向 MIT 化再分发给 videowipe 的下游用户**。所以这条路对"MIT pip 包"形态仍是死路。
+可以联系原作者洽谈商用授权。但即便取得面向单一使用方的授权，也不能推定 VideoWipe 获得向所有下游用户再分发代码和权重的权利。只有覆盖再分发范围的明确授权，才可能改变当前结论。
 
 ## 来源
 

@@ -5,12 +5,12 @@
 <h1 align="center">videowipe</h1>
 
 <p align="center">
-  擦除视频中的硬字幕、水印和文字叠加。<br>
-  自动检测目标、生成 mask，并在本地修复画面。
+  面向生产项目嵌入的视频清理引擎，用于擦除硬字幕、水印和文字叠加。<br>
+  通过 Python、CLI 或自有 Worker 完成目标检测、mask 生成和本地画面修复。
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -18,6 +18,12 @@
 </p>
 
 ---
+
+## SDK 优先
+
+videowipe 是可复用的 Python 视频清理引擎。一个 `WipeEngine` 可以在批处理中连续处理多个视频，避免重复加载模型；第三方修复模型也可以通过统一的整段视频协议接入。CLI、本地 Web UI 和 Docker 镜像只是 SDK 的适配入口，不是彼此独立的产品运行时。
+
+当前产品边界刻意保持收敛：检测不需要的画面叠加、生成 mask、修复被覆盖的视频区域。翻译工作台、时间线、发布流程和 Agent 聊天界面不属于核心 SDK。
 
 ## 功能
 
@@ -322,4 +328,6 @@ docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4
 
 ## License
 
-MIT
+GNU General Public License v3.0，详见 [LICENSE](LICENSE)。
+
+本仓库基于 GPL-3.0 授权的 Video-Auto-Wipe 代码演进。如果分发 videowipe 或与其组合的作品，需要根据实际分发方式确认并履行 GPL-3.0 的相关义务。
