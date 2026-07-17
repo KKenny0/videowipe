@@ -47,7 +47,7 @@ all = [
     "videowipe[torch]",
     "videowipe[onnx]",
 ]
-dev = ["pytest", "ruff", "build"]
+dev = ["pytest", "ruff", "build", "httpx2>=2,<3"]
 
 [project.scripts]
 videowipe = "videowipe.cli:main"
