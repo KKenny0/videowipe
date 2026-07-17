@@ -1,6 +1,6 @@
 """videowipe - STTN-based video inpainting tool."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from videowipe.engine import WipeEngine, remove_text
 from videowipe.api import CancellationToken, ProgressEvent, WipeRequest, WipeResult

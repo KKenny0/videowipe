@@ -303,7 +303,9 @@ docker pull ghcr.io/kkenny0/videowipe:gpu
 docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
-The `gpu` tag tracks the current main build. A versioned `v0.4.0-gpu` image was not produced by the v0.4.0 tag run; use `gpu` or build locally until the next tagged release.
+The floating `latest` and `gpu` tags track the current main build. Versioned
+CPU and GPU tags are published only after the matching release workflow
+succeeds; check the GHCR package before pinning a versioned image.
 
 Use the included wrapper script to auto-select the CPU or GPU image:
 

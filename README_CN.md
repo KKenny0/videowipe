@@ -292,7 +292,7 @@ docker pull ghcr.io/kkenny0/videowipe:gpu
 docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
-`gpu` 标签跟随当前 main 构建。`v0.4.0` 的 tag 构建没有产出 `v0.4.0-gpu`，在下一次 tag 发布前请使用 `gpu` 或本地构建。
+浮动标签 `latest` 和 `gpu` 跟随当前 main 构建。只有对应版本的发布工作流成功后，才会提供版本化的 CPU 与 GPU 标签；固定版本前请先检查 GHCR package。
 
 也可以使用自带的 wrapper 脚本自动选择 CPU 或 GPU 镜像：
 
