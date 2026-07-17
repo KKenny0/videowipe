@@ -144,7 +144,7 @@ def test_registry_exposes_propainter():
     inpainter = registry.create("propainter", propainter_dir="/some/path")
     assert isinstance(inpainter, ExternalInpainter)
     assert inpainter.name == "propainter"  # overridden by the factory
-    assert "propainter_wipe.py" in inpainter.command
+    assert "-m videowipe.propainter_wipe" in inpainter.command
     assert "--propainter-dir /some/path" in inpainter.command
 
 
@@ -154,7 +154,19 @@ def test_propainter_factory_omits_dir_flag_when_unset():
     assert isinstance(inpainter, ExternalInpainter)
     assert inpainter.name == "propainter"
     assert "--propainter-dir" not in inpainter.command
-    assert "propainter_wipe.py" in inpainter.command
+    assert "-m videowipe.propainter_wipe" in inpainter.command
+
+
+def test_propainter_factory_preserves_directory_with_spaces(tmp_path):
+    from videowipe.external import _split_command
+
+    propainter_dir = tmp_path / "Pro Painter"
+    inpainter = get_registry().create(
+        "propainter", propainter_dir=str(propainter_dir)
+    )
+    argv = _split_command(inpainter.command)
+
+    assert argv[-2:] == ["--propainter-dir", str(propainter_dir)]
 
 
 def test_remove_text_cleans_up_when_processing_fails(monkeypatch):

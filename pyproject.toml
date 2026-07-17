@@ -7,9 +7,9 @@ name = "videowipe"
 version = "0.4.0"
 description = "Video inpainting library for removing subtitles, watermarks, and text overlays"
 license = { file = "LICENSE" }
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
-    "opencv-python>=4.5",
+    "opencv-python-headless>=4.5",
     "numpy",
     "tqdm",
 ]
@@ -29,9 +29,8 @@ onnx = [
 onnx-gpu = [
     "onnxruntime-gpu>=1.15",
 ]
-headless = [
-    "opencv-python-headless>=4.5",
-]
+# Compatibility alias: the default runtime is now already headless.
+headless = []
 ocr = [
     "rapidocr-onnxruntime",
 ]
@@ -40,17 +39,34 @@ web = [
     "uvicorn[standard]>=0.20",
     "python-multipart>=0.0.6",
 ]
+propainter = [
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4",
+]
 all = [
     "videowipe[torch]",
     "videowipe[onnx]",
 ]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "build"]
 
 [project.scripts]
 videowipe = "videowipe.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/videowipe"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/scripts/propainter_wipe.py",
+    "/scripts/smoke_installed.py",
+    "/scripts/verify_package.py",
+    "/src",
+    "/tests",
+    "/LICENSE",
+    "/README.md",
+    "/README_CN.md",
+    "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

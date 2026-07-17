@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from videowipe import (
+    BackendUnavailableError,
     CancellationToken,
     InvalidInputError,
     ProcessingCancelledError,
@@ -271,6 +272,62 @@ def test_engine_context_manager_cleans_up(monkeypatch):
         assert entered is engine
 
     assert calls == ["cleanup"]
+
+
+def test_missing_backend_fails_before_weight_download(monkeypatch):
+    import videowipe.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "_module_available", lambda name: False)
+    monkeypatch.setattr(
+        engine_module,
+        "ensure_weight",
+        lambda *args: pytest.fail("missing backend must not download weights"),
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "ensure_onnx_weights",
+        lambda *args: pytest.fail("missing backend must not download weights"),
+    )
+
+    with pytest.raises(BackendUnavailableError) as failed:
+        WipeEngine()._ensure_model()
+    assert failed.value.code == "BACKEND_UNAVAILABLE"
+
+
+def test_backend_probe_requires_successful_import(monkeypatch):
+    import videowipe.engine as engine_module
+
+    engine_module._module_available.cache_clear()
+    monkeypatch.setattr(
+        engine_module.importlib,
+        "import_module",
+        lambda name: (_ for _ in ()).throw(OSError("native library missing")),
+    )
+
+    assert engine_module._module_available("present_but_broken") is False
+    engine_module._module_available.cache_clear()
+
+
+def test_backend_import_failure_maps_to_backend_unavailable(monkeypatch):
+    import videowipe.engine as engine_module
+
+    class MissingRuntimeInpainter:
+        def load(self, weight_path, device="auto"):
+            raise ImportError("missing native runtime")
+
+    monkeypatch.setattr(engine_module, "_module_available", lambda name: True)
+    monkeypatch.setattr(
+        engine_module, "ensure_onnx_weights", lambda *args: "fake-model"
+    )
+    monkeypatch.setattr(
+        engine_module.get_registry(),
+        "create",
+        lambda name: MissingRuntimeInpainter(),
+    )
+
+    with pytest.raises(BackendUnavailableError) as failed:
+        WipeEngine()._ensure_model()
+    assert isinstance(failed.value.cause, ImportError)
 
 
 def test_progress_event_with_unknown_total_has_no_fraction():

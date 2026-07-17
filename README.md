@@ -35,19 +35,25 @@ STTN is the default inpainting backend. Any external model can be plugged in via
 
 ## Install
 
-Requires Python 3.8+ and either ONNX Runtime or PyTorch.
+Requires Python 3.10+ and either ONNX Runtime or PyTorch. The base SDK uses
+`opencv-python-headless`, so it can run in workers and containers without a
+desktop display server.
 VideoWipe is not published to PyPI yet; install it from source:
 
 ```bash
 git clone https://github.com/KKenny0/videowipe.git
 cd videowipe
 
-# Local web UI with the lightweight ONNX Runtime backend:
+# Headless SDK with the lightweight ONNX Runtime backend:
+pip install -e ".[onnx]"
+
+# Add the local Web adapter when needed:
 pip install -e ".[web,onnx]"
 
 # Optional extras:
 pip install -e ".[torch]"  # PyTorch backend
 pip install -e ".[ocr]"    # OCR text recognition
+pip install -e ".[propainter]"  # adapter dependencies; no model/code bundled
 ```
 
 Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.

@@ -35,18 +35,22 @@ videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间�
 
 ## 安装
 
-需要 Python 3.8+，以及 ONNX Runtime 或 PyTorch。VideoWipe 目前还没有发布到 PyPI，请从源码安装：
+需要 Python 3.10+，以及 ONNX Runtime 或 PyTorch。基础 SDK 默认使用 `opencv-python-headless`，因此可以在没有桌面显示服务的 Worker 和容器中运行。VideoWipe 目前还没有发布到 PyPI，请从源码安装：
 
 ```bash
 git clone https://github.com/KKenny0/videowipe.git
 cd videowipe
 
-# 本地 Web UI + 轻量 ONNX Runtime 后端：
+# 无界面 SDK + 轻量 ONNX Runtime 后端：
+pip install -e ".[onnx]"
+
+# 需要时再添加本地 Web 适配入口：
 pip install -e ".[web,onnx]"
 
 # 可选 extras：
 pip install -e ".[torch]"  # PyTorch 后端
 pip install -e ".[ocr]"    # OCR 文字识别
+pip install -e ".[propainter]"  # 仅适配器依赖，不附带模型代码或权重
 ```
 
 模型权重在首次运行时自动下载到 `~/.videowipe/weights/`，无需手动配置。

@@ -7,8 +7,9 @@ from typing import Optional
 class WipeError(RuntimeError):
     """Base class for errors exposed by :meth:`WipeEngine.run`.
 
-    ``cause`` preserves the implementation exception for logging without
-    making backend-specific exception types part of the public contract.
+    ``cause`` preserves implementation diagnostics without making backend-
+    specific exception types part of the public contract. Treat it as
+    sensitive: external backends may include local paths or stderr in it.
     """
 
     code = "WIPE_ERROR"

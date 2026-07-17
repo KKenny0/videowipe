@@ -10,3 +10,9 @@ result/
 benchmark_report.json
 AGENTS.md
 .gstack/
+.pytest-tmp*/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/

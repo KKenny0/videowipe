@@ -44,7 +44,7 @@ v0.5 的完成标准不是功能数量，而是“能否可靠嵌入”：
 
 ## S3 — 打包与无界面运行
 
-状态：未开始
+状态：完成
 
 - 默认 OpenCV 依赖改为 headless，避免默认包与 headless extra 冲突。
 - ONNX、Torch、OCR、Web 保持可选依赖。

@@ -1,10 +1,12 @@
 """WipeEngine and convenience functions."""
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import threading
 import time
+from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
 import cv2
@@ -58,6 +60,16 @@ _DEFAULT_WEIGHTS_ONNX = {
 _DEFAULT_FEATHER_RADIUS = 4
 
 
+@lru_cache(maxsize=None)
+def _module_available(name: str) -> bool:
+    """Return whether a backend can actually be imported in this process."""
+    try:
+        importlib.import_module(name)
+    except (ImportError, OSError, RuntimeError):
+        return False
+    return True
+
+
 class _ProgressCallbackError(Exception):
     """Keep consumer callback failures outside VideoWipe error mapping."""
 
@@ -86,7 +98,8 @@ class WipeEngine:
             Use "propainter" for the ProPainter external model (requires a
             ProPainter source checkout; see ``propainter_dir``).
         propainter_dir: Path to a ProPainter source checkout, used only when
-            ``model == "propainter"``. Falls back to the wrapper script's own
+            ``model == "propainter"``. Falls back to the wrapper script's
+            ``VIDEOWIPE_PROPINTER_DIR`` environment variable.
             resolution (``VIDEOWIPE_PROPINTER_DIR`` / default) when None.
         detect_mode: Detection preset: "fast", "balanced", or "sensitive".
             Controls sample count, consistency threshold, and subtitle fallback.
@@ -320,21 +333,35 @@ class WipeEngine:
         weight_path = self._weight
         if weight_path is None:
             # Auto-detect: prefer ONNX if onnxruntime is available, else PyTorch
-            try:
-                import onnxruntime  # noqa: F401
+            if _module_available("onnxruntime"):
                 base = ensure_onnx_weights(_DEFAULT_WEIGHTS_ONNX[self.task])
                 weight_path = base + ".onnx"
-            except ImportError:
-                try:
-                    weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
-                except Exception:
-                    raise BackendUnavailableError(
-                        "No inference backend found. Install one of:\n"
-                        "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
-                        "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
-                    ) from None
+            elif _module_available("torch") and _module_available("torchvision"):
+                weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
+            else:
+                raise BackendUnavailableError(
+                    "No inference backend found. Install one of:\n"
+                    "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
+                    "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
+                )
+        elif weight_path.endswith(".onnx") and not _module_available("onnxruntime"):
+            raise BackendUnavailableError(
+                "ONNX weights require: pip install videowipe[onnx]"
+            )
+        elif weight_path.endswith((".pth", ".pt")) and not (
+            _module_available("torch") and _module_available("torchvision")
+        ):
+            raise BackendUnavailableError(
+                "PyTorch weights require: pip install videowipe[torch]"
+            )
         inpainter = get_registry().create(self._model)
-        inpainter.load(weight_path, device=self._device)
+        try:
+            inpainter.load(weight_path, device=self._device)
+        except ImportError as exc:
+            raise BackendUnavailableError(
+                f"The {self._model} backend could not load its runtime dependency",
+                cause=exc,
+            ) from exc
         self._task_impl.inpainter = inpainter
         self._task_impl.backend = inpainter.backend
         self._model_loaded = True
