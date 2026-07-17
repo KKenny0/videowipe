@@ -22,6 +22,7 @@ RUN if [ "$VARIANT" = "gpu" ]; then \
 WORKDIR /build
 COPY src/videowipe/ src/videowipe/
 COPY pyproject.toml .
+COPY LICENSE .
 RUN pip install --no-cache-dir --no-deps --prefix=/install .
 
 # ── CPU runtime ──────────────────────────────────────────────────────────────
