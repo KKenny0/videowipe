@@ -32,7 +32,7 @@ v0.5 的完成标准不是功能数量，而是“能否可靠嵌入”：
 
 ## S2 — 稳定 SDK 契约
 
-状态：未开始
+状态：完成
 
 新增公共对象：`WipeRequest`、`WipeResult`、`ProgressEvent`、`CancellationToken`，以及稳定的 `WipeError` 异常层次。
 

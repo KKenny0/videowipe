@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from typing import TYPE_CHECKING, Optional
 
@@ -18,6 +19,20 @@ from videowipe.tasks.base import (
 from videowipe.tasks.detext import DetextTask
 from videowipe.inpainters import InpaintJob, get_registry
 from videowipe.weights import ensure_onnx_weights, ensure_weight
+from videowipe.api import (
+    CancellationToken,
+    ProgressCallback,
+    ProgressEvent,
+    WipeRequest,
+    WipeResult,
+)
+from videowipe.errors import (
+    BackendUnavailableError,
+    InvalidInputError,
+    ProcessingCancelledError,
+    ProcessingError,
+    WipeError,
+)
 
 if TYPE_CHECKING:
     from videowipe.detect import TextDetector
@@ -41,6 +56,14 @@ _DEFAULT_WEIGHTS_ONNX = {
 # softening so much that the filled region bleeds into surrounding detail.
 # This is a "finished feel" default, not a user-facing knob.
 _DEFAULT_FEATHER_RADIUS = 4
+
+
+class _ProgressCallbackError(Exception):
+    """Keep consumer callback failures outside VideoWipe error mapping."""
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
 
 
 class WipeEngine:
@@ -108,6 +131,188 @@ class WipeEngine:
         # which compares against binary ground-truth masks.
         self._task_impl.feather_radius = _DEFAULT_FEATHER_RADIUS
         self._model_loaded = False
+        self._active_cancellation: Optional[CancellationToken] = None
+        self._run_lock = threading.Lock()
+
+    def __enter__(self) -> "WipeEngine":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.cleanup()
+
+    def run(
+        self,
+        request: WipeRequest,
+        on_progress: Optional[ProgressCallback] = None,
+        cancellation: Optional[CancellationToken] = None,
+    ) -> WipeResult:
+        """Run one structured SDK request.
+
+        ``process()`` remains the backwards-compatible path-returning API.
+        New integrations should use this method for structured progress,
+        cancellation, errors, and result metadata.
+        """
+        if not isinstance(request, WipeRequest):
+            raise InvalidInputError("request must be a WipeRequest instance")
+        if on_progress is not None and not callable(on_progress):
+            raise InvalidInputError("on_progress must be callable")
+        if cancellation is not None and not isinstance(cancellation, CancellationToken):
+            raise InvalidInputError("cancellation must be a CancellationToken")
+        if isinstance(request.targets, (str, bytes)):
+            raise InvalidInputError("targets must be a sequence of strings, not a string")
+        if isinstance(request.regions, (str, bytes)):
+            raise InvalidInputError("regions must be a sequence of strings, not a string")
+        try:
+            video_path = os.fspath(request.video)
+            output_dir = os.fspath(request.output_dir)
+            mask_path = os.fspath(request.mask) if request.mask is not None else None
+            targets = list(request.targets)
+            regions = list(request.regions)
+        except TypeError as exc:
+            raise InvalidInputError(
+                "video, mask, and output_dir must be filesystem paths; "
+                "targets and regions must be sequences",
+                cause=exc,
+            ) from exc
+        if not video_path or not output_dir:
+            raise InvalidInputError("video and output_dir must not be empty")
+        if not self._run_lock.acquire(blocking=False):
+            raise ProcessingError(
+                "This WipeEngine is already processing a request",
+                code="ENGINE_BUSY",
+                retryable=True,
+            )
+
+        token = cancellation or CancellationToken()
+        self._active_cancellation = token
+        artifact_before = self._artifact_snapshot(output_dir)
+
+        def emit(event: ProgressEvent) -> None:
+            token.raise_if_cancelled()
+            if on_progress is not None:
+                try:
+                    on_progress(event)
+                except Exception as exc:
+                    raise _ProgressCallbackError(exc) from exc
+            token.raise_if_cancelled()
+
+        def legacy_progress(completed: int, total: int) -> None:
+            emit(ProgressEvent("inpaint", completed, total))
+
+        try:
+            emit(ProgressEvent("prepare", 0, 1))
+            output_path = self.process(
+                video=video_path,
+                mask=mask_path,
+                output=output_dir,
+                detector=request.detector,
+                targets=targets,
+                intent=request.intent,
+                agent=request.agent,
+                regions=regions,
+                preview=request.preview,
+                confirm=request.confirm,
+                detect_mode=request.detect_mode,
+                ocr=request.ocr,
+                progress=legacy_progress,
+            )
+            result = self._build_result(request, output_path, artifact_before)
+            if on_progress is not None:
+                try:
+                    on_progress(ProgressEvent("complete", 1, 1))
+                except Exception as exc:
+                    raise _ProgressCallbackError(exc) from exc
+            return result
+        except _ProgressCallbackError as exc:
+            raise exc.cause
+        except ProcessingCancelledError:
+            raise
+        except WipeError:
+            raise
+        except ValueError as exc:
+            raise InvalidInputError(str(exc), cause=exc) from exc
+        except Exception as exc:
+            from videowipe.external import ExternalModelError
+
+            code = (
+                "EXTERNAL_MODEL_ERROR"
+                if isinstance(exc, ExternalModelError)
+                else "PROCESSING_FAILED"
+            )
+            message = (
+                "External inpainting backend failed"
+                if isinstance(exc, ExternalModelError)
+                else str(exc)
+            )
+            raise ProcessingError(message, code=code, cause=exc) from exc
+        finally:
+            self._active_cancellation = None
+            self._run_lock.release()
+
+    @staticmethod
+    def _artifact_snapshot(output_dir: str) -> dict:
+        snapshot = {}
+        for name in (
+            "auto_mask.png",
+            "clean_candidates.json",
+            "clean_preview.jpg",
+            "benchmark.json",
+        ):
+            path = os.path.join(output_dir, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            snapshot[name] = (stat.st_mtime_ns, stat.st_size)
+        return snapshot
+
+    def _build_result(
+        self,
+        request: WipeRequest,
+        output_path: str,
+        artifact_before: dict,
+    ) -> WipeResult:
+        output_dir = os.fspath(request.output_dir)
+        benchmark_path = os.path.join(output_dir, "benchmark.json")
+        benchmark = {}
+        artifact_after = self._artifact_snapshot(output_dir)
+        benchmark_changed = artifact_after.get("benchmark.json") != artifact_before.get(
+            "benchmark.json"
+        )
+        if not request.preview and benchmark_changed:
+            try:
+                with open(benchmark_path, "r", encoding="utf-8") as handle:
+                    benchmark = json.load(handle)
+            except (OSError, ValueError):
+                benchmark = {}
+
+        artifacts = []
+        for name, signature in artifact_after.items():
+            if request.preview and name == "benchmark.json":
+                continue
+            if signature == artifact_before.get(name):
+                continue
+            path = os.path.join(output_dir, name)
+            artifacts.append(path)
+        if os.path.isfile(output_path) and output_path not in artifacts:
+            artifacts.append(output_path)
+
+        timings = benchmark.get("timing", {})
+        if not isinstance(timings, dict):
+            timings = {}
+        return WipeResult(
+            output_path=output_path,
+            backend=benchmark.get("backend"),
+            mask_source="manual" if request.mask is not None else "auto",
+            artifacts=tuple(artifacts),
+            timings=dict(timings),
+            warnings=(),
+            preview=request.preview,
+        )
+
+    def _check_cancelled(self) -> None:
+        if self._active_cancellation is not None:
+            self._active_cancellation.raise_if_cancelled()
 
     def _ensure_model(self):
         if self._model_loaded:
@@ -123,7 +328,7 @@ class WipeEngine:
                 try:
                     weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
                 except Exception:
-                    raise RuntimeError(
+                    raise BackendUnavailableError(
                         "No inference backend found. Install one of:\n"
                         "  pip install videowipe[onnx]   (lightweight, ~200MB)\n"
                         "  pip install videowipe[torch]  (full PyTorch, ~2.5GB)"
@@ -171,6 +376,7 @@ class WipeEngine:
             output: Output directory.
             detector: Override the text detector for auto-mask generation.
         """
+        self._check_cancelled()
         os.makedirs(output, exist_ok=True)
         bm: dict = {"video_path": video, "timing": {}}
         bm["mask_source"] = "manual" if mask is not None else "auto"
@@ -270,6 +476,7 @@ class WipeEngine:
                     (mask_arr * 255).astype(np.uint8),
                 )
                 if preview:
+                    self._check_cancelled()
                     print(f"Preview saved to {output}")
                     return output
             else:
@@ -282,7 +489,10 @@ class WipeEngine:
                 )
             bm["timing"]["detection_s"] = round(time.monotonic() - t_detect_start, 3)
 
+        self._check_cancelled()
+
         if preview:
+            self._check_cancelled()
             print(f"Preview saved to {output}")
             return output
 
@@ -294,6 +504,7 @@ class WipeEngine:
 
         file_inpainter = self._resolve_file_inpainter()
         if file_inpainter is not None:
+            self._check_cancelled()
             bm["model_type"] = file_inpainter.name
             if self._external_command:
                 bm["external_command"] = self._external_command
@@ -310,6 +521,7 @@ class WipeEngine:
                 progress=progress,
             )
             out_path = file_inpainter.inpaint(ext_job).output_path
+            self._check_cancelled()
             bm["timing"]["external_s"] = round(time.monotonic() - t_ext_start, 3)
             bm["backend"] = file_inpainter.name
             bm["output_path"] = out_path
@@ -323,7 +535,9 @@ class WipeEngine:
             return out_path
 
         t_model_start = time.monotonic()
+        self._check_cancelled()
         self._ensure_model()
+        self._check_cancelled()
         bm["timing"]["model_load_s"] = round(time.monotonic() - t_model_start, 3)
         bm["backend"] = type(self._task_impl.backend).__name__
 
@@ -349,6 +563,7 @@ class WipeEngine:
             out_path = self._task_impl.process_video(
                 reader, frame_info, mask_arr, output, **process_kwargs
             )
+            self._check_cancelled()
         except Exception as exc:
             bm_error = str(exc)
             raise
@@ -367,9 +582,18 @@ class WipeEngine:
 
     def cleanup(self):
         """Release model and GPU memory."""
-        if not self._external_command:
-            self._task_impl.cleanup()
-        self._model_loaded = False
+        if not self._run_lock.acquire(blocking=False):
+            raise ProcessingError(
+                "Cannot clean up a WipeEngine while a request is running",
+                code="ENGINE_BUSY",
+                retryable=True,
+            )
+        try:
+            if not self._external_command:
+                self._task_impl.cleanup()
+            self._model_loaded = False
+        finally:
+            self._run_lock.release()
 
     @staticmethod
     def _build_recognizer(ocr_mode: str):
