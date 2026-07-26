@@ -31,6 +31,7 @@ class WipeRequest:
     confirm: bool = False
     detect_mode: Optional[str] = None
     ocr: Optional[str] = None
+    plan: Any = None  # a WipePlan, a path to wipe_plan.json, or None; mutually exclusive with mask
 
 
 @dataclass(frozen=True)

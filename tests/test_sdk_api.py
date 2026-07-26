@@ -332,3 +332,114 @@ def test_backend_import_failure_maps_to_backend_unavailable(monkeypatch):
 
 def test_progress_event_with_unknown_total_has_no_fraction():
     assert ProgressEvent("detect").fraction is None
+
+
+# ── WipePlan Phase A / C3: plan() entry point + clean-path wiring ────────────
+
+import os
+
+import cv2
+import numpy as np
+
+from videowipe.detect import TextBox
+
+
+def _write_plan_video(path, frames=30, width=96, height=64):
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 4, (width, height))
+    for i in range(frames):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        frame[50:60, 8:88] = 200  # subtitle band
+        frame[5:15, 38:58] = 200  # persistent top overlay (logo)
+        writer.write(frame)
+    writer.release()
+
+
+class _PlanFakeDetector:
+    """Always reports a bottom subtitle + a persistent top overlay."""
+
+    def detect(self, frame):
+        return [
+            TextBox(
+                points=np.array([[8, 50], [88, 50], [88, 60], [8, 60]]),
+                confidence=0.9, text="subtitle",
+            ),
+            TextBox(
+                points=np.array([[38, 5], [58, 5], [58, 15], [38, 15]]),
+                confidence=0.95, text="MangoTV",
+            ),
+        ]
+
+
+def test_plan_builds_wipeplan_without_loading_model(tmp_path):
+    engine = WipeEngine(task="clean")
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video)
+    out = tmp_path / "result"
+
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=out, detector=_PlanFakeDetector(),
+    ))
+
+    from videowipe.plan import JSON_FILENAME, MASK_FILENAME
+    assert (out / JSON_FILENAME).exists()
+    assert (out / MASK_FILENAME).exists()
+    assert (out / "auto_mask.png").exists()
+
+    # subtitle (bottom, default_remove) -> remove
+    assert any(t.action == "remove" for t in plan.tracks)
+    # persistent top overlay (cy < 0.30*64 ~= 19) -> safety keep
+    top = [t for t in plan.tracks if (t.bbox[1] + t.bbox[3]) / 2 < 19]
+    assert top and all(t.action == "keep" for t in top)
+    assert any("safety:persistent-top-overlay" in t.decision_reason for t in top)
+
+
+def test_run_rejects_mask_and_plan_together(tmp_path):
+    engine = WipeEngine(task="clean")
+    with pytest.raises(InvalidInputError, match="mutually exclusive"):
+        engine.run(WipeRequest(
+            video=tmp_path / "x.mp4", output_dir=tmp_path / "out",
+            mask=tmp_path / "m.png", plan="some_plan.json",
+        ))
+
+
+def test_clean_run_writes_plan_and_propagates_warnings(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video)
+    out = tmp_path / "result"
+    received_masks = {}
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+
+    class FakeCleanTask:
+        _bm = None
+        backend = type("B", (), {"__name__": "FakeBackend"})()
+        output_suffix = "clean"
+        feather_radius = 0
+
+        def process_video(self, reader, frame_info, mask_arr, output_dir, video_path="", progress=None):
+            received_masks["arr"] = mask_arr
+            self._bm["timing"]["inpainting_s"] = 0.001
+            return os.path.join(output_dir, "output_clean.mp4")
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(
+        "videowipe.engine._TASK_CLASSES", {"clean": lambda **kw: FakeCleanTask()}
+    )
+
+    engine = WipeEngine(task="clean")
+    result = engine.run(WipeRequest(
+        video=video, output_dir=out, detector=_PlanFakeDetector(),
+    ))
+
+    # plan artifacts surfaced
+    names = {Path(p).name for p in result.artifacts}
+    assert "wipe_plan.json" in names
+    assert "wipe_plan_masks.npz" in names
+    # the persistent top overlay was kept out of the executed remove mask
+    mask_arr = received_masks["arr"]
+    top_band_pixels = int(np.sum(mask_arr[5:15, 38:58] > 0))
+    sub_band_pixels = int(np.sum(mask_arr[50:60, 8:88] > 0))
+    assert sub_band_pixels > 0
+    assert top_band_pixels == 0

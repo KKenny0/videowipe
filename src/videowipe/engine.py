@@ -35,6 +35,14 @@ from videowipe.errors import (
     ProcessingError,
     WipeError,
 )
+from videowipe.plan import (
+    WipePlan,
+    build_wipe_plan,
+    compute_source,
+    load_wipe_plan,
+    save_wipe_plan,
+    validate_plan,
+)
 
 if TYPE_CHECKING:
     from videowipe.detect import TextDetector
@@ -147,6 +155,9 @@ class WipeEngine:
         self._model_loaded = False
         self._active_cancellation: Optional[CancellationToken] = None
         self._run_lock = threading.Lock()
+        # Warnings from the most recent process() call (e.g. WipePlan warnings),
+        # surfaced through WipeResult by run(). Reset at the start of process().
+        self._last_warnings: list[str] = []
 
     def __enter__(self) -> "WipeEngine":
         return self
@@ -229,6 +240,7 @@ class WipeEngine:
                 detect_mode=request.detect_mode,
                 ocr=request.ocr,
                 progress=legacy_progress,
+                plan=request.plan,
             )
             result = self._build_result(request, output_path, artifact_before)
             if on_progress is not None:
@@ -271,6 +283,8 @@ class WipeEngine:
             "clean_candidates.json",
             "clean_preview.jpg",
             "benchmark.json",
+            "wipe_plan.json",
+            "wipe_plan_masks.npz",
         ):
             path = os.path.join(output_dir, name)
             try:
@@ -320,7 +334,7 @@ class WipeEngine:
             mask_source="manual" if request.mask is not None else "auto",
             artifacts=tuple(artifacts),
             timings=dict(timings),
-            warnings=(),
+            warnings=tuple(self._last_warnings),
             preview=request.preview,
         )
 
@@ -396,7 +410,8 @@ class WipeEngine:
                 confirm: bool = False,
                 detect_mode: str | None = None,
                 ocr: str | None = None,
-                progress=None) -> str:
+                progress=None,
+                plan=None) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -404,8 +419,15 @@ class WipeEngine:
             mask: Path to mask image. ``None`` to auto-detect subtitle regions.
             output: Output directory.
             detector: Override the text detector for auto-mask generation.
+            plan: A :class:`WipePlan` or path to ``wipe_plan.json``. Mutually
+                exclusive with *mask*; only supported for the ``clean`` task.
         """
         self._check_cancelled()
+        if mask is not None and plan is not None:
+            raise InvalidInputError("mask and plan are mutually exclusive")
+        if plan is not None and self.task != "clean":
+            raise InvalidInputError("plan is only supported for the clean task")
+        self._last_warnings = []
         os.makedirs(output, exist_ok=True)
         bm: dict = {"video_path": video, "timing": {}}
         bm["mask_source"] = "manual" if mask is not None else "auto"
@@ -417,89 +439,13 @@ class WipeEngine:
             det = detector or self._detector
             t_detect_start = time.monotonic()
             if self.task == "clean":
-                from videowipe.detect import (
-                    detect_clean_candidates,
-                    infer_regions_from_text,
-                    infer_targets_from_text,
-                    mask_from_candidates,
-                    normalize_target,
-                    resolve_detect_params,
-                    select_clean_candidates,
-                    write_clean_artifacts,
+                wipe_plan = self._resolve_clean_plan(
+                    plan, video, det, targets, intent, agent, regions,
+                    detect_mode, ocr, output, confirm,
                 )
-
-                target_text = " ".join(targets or [])
-                intent_text = " ".join(part for part in [target_text, intent or ""] if part)
-                requested_regions = list(regions or [])
-                requested_regions.extend(infer_regions_from_text(intent_text))
-                requested_regions = list(dict.fromkeys(requested_regions))
-
-                inferred_targets = infer_targets_from_text(target_text)
-                intent_targets = infer_targets_from_text(intent or "")
-                effective_targets = list(targets or [])
-                effective_targets.extend(inferred_targets)
-                effective_targets = [
-                    target for target in dict.fromkeys(effective_targets)
-                    if normalize_target(target) != target or target in inferred_targets
-                ]
-                normalized_targets = {normalize_target(target) for target in effective_targets}
-                if requested_regions:
-                    effective_targets.append("region")
-                    normalized_targets.add("region")
-                mentioned_targets = normalized_targets | set(intent_targets)
-                include_logo = "logo" in mentioned_targets
-                include_translucent = "watermark" in mentioned_targets
-                text_targets = {
-                    "subtitle", "timestamp", "watermark",
-                    "scene_text", "unknown_text",
-                }
-                detect_text = (
-                    bool(mentioned_targets & text_targets)
-                    or (not requested_regions and not mentioned_targets)
-                    or bool(intent and not mentioned_targets)
-                )
-
-                effective_mode = detect_mode or self._detect_mode
-                has_subtitle_target = "subtitle" in normalized_targets
-                mode_params = resolve_detect_params(
-                    effective_mode, has_subtitle_target=has_subtitle_target,
-                )
-
-                effective_ocr = ocr or self._ocr
-                recognizer = self._build_recognizer(effective_ocr)
-
-                result = detect_clean_candidates(
-                    video,
-                    detector=det,
-                    regions=requested_regions,
-                    detect_text=detect_text,
-                    include_logo=include_logo,
-                    include_translucent_watermark=include_translucent,
-                    sample_count=mode_params["sample_count"],
-                    consistency=mode_params["consistency"],
-                    subtitle_fallback=mode_params["subtitle_fallback"],
-                    recognizer=recognizer,
-                )
-                selected = select_clean_candidates(
-                    result.candidates,
-                    targets=effective_targets,
-                    intent=intent,
-                )
-                self._warn_if_timestamp_unresolved(effective_targets, result.candidates)
-                if agent and intent:
-                    agent_selected = self._select_candidates_with_agent(
-                        agent, result.candidates, intent
-                    )
-                    if agent_selected is not None:
-                        selected = agent_selected
-                write_clean_artifacts(result, selected, output)
-                if confirm:
-                    selected = self._confirm_candidates(result.candidates, selected)
-                    write_clean_artifacts(result, selected, output)
-                mask_arr = mask_from_candidates(
-                    selected, result.frame_shape,
-                    feather_radius=self._task_impl.feather_radius,
-                )
+                self._last_warnings = list(wipe_plan.warnings)
+                det_frame_shape = (wipe_plan.source.height, wipe_plan.source.width)
+                mask_arr = self._union_mask_from_plan(wipe_plan, det_frame_shape)
                 cv2.imwrite(
                     os.path.join(output, "auto_mask.png"),
                     (mask_arr * 255).astype(np.uint8),
@@ -698,6 +644,220 @@ class WipeEngine:
             "No timestamp target was confirmed. Timestamp detection requires "
             "recognized text content; use --region top-left/top-right if the "
             "current detector only finds text boxes."
+        )
+
+    # ── WipePlan: detection, construction, execution glue ────────────────────
+
+    def plan(self, request: WipeRequest) -> WipePlan:
+        """Detect, build, and persist a :class:`WipePlan` without loading the model.
+
+        Writes ``wipe_plan.json`` + ``wipe_plan_masks.npz`` (and the overview
+        ``auto_mask.png``) into ``request.output_dir``. The plan encodes the
+        resolved remove/keep action per track, including the top-overlay safety
+        default. Re-running with this plan (via ``WipeRequest(plan=...)``)
+        reproduces the same mask deterministically.
+        """
+        if request.mask is not None:
+            raise InvalidInputError("mask and plan are mutually exclusive")
+        if self.task != "clean":
+            raise InvalidInputError("plan is only supported for the clean task")
+        video_path = os.fspath(request.video)
+        output_dir = os.fspath(request.output_dir)
+        if not video_path or not output_dir:
+            raise InvalidInputError("video and output_dir must not be empty")
+        os.makedirs(output_dir, exist_ok=True)
+        det = request.detector or self._detector
+        result, selected_ids, request_snapshot, user_directed = self._detect_clean(
+            video_path, det, list(request.targets or ()), request.intent,
+            request.agent, list(request.regions or ()), request.detect_mode,
+            request.ocr, output_dir, request.confirm,
+        )
+        source = compute_source(video_path)
+        wipe_plan = build_wipe_plan(
+            result.candidates,
+            sample_indices=result.sample_indices,
+            n_valid=len(result.sample_indices),
+            source=source,
+            frame_shape=result.frame_shape,
+            request=request_snapshot,
+            explicit_remove_ids=selected_ids if user_directed else set(),
+        )
+        save_wipe_plan(wipe_plan, output_dir)
+        mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
+        cv2.imwrite(
+            os.path.join(output_dir, "auto_mask.png"),
+            (mask_arr * 255).astype(np.uint8),
+        )
+        return wipe_plan
+
+    def _resolve_clean_plan(
+        self, plan, video, detector, targets, intent, agent, regions,
+        detect_mode, ocr, output, confirm,
+    ) -> WipePlan:
+        """Return the WipePlan for a clean run: explicit, or built fresh.
+
+        An explicit plan (object or path) is validated against the video. A
+        fresh plan runs detection, applies the decision priority + safety rule
+        via :func:`build_wipe_plan`, and is persisted alongside the other clean
+        artifacts.
+        """
+        if plan is not None:
+            return self._resolve_plan_argument(plan, video)
+        result, selected_ids, request_snapshot, user_directed = self._detect_clean(
+            video, detector, targets, intent, agent, regions,
+            detect_mode, ocr, output, confirm,
+        )
+        source = compute_source(video)
+        wipe_plan = build_wipe_plan(
+            result.candidates,
+            sample_indices=result.sample_indices,
+            n_valid=len(result.sample_indices),
+            source=source,
+            frame_shape=result.frame_shape,
+            request=request_snapshot,
+            explicit_remove_ids=selected_ids if user_directed else set(),
+        )
+        save_wipe_plan(wipe_plan, output)
+        return wipe_plan
+
+    def _detect_clean(
+        self, video, detector, targets, intent, agent, regions,
+        detect_mode, ocr, output, confirm,
+    ):
+        """Run clean detection + selection and persist the candidate artifacts.
+
+        Returns ``(result, selected_ids, request_snapshot)`` where
+        ``selected_ids`` are the candidate ids chosen for removal (by default
+        rules, intent, agent, or interactive confirm) and ``request_snapshot``
+        captures the resolved request parameters for the plan record.
+        """
+        from videowipe.detect import (
+            detect_clean_candidates,
+            infer_regions_from_text,
+            infer_targets_from_text,
+            normalize_target,
+            resolve_detect_params,
+            select_clean_candidates,
+            write_clean_artifacts,
+        )
+
+        target_text = " ".join(targets or [])
+        intent_text = " ".join(part for part in [target_text, intent or ""] if part)
+        requested_regions = list(regions or [])
+        requested_regions.extend(infer_regions_from_text(intent_text))
+        requested_regions = list(dict.fromkeys(requested_regions))
+
+        inferred_targets = infer_targets_from_text(target_text)
+        intent_targets = infer_targets_from_text(intent or "")
+        effective_targets = list(targets or [])
+        effective_targets.extend(inferred_targets)
+        effective_targets = [
+            target for target in dict.fromkeys(effective_targets)
+            if normalize_target(target) != target or target in inferred_targets
+        ]
+        normalized_targets = {normalize_target(target) for target in effective_targets}
+        if requested_regions:
+            effective_targets.append("region")
+            normalized_targets.add("region")
+        mentioned_targets = normalized_targets | set(intent_targets)
+        include_logo = "logo" in mentioned_targets
+        include_translucent = "watermark" in mentioned_targets
+        text_targets = {
+            "subtitle", "timestamp", "watermark",
+            "scene_text", "unknown_text",
+        }
+        detect_text = (
+            bool(mentioned_targets & text_targets)
+            or (not requested_regions and not mentioned_targets)
+            or bool(intent and not mentioned_targets)
+        )
+
+        effective_mode = detect_mode or self._detect_mode
+        has_subtitle_target = "subtitle" in normalized_targets
+        mode_params = resolve_detect_params(
+            effective_mode, has_subtitle_target=has_subtitle_target,
+        )
+
+        effective_ocr = ocr or self._ocr
+        recognizer = self._build_recognizer(effective_ocr)
+
+        result = detect_clean_candidates(
+            video,
+            detector=detector,
+            regions=requested_regions,
+            detect_text=detect_text,
+            include_logo=include_logo,
+            include_translucent_watermark=include_translucent,
+            sample_count=mode_params["sample_count"],
+            consistency=mode_params["consistency"],
+            subtitle_fallback=mode_params["subtitle_fallback"],
+            recognizer=recognizer,
+        )
+        selected = select_clean_candidates(
+            result.candidates,
+            targets=effective_targets,
+            intent=intent,
+        )
+        self._warn_if_timestamp_unresolved(effective_targets, result.candidates)
+        if agent and intent:
+            agent_selected = self._select_candidates_with_agent(
+                agent, result.candidates, intent
+            )
+            if agent_selected is not None:
+                selected = agent_selected
+        write_clean_artifacts(result, selected, output)
+        if confirm:
+            selected = self._confirm_candidates(result.candidates, selected)
+            write_clean_artifacts(result, selected, output)
+
+        request_snapshot = {
+            "intent": intent,
+            "targets": list(effective_targets),
+            "regions": list(requested_regions),
+            "detect_mode": effective_mode,
+            "ocr": effective_ocr,
+        }
+        # The default selection (no user direction) is NOT a genuine explicit
+        # choice — leaving explicit_remove_ids empty lets the safety rule
+        # protect persistent top overlays in the default flow. Only real user
+        # direction (targets/intent/agent/regions) counts as explicit.
+        user_directed = bool(targets or intent or agent or regions)
+        return result, {c.id for c in selected}, request_snapshot, user_directed
+
+    @staticmethod
+    def _resolve_plan_argument(plan, video) -> WipePlan:
+        """Accept a WipePlan object or a path to wipe_plan.json; bind to video."""
+        if isinstance(plan, WipePlan):
+            validate_plan(plan, require_remove=True)
+            actual = compute_source(video)
+            if actual.sha256 != plan.source.sha256:
+                raise InvalidInputError(
+                    "plan source sha256 does not match the video"
+                )
+            if (actual.width, actual.height, actual.frame_count) != (
+                plan.source.width, plan.source.height, plan.source.frame_count,
+            ):
+                raise InvalidInputError(
+                    "plan source width/height/frame_count do not match the video"
+                )
+            return plan
+        return load_wipe_plan(os.fspath(plan), video_path=video)
+
+    def _union_mask_from_plan(self, plan: WipePlan, frame_shape: tuple[int, int]):
+        """Spatial union of the plan's remove tracks, with the task's feather radius."""
+        from types import SimpleNamespace
+
+        from videowipe.detect import mask_from_candidates
+
+        adapters = []
+        for t in plan.remove_tracks:
+            mask_nd = None
+            if t.mask is not None:
+                arr = np.asarray(t.mask)
+                mask_nd = arr[:, :, None] if arr.ndim == 2 else arr
+            adapters.append(SimpleNamespace(mask=mask_nd, bbox=t.bbox))
+        return mask_from_candidates(
+            adapters, frame_shape, feather_radius=self._task_impl.feather_radius,
         )
 
 
