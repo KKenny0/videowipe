@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "set_kind": "calibration_set",
+  "scope_note": "These three local examples calibrate this protocol. They are not a public benchmark or hold-out set, and their source status is not asserted here.",
+  "videos": [
+    {
+      "file": "chinese1.mp4",
+      "objects": [
+        {
+          "id": 1,
+          "type": "subtitle",
+          "action": "remove",
+          "description": "Visible Chinese dialogue subtitle; empty on annotated frames without dialogue."
+        },
+        {
+          "id": 2,
+          "type": "watermark",
+          "action": "keep",
+          "description": "Mango TV logo in the upper-left corner."
+        }
+      ],
+      "frames": [
+        { "frame": 0, "mask": "annotations/chinese1/000000.png" },
+        { "frame": 148, "mask": "annotations/chinese1/000148.png" },
+        { "frame": 296, "mask": "annotations/chinese1/000296.png" },
+        { "frame": 443, "mask": "annotations/chinese1/000443.png" },
+        { "frame": 590, "mask": "annotations/chinese1/000590.png" }
+      ]
+    },
+    {
+      "file": "english1.mp4",
+      "objects": [
+        {
+          "id": 1,
+          "type": "subtitle",
+          "action": "remove",
+          "description": "Visible English dialogue subtitle."
+        }
+      ],
+      "frames": [
+        { "frame": 52, "mask": "annotations/english1/000052.png" },
+        { "frame": 156, "mask": "annotations/english1/000156.png" },
+        { "frame": 261, "mask": "annotations/english1/000261.png" },
+        { "frame": 365, "mask": "annotations/english1/000365.png" },
+        { "frame": 469, "mask": "annotations/english1/000469.png" }
+      ]
+    },
+    {
+      "file": "others.mp4",
+      "objects": [
+        {
+          "id": 1,
+          "type": "subtitle",
+          "action": "remove",
+          "description": "English/Korean lyric subtitle near the lower middle."
+        },
+        {
+          "id": 2,
+          "type": "subtitle",
+          "action": "remove",
+          "description": "Myanmar lyric subtitle below the mixed English/Korean lyric."
+        },
+        {
+          "id": 3,
+          "type": "watermark",
+          "action": "keep",
+          "description": "Upper-left page attribution."
+        },
+        {
+          "id": 4,
+          "type": "watermark",
+          "action": "keep",
+          "description": "Upper-middle translator attribution."
+        },
+        {
+          "id": 5,
+          "type": "logo",
+          "action": "keep",
+          "description": "Upper-right DOM logo."
+        }
+      ],
+      "frames": [
+        { "frame": 51, "mask": "annotations/others/000051.png" },
+        { "frame": 155, "mask": "annotations/others/000155.png" },
+        { "frame": 258, "mask": "annotations/others/000258.png" },
+        { "frame": 361, "mask": "annotations/others/000361.png" },
+        { "frame": 464, "mask": "annotations/others/000464.png" }
+      ]
+    }
+  ]
+}

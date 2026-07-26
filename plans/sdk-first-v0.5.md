@@ -1,4 +1,17 @@
-# VideoWipe SDK-first v0.5 实施计划
+# VideoWipe SDK-first v0.5：实施记录与状态更正
+
+Date: 2026-07-26
+
+> 下方原始 v0.5 实施记录全文保留。它证明的是 SDK 嵌入工程，不是检测或填充质量。当前执行源为 [fact-baseline.md](fact-baseline.md)。
+
+## 状态更正
+
+- v0.5 的 SDK-first 嵌入门槛已完成。
+- A0 的音频、软 alpha、进度和 mask 数学证明不构成“成品感门槛通过”；端到端质量、稳定性、误擦率和用户接受度仍未验证。
+- 当前公开 refs 中没有可直接取回的 Creator Remix 归档分支；原文中的归档/分支措辞仅作为历史记录。
+- 在事实基线完成并重新审阅前，不启动默认模型升级、SAM 2、WipePlan 或大型上层产品。
+
+## 保留的原始 v0.5 实施记录
 
 Date: 2026-07-17
 
@@ -6,7 +19,7 @@ Date: 2026-07-17
 
 VideoWipe 的主线定位是可嵌入生产项目的视频清理引擎：接收视频和清理意图，完成目标检测、mask 生成与视频修复，并通过稳定的 Python 契约交给批处理 Worker、服务或其他上层产品调用。
 
-CLI、Web UI 和 Docker 是 SDK 的适配入口。翻译工作台、时间线、Creator Remix、Codex Workspace、MCP 和发布流程不进入 v0.5 核心范围。此前 M0–M4 保存在 `archive/creator-remix-m0-m4`，不整体 cherry-pick 回主线。
+CLI、Web UI 和 Docker 是 SDK 的适配入口。翻译工作台、时间线、Creator Remix、Codex Workspace、MCP 和发布流程不进入 v0.5 核心范围。历史记录曾称此前 M0–M4 位于某个归档；当前公开 refs 不足以验证或直接取回它。
 
 ## 版本目标
 
@@ -75,7 +88,7 @@ v0.5 的完成标准不是功能数量，而是“能否可靠嵌入”：
 
 ## 回滚
 
-S1 仅改变文档和包元数据。S2 的旧 API 始终保留兼容入口。S3/S4 不引入持久化数据格式，因此任一阶段都可以按独立提交回滚。Creator Remix 分支保持不变。
+S1 仅改变文档和包元数据。S2 的旧 API 始终保留兼容入口。S3/S4 不引入持久化数据格式，因此任一阶段都可以按独立提交回滚。Creator Remix 的历史分支状态不在当前公开 refs 中断言。
 
 ## 最脆弱假设
 

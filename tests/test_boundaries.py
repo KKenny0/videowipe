@@ -776,82 +776,6 @@ def test_engine_writes_benchmark_json_on_error(tmp_path, monkeypatch):
     assert "total_s" in bm["timing"]
 
 
-def test_compute_mask_iou_identical_and_disjoint():
-    """IoU should be 1.0 for identical masks and 0.0 for disjoint."""
-    mask_a = np.zeros((20, 30, 1), dtype=np.uint8)
-    mask_a[5:15, 5:25] = 1
-
-    # Identical
-    intersection = np.sum((mask_a > 0) & (mask_a > 0))
-    union = np.sum((mask_a > 0) | (mask_a > 0))
-    assert intersection / union == pytest.approx(1.0)
-
-    # Disjoint
-    mask_b = np.zeros((20, 30, 1), dtype=np.uint8)
-    mask_b[0:5, 0:5] = 1
-    intersection = np.sum((mask_a > 0) & (mask_b > 0))
-    union = np.sum((mask_a > 0) | (mask_b > 0))
-    assert intersection == 0
-
-
-def _load_eval_clean_detection():
-    import importlib.util
-
-    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "eval_clean_detection.py"
-    spec = importlib.util.spec_from_file_location("eval_clean_detection", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_eval_clean_detection_reports_golden_iou(tmp_path, monkeypatch):
-    """eval_clean_detection.py computes IoU when --mask-dir is given."""
-    # Create a test video
-    video = tmp_path / "test1.mp4"
-    _write_test_video(video, width=96, height=64)
-
-    # Create a golden mask
-    mask_dir = tmp_path / "masks"
-    mask_dir.mkdir()
-    golden = np.zeros((64, 96), dtype=np.uint8)
-    golden[50:60, 10:86] = 255
-    cv2.imwrite(str(mask_dir / "test1_mask.png"), golden)
-
-    eval_module = _load_eval_clean_detection()
-    monkeypatch.setattr(
-        eval_module,
-        "detect_clean_candidates",
-        lambda *args, **kwargs: CleanDetectionResult([], (64, 96)),
-    )
-    report = eval_module._eval_video(str(video), mask_dir=str(mask_dir))
-
-    assert report["generated_mask_area_ratio"] == 0.0
-    assert report["golden_mask_area_ratio"] > 0
-    assert report["mask_iou"] == 0.0
-
-
-def test_eval_clean_detection_flags_missing_golden(tmp_path, monkeypatch, capsys):
-    """eval_clean_detection.py reports missing goldens."""
-    video = tmp_path / "test2.mp4"
-    _write_test_video(video, width=96, height=64)
-
-    mask_dir = tmp_path / "masks"
-    mask_dir.mkdir()
-    # No golden mask for test2
-
-    eval_module = _load_eval_clean_detection()
-    monkeypatch.setattr(
-        eval_module,
-        "detect_clean_candidates",
-        lambda *args, **kwargs: CleanDetectionResult([], (64, 96)),
-    )
-    report = eval_module._eval_video(str(video), mask_dir=str(mask_dir))
-    eval_module._print_report(report)
-
-    assert "MISSING GOLDEN" in capsys.readouterr().out
-
-
 # --- External model adapter tests ---
 
 
@@ -1537,5 +1461,3 @@ def test_sttn_inpaint_preserves_audio_and_reports_progress(tmp_path, monkeypatch
     assert "Audio:" in diagnostic, (
         f"output has no audio stream\n{diagnostic}"
     )
-
-

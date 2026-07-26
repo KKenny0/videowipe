@@ -9,7 +9,7 @@ description = "Video inpainting library for removing subtitles, watermarks, and 
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
-    "opencv-python-headless>=4.5",
+    "opencv-python-headless>=4.5,<5",
     "numpy",
     "tqdm",
 ]
