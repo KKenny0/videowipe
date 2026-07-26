@@ -31,6 +31,7 @@ class DetextTask(BaseTask):
             metrics=metrics,
             mask_path=getattr(self, "mask_path", None),
             feather_radius=getattr(self, "feather_radius", 0),
+            frame_mask=getattr(self, "frame_mask", None),
         )
         outcome = self.inpainter.inpaint(job)
         self.backend_label = outcome.backend

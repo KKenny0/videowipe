@@ -239,6 +239,12 @@ class STTNInpainter:
                     for j in range(len(frames_hr)):
                         frame_ori = frames_hr[j].copy()
                         frame = frames_hr[j].astype(np.float32)
+                        # Per-frame temporal mask (global index start_f + j) when a
+                        # WipePlan supplies one; else the static whole-video mask.
+                        if job.frame_mask is not None:
+                            per_frame = np.asarray(job.frame_mask(start_f + j))
+                            if per_frame.ndim == 2:
+                                per_frame = per_frame[:, :, None]
                         for k in range(len(mode)):
                             if comps.get(k) and j < len(comps[k]):
                                 comp = cv2.resize(comps[k][j], (ori_w, split_h))
@@ -247,7 +253,10 @@ class STTNInpainter:
                                 ).astype(np.float32)
                                 # Soft alpha blend: mask is float32 in [0,1]
                                 # when feather_radius > 0, else uint8 in {0,1}.
-                                mask_area = job.mask[mode[k][0]:mode[k][1], :].astype(np.float32)
+                                if job.frame_mask is not None:
+                                    mask_area = per_frame[mode[k][0]:mode[k][1], :].astype(np.float32)
+                                else:
+                                    mask_area = job.mask[mode[k][0]:mode[k][1], :].astype(np.float32)
                                 blended = (
                                     mask_area * comp
                                     + (1.0 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]

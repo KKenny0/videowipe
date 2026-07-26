@@ -1461,3 +1461,158 @@ def test_sttn_inpaint_preserves_audio_and_reports_progress(tmp_path, monkeypatch
     assert "Audio:" in diagnostic, (
         f"output has no audio stream\n{diagnostic}"
     )
+
+
+# ── WipePlan Phase A / C4: temporal STTN execution ───────────────────────────
+
+def test_build_frame_mask_unions_active_remove_tracks_only():
+    """_build_frame_mask returns the spatial union of tracks active at idx."""
+    from types import SimpleNamespace
+
+    from videowipe.plan import Segment, Source, Track, WipePlan
+
+    H, W = 64, 96
+    band_a = np.zeros((H, W), dtype=np.uint8)
+    band_a[50:60, 10:50] = 1
+    band_b = np.zeros((H, W), dtype=np.uint8)
+    band_b[50:60, 46:86] = 1
+
+    plan = WipePlan(
+        kind="wipe_plan", schema_version=1,
+        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
+        request={}, temporal_resolution=SimpleNamespace(max_gap_frames=15, max_gap_seconds=3.75, max_boundary_error_frames=7),
+        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
+        tracks=[
+            Track(id="c1", type="subtitle", label="a", action="remove",
+                  bbox=(10, 50, 50, 60), confidence=0.9, presence_fraction=0.3,
+                  decision_reason="x", segments=[Segment(10, 30)], mask_key="c1", mask=band_a),
+            Track(id="c2", type="subtitle", label="b", action="remove",
+                  bbox=(46, 50, 86, 60), confidence=0.9, presence_fraction=0.3,
+                  decision_reason="x", segments=[Segment(20, 40)], mask_key="c2", mask=band_b),
+        ],
+    )
+    fm = WipeEngine._build_frame_mask(plan)
+
+    # inactive everywhere before 10
+    assert fm(0).sum() == 0
+    # [10,20): only a active
+    assert fm(15)[55, 30] == 1 and fm(15)[55, 60] == 0
+    # [20,30): a and b active (union)
+    assert fm(25)[55, 30] == 1 and fm(25)[55, 60] == 1
+    # [30,40): only b active
+    assert fm(35)[55, 30] == 0 and fm(35)[55, 60] == 1
+    # >=40: inactive
+    assert fm(45).sum() == 0
+
+
+@pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")
+def test_sttn_frame_mask_blends_only_active_frames_across_segments(tmp_path, monkeypatch):
+    """A temporal frame_mask active on [10,30) blends exactly those frames,
+    including across gap-bounded segments (no start_f+j off-by-one).
+
+    FakeBackend returns zero composites, so active frames become black in the
+    masked band while inactive frames pass through unchanged.
+    """
+    from videowipe.inpainters.sttn import STTNInpainter
+
+    H, W, N = 64, 96, 60
+    band = (slice(50, 60), slice(10, 86))
+    video = tmp_path / "input.mp4"
+    _write_test_video(
+        video, width=W, height=H, frames=N,
+        draw=lambda frame, i: frame.__setitem__(band, 200),
+    )
+
+    class _ZeroBackend:
+        __name__ = "FakeBackend"
+
+        def preprocess(self, frames):
+            from videowipe.backends import InpaintBackend
+            return InpaintBackend.preprocess(self, frames)
+
+        def encode(self, tensor):
+            return np.zeros((tensor.shape[0], 1, 1, 1), dtype=np.float32)
+
+        def transform(self, feats):
+            return feats
+
+        def decode(self, feats):
+            return np.zeros((feats.shape[0], 120, 640, 3), dtype=np.uint8)
+
+        def cleanup(self):
+            pass
+
+    inpainter = STTNInpainter()
+    inpainter.backend = _ZeroBackend()
+
+    def frame_mask(global_idx):
+        m = np.zeros((H, W), dtype=np.uint8)
+        if 10 <= global_idx < 30:
+            m[50:60, 10:86] = 1
+        return m
+
+    static = np.zeros((H, W, 1), dtype=np.uint8)
+    static[50:60, 10:86, 0] = 1  # lets get_inpaint_mode find the band
+
+    reader = cv2.VideoCapture(str(video))
+    try:
+        job = InpaintJob(
+            video_path=str(video), mask=static, output_dir=str(tmp_path),
+            fps=4.0, frame_count=N, width=W, height=H,
+            reader=reader, gap=15, feather_radius=0, frame_mask=frame_mask,
+        )
+        outcome = inpainter.inpaint(job)
+    finally:
+        reader.release()
+        inpainter.cleanup()
+
+    cap = cv2.VideoCapture(outcome.output_path)
+    band_value = {}
+    idx = 0
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        band_value[idx] = int(f[55, 48].mean())
+        idx += 1
+    cap.release()
+    assert idx == N, f"expected {N} output frames, read {idx}"
+
+    # inactive frames keep the original band (200); active frames blend to black
+    for i in (0, 9, 30, 45, 59):
+        assert band_value[i] > 100, f"inactive frame {i} should be unchanged, got {band_value[i]}"
+    # active frames incl. the segment boundary at 15 and the active tail at 29
+    for i in (10, 15, 24, 29):
+        assert band_value[i] < 100, f"active frame {i} should be blended black, got {band_value[i]}"
+
+
+def test_file_based_backend_rejects_temporal_plan(tmp_path):
+    """A temporal WipePlan cannot be flattened to a static PNG for file backends."""
+    from types import SimpleNamespace
+
+    from videowipe.plan import build_wipe_plan, compute_source
+
+    video = tmp_path / "input.mp4"
+    _write_test_video(video, width=96, height=64, frames=30)
+    src = compute_source(str(video))
+    H, W = src.height, src.width
+    band = np.zeros((H, W), dtype=np.uint8)
+    band[50:60, 10:86] = 1
+    cand = SimpleNamespace(
+        id="c1", type="subtitle", label="sub", bbox=(10, 50, 86, 60),
+        confidence=0.9, default_remove=True, mask=band, presence_frames=[0, 10],
+    )
+    plan = build_wipe_plan(
+        [cand], sample_indices=[0, 10, 20], n_valid=3, source=src, frame_shape=(H, W),
+    )
+    from videowipe.plan import is_temporal
+    assert is_temporal(plan)
+
+    engine = WipeEngine(task="clean", external_command="echo")
+    try:
+        with pytest.raises(videowipe.InvalidInputError, match="temporal WipePlan"):
+            engine.process(
+                video=str(video), output=str(tmp_path / "out"), plan=plan,
+            )
+    finally:
+        engine.cleanup()

@@ -43,6 +43,11 @@ class InpaintJob:
         feather_radius: Gaussian alpha radius applied to bbox-only mask
             candidates so the inpainting blend produces a soft seam. ``0``
             keeps the legacy hard binary mask (used by the eval IoU path).
+        frame_mask: optional ``callable(global_frame_index) -> (H, W) mask``.
+            When set, the frame-based inpainter blends each frame with this
+            per-frame mask instead of the static ``mask`` ndarray, so a
+            temporal WipePlan can close subtitle gaps and spare inactive
+            regions. ``None`` keeps the legacy whole-video static mask.
     """
 
     video_path: str
@@ -61,6 +66,7 @@ class InpaintJob:
     metrics: dict = field(default_factory=dict)
     mask_path: Optional[str] = None
     feather_radius: int = 0
+    frame_mask: Optional[Callable[[int], np.ndarray]] = None
 
 
 @dataclass

@@ -39,6 +39,7 @@ from videowipe.plan import (
     WipePlan,
     build_wipe_plan,
     compute_source,
+    is_temporal,
     load_wipe_plan,
     save_wipe_plan,
     validate_plan,
@@ -428,6 +429,8 @@ class WipeEngine:
         if plan is not None and self.task != "clean":
             raise InvalidInputError("plan is only supported for the clean task")
         self._last_warnings = []
+        self._active_plan: Optional[WipePlan] = None
+        self._task_impl.frame_mask = None
         os.makedirs(output, exist_ok=True)
         bm: dict = {"video_path": video, "timing": {}}
         bm["mask_source"] = "manual" if mask is not None else "auto"
@@ -444,6 +447,11 @@ class WipeEngine:
                     detect_mode, ocr, output, confirm,
                 )
                 self._last_warnings = list(wipe_plan.warnings)
+                self._active_plan = wipe_plan
+                # Temporal plans drive STTN per-frame via frame_mask; static
+                # (full-video) plans reuse the fast whole-video mask path.
+                if is_temporal(wipe_plan):
+                    self._task_impl.frame_mask = self._build_frame_mask(wipe_plan)
                 det_frame_shape = (wipe_plan.source.height, wipe_plan.source.width)
                 mask_arr = self._union_mask_from_plan(wipe_plan, det_frame_shape)
                 cv2.imwrite(
@@ -480,6 +488,11 @@ class WipeEngine:
         file_inpainter = self._resolve_file_inpainter()
         if file_inpainter is not None:
             self._check_cancelled()
+            if self._active_plan is not None and is_temporal(self._active_plan):
+                raise InvalidInputError(
+                    "temporal WipePlan (per-frame segments) is not supported by "
+                    "file-based backends; a static mask cannot honor time ranges"
+                )
             bm["model_type"] = file_inpainter.name
             if self._external_command:
                 bm["external_command"] = self._external_command
@@ -859,6 +872,37 @@ class WipeEngine:
         return mask_from_candidates(
             adapters, frame_shape, feather_radius=self._task_impl.feather_radius,
         )
+
+    @staticmethod
+    def _build_frame_mask(plan: WipePlan):
+        """Build a ``frame_mask(global_idx) -> (H, W) uint8`` callable for STTN.
+
+        The returned mask is the spatial union of every remove track whose
+        segments contain *global_idx*. Computed on demand (no per-frame
+        caching) so memory stays bounded on long videos; cost is O(#remove
+        tracks) small ``np.maximum`` ops per frame. Returns ``None`` when
+        there are no remove tracks (caller should not install a frame mask).
+        """
+        remove_tracks = plan.remove_tracks
+        if not remove_tracks:
+            return None
+        height, width = plan.source.height, plan.source.width
+        prepared = []
+        for t in remove_tracks:
+            arr = None if t.mask is None else np.asarray(t.mask)
+            if arr is not None and arr.ndim == 3:
+                arr = arr[:, :, 0]
+            prepared.append((arr, [(s.start, s.end) for s in t.segments]))
+
+        def frame_mask(global_idx: int) -> np.ndarray:
+            mask = np.zeros((height, width), dtype=np.uint8)
+            for arr, segments in prepared:
+                if any(start <= global_idx < end for start, end in segments):
+                    if arr is not None:
+                        np.maximum(mask, arr, out=mask)
+            return mask
+
+        return frame_mask
 
 
 def remove_text(
