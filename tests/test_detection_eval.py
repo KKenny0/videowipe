@@ -495,3 +495,61 @@ def test_legacy_golden_is_reported_as_calibration_metric(tmp_path):
         "golden_area_ratio": pytest.approx(12 / 96),
         "iou": 1.0,
     }
+
+
+# ── WipePlan Phase A / C2: temporal presence capture ─────────────────────────
+
+def _write_presence_video(path, frames=12, width=64, height=64):
+    """Subtitle band white on even frames, black on odd frames."""
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 4, (width, height))
+    for i in range(frames):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        if i % 2 == 0:
+            frame[50:60, :] = 255  # subtitle band
+        writer.write(frame)
+    writer.release()
+
+
+def test_detect_captures_per_frame_presence_and_sample_indices(tmp_path):
+    from videowipe.detect import TextBox, detect_clean_candidates
+
+    video = tmp_path / "input.mp4"
+    _write_presence_video(video, frames=12)
+
+    class FakeDetector:
+        def detect(self, frame):
+            # subtitle box present only when the band is white on this frame
+            if frame[55, 32].max() > 0:
+                return [TextBox(
+                    points=np.array([[8, 50], [56, 50], [56, 60], [8, 60]]),
+                    confidence=0.9,
+                    text="subtitle",
+                )]
+            return []
+
+    result = detect_clean_candidates(str(video), detector=FakeDetector(), sample_count=12)
+
+    # sample_indices carries real frame indices of successful samples
+    assert result.sample_indices, "expected sampled frames"
+    assert all(isinstance(i, int) for i in result.sample_indices)
+
+    subtitle = [c for c in result.candidates if c.type == "subtitle"]
+    assert subtitle, "expected a subtitle candidate"
+    sub = subtitle[0]
+
+    # presence_frames is the subset of sample_indices where the subtitle band was active (even frames)
+    expected = {idx for idx in result.sample_indices if idx % 2 == 0}
+    assert set(sub.presence_frames) == expected
+    assert sub.presence_frames != result.sample_indices  # genuinely temporal, not full-video
+
+
+def test_candidate_to_dict_exposes_presence_frames():
+    from videowipe.detect import CleanCandidate
+
+    c = CleanCandidate(
+        id="c1", type="subtitle", label="sub", bbox=(0, 0, 9, 9),
+        confidence=0.9, frame_fraction=0.5, reason="x", default_remove=True,
+        presence_frames=[3, 7, 11],
+    )
+    d = c.to_dict()
+    assert d["presence_frames"] == [3, 7, 11]

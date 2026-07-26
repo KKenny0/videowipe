@@ -81,6 +81,7 @@ class CleanCandidate:
     reason: str
     default_remove: bool
     text_samples: list[str] = field(default_factory=list)
+    presence_frames: list[int] = field(default_factory=list)
     mask: np.ndarray | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
@@ -95,6 +96,7 @@ class CleanCandidate:
             "reason": self.reason,
             "default_remove": self.default_remove,
             "text_samples": self.text_samples[:5],
+            "presence_frames": list(self.presence_frames),
         }
 
 
@@ -104,6 +106,7 @@ class CleanDetectionResult:
 
     candidates: list[CleanCandidate]
     frame_shape: tuple[int, int]
+    sample_indices: list[int] = field(default_factory=list)
     preview_frame: np.ndarray | None = field(default=None, repr=False)
 
 
@@ -341,8 +344,15 @@ class DBNetDetector:
 
 # ── Mask generation pipeline ─────────────────────────────────────────────────
 
-def _sample_frames(video_path: str, count: int = 30) -> List[np.ndarray]:
-    """Uniformly sample *count* frames from a video."""
+def _sample_frames_with_indices(
+    video_path: str, count: int = 30
+) -> list[tuple[int, np.ndarray]]:
+    """Uniformly sample *count* frames, returning ``(frame_index, frame)`` pairs.
+
+    The frame indices are the real positions in the source video, preserved so
+    callers can derive temporal evidence (which frames a candidate was present
+    on). Only successfully read frames are returned, in ascending index order.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
@@ -355,14 +365,19 @@ def _sample_frames(video_path: str, count: int = 30) -> List[np.ndarray]:
     count = min(count, total)
     indices = sorted(set(np.linspace(0, total - 1, count, dtype=int)))
 
-    frames: list[np.ndarray] = []
+    indexed: list[tuple[int, np.ndarray]] = []
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, frame = cap.read()
         if ok:
-            frames.append(frame)
+            indexed.append((int(idx), frame))
     cap.release()
-    return frames
+    return indexed
+
+
+def _sample_frames(video_path: str, count: int = 30) -> List[np.ndarray]:
+    """Uniformly sample *count* frames from a video (drops frame indices)."""
+    return [frame for _, frame in _sample_frames_with_indices(video_path, count)]
 
 
 def detect_subtitle_mask(
@@ -1039,13 +1054,16 @@ def detect_clean_candidates(
     if detect_text and detector is None:
         detector = _default_detector()
 
-    frames = _sample_frames(video_path, sample_count)
-    if not frames:
+    indexed = _sample_frames_with_indices(video_path, sample_count)
+    if not indexed:
         raise ValueError(f"No frames could be read from: {video_path}")
 
+    all_sample_indices = [idx for idx, _ in indexed]
+    frames = [frame for _, frame in indexed]
     h, w = frames[0].shape[:2]
     candidates: list[CleanCandidate] = []
     n_valid = 0
+    valid_sample_indices: list[int] = []
 
     if detect_text and detector is not None:
         freq = np.zeros((h, w), dtype=np.float32)
@@ -1061,6 +1079,7 @@ def detect_clean_candidates(
                 continue
             n_valid += 1
             all_frame_boxes.append(boxes)
+            valid_sample_indices.append(all_sample_indices[i])
             frame_mask = np.zeros((h, w), dtype=np.uint8)
             for box in boxes:
                 cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
@@ -1096,16 +1115,21 @@ def detect_clean_candidates(
         for label_id, x1, y1, x2, y2 in raw_regions:
             text_samples: list[str] = []
             ocr_crops: list[np.ndarray] = []
-            for boxes in all_frame_boxes:
+            presence_frames: list[int] = []
+            for sample_pos, boxes in enumerate(all_frame_boxes):
+                overlapped = False
                 for box in boxes:
                     bx1, by1, bx2, by2 = _bbox(box.points, w, h)
                     if bx1 <= x2 and bx2 >= x1 and by1 <= y2 and by2 >= y1:
+                        overlapped = True
                         if box.text:
                             text_samples.append(box.text)
                         elif recognizer is not None:
                             crop = frames[0][by1:by2 + 1, bx1:bx2 + 1]
                             if crop.size > 0:
                                 ocr_crops.append(crop)
+                if overlapped:
+                    presence_frames.append(valid_sample_indices[sample_pos])
 
             if not text_samples and ocr_crops and recognizer is not None:
                 for crop in ocr_crops[:3]:
@@ -1141,6 +1165,7 @@ def detect_clean_candidates(
                     reason=reason,
                     default_remove=default_remove,
                     text_samples=sorted(set(text_samples))[:5],
+                    presence_frames=presence_frames,
                     mask=full_mask,
                 )
             )
@@ -1173,6 +1198,7 @@ def detect_clean_candidates(
     return CleanDetectionResult(
         candidates=candidates,
         frame_shape=(h, w),
+        sample_indices=valid_sample_indices,
         preview_frame=frames[best_preview_idx].copy() if detect_text and detector is not None else frames[0].copy(),
     )
 
