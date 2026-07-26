@@ -119,7 +119,9 @@ def test_fact_baseline_separates_remove_keep_and_writes_schema(tmp_path):
     assert frame["keep_prediction_coverage"] == pytest.approx(0.0)
     assert frame["visible_annotation_matches"][0]["classifier_semantic_match"] is True
     saved = json.loads((tmp_path / "report.json").read_text())
-    assert saved["schema_version"] == 1
+    # schema v2: predictions are per-frame (built from a WipePlan), not a
+    # replayed static mask.
+    assert saved["schema_version"] == 2
     assert set(saved["macro_average"]) == {
         "frame_remove_union_region_jaccard",
         "frame_remove_union_boundary_f",

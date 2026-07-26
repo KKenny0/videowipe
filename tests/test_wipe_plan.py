@@ -370,3 +370,28 @@ def test_full_video_plan_is_not_temporal():
     region = _candidate(cid="r1", bbox=(0, 0, 99, 10), default_remove=True, presence_frames=[])
     plan = build_wipe_plan([region], [0, 20, 40, 59], 4, _source(60), (100, 100))
     assert not is_temporal(plan)
+
+
+# ── per-frame prediction helpers (C5) ────────────────────────────────────────
+
+def test_predicted_mask_at_respects_segments():
+    from videowipe.plan import predicted_mask_at
+
+    # a genuinely segmented remove track (present on samples 0 and 20 only)
+    cand = _candidate(cid="c1", bbox=(10, 80, 90, 95), presence_frames=[0, 20])
+    p = build_wipe_plan([cand], [0, 20, 40, 59], 4, _source(60), (100, 100))
+    # active around the [0,20] sample region, inactive near frame 50
+    assert predicted_mask_at(p, 10).any()
+    assert not predicted_mask_at(p, 50).any()
+
+
+def test_remove_union_mask_is_time_independent():
+    from videowipe.plan import remove_union_mask
+
+    cand = _candidate(cid="c1", bbox=(10, 80, 90, 95), presence_frames=[0, 20])
+    p = build_wipe_plan([cand], [0, 20, 40, 59], 4, _source(60), (100, 100))
+    union = remove_union_mask(p)
+    assert union.shape == (100, 100)
+    assert union.dtype == bool
+    # the union covers the candidate's spatial mask regardless of frame
+    assert union[85, 50]

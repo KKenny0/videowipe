@@ -68,6 +68,43 @@ make fact-baseline
 
 此轮只形成当前三条样例的失败快照。它不证明修复输出质量、时序稳定性、真实误擦率或用户接受度；是否扩充到 20–30 条有合法来源的用户素材，需在此后单独决定。
 
+## Schema v2 运行事实（temporal WipePlan，2026-07-26）
+
+WipePlan Phase A 上线后，预测语义从“一段视频一张静态 mask”变为“逐帧 temporal 预测”：评估器对每个标注帧用 `predicted_mask_at(plan, frame)` 取该帧的 remove 预测，而非重放静态 union。检测事实报告因此正式升级为 **schema v2**（WipePlan 自身仍是 schema v1）。运行条件与 v1 一致：`balanced` / OCR off、Python 3.10.14、OpenCV 4.13.0、`dbnet_default`，`make fact-baseline-formal` 在 clean tracked worktree 上复现。
+
+v2 宏平均（括号为 v1 对照）：
+
+| 指标 | v2 | v1 | 变化 |
+|---|---:|---:|---|
+| 有 remove 帧的 union Jaccard | **0.239025** | 0.170858 | +0.068 |
+| 有 remove 帧的 union Boundary F | **0.536385** | 0.423151 | +0.113 |
+| 可见 remove 对象局部 Jaccard | 0.236862 | 0.236862 | 持平 |
+| 可见 remove 对象局部 Boundary F | 0.518778 | 0.518778 | 持平 |
+| 可见 keep 对象预测覆盖 | **0.000000** | 0.936564 | −0.937 |
+| 无 remove 帧误擦面积（均值） | **0.031723** | 0.066089 | −0.034 |
+| 分类语义匹配率 | 0.500000 | 0.500000 | 持平 |
+| 选择意图匹配率 | **1.000000** | 0.500000 | +0.500 |
+
+两条最主要的失败被修复：keep 对象预测覆盖从 0.937 降到 **0**（顶部 Mango 台标、署名、DOM logo 不再被当字幕误删——安全默认规则生效），选择意图匹配率从 0.5 升到 **1.0**。union Jaccard/F 同步上升。
+
+Phase A 门槛对照（`make fact-baseline-formal`）：
+
+| 门槛 | 阈值 | v2 | 结果 |
+|---|---:|---:|---|
+| remove union Jaccard | ≥ 0.160 | 0.239 | 通过 |
+| remove union Boundary F | ≥ 0.410 | 0.536 | 通过 |
+| keep 对象预测覆盖 | ≤ 0.100 | 0.000 | 通过 |
+| 无 remove 帧平均误擦面积 | ≤ 0.020 | 0.0317 | **未达** |
+| 任一无 remove 帧误擦面积 | ≤ 0.030 | 0.0634 | **未达** |
+| 选择意图匹配率 | ≥ 0.900 | 1.000 | 通过 |
+| 分类语义匹配率 | ≥ 0.500 | 0.500 | 通过 |
+
+七项中五项通过，两项误擦门槛未达，且都源自同一帧：`others.mp4` 第 361 帧。该帧是真实的窄字幕空窗（雨伞场景，无歌词），但歌词候选在 49/50 采样帧上命中、presence 0.98，第 357 与 367 号采样帧均命中，361 落在两者之间。`balanced` 的采样间隔约 11 帧，无法分辨窄于一个采样间隔的空窗——这正是 WipePlan v1 文档声明接受的时序精度限制（见 `temporal_resolution.max_boundary_error_frames`），其修复需要 v2 的逐帧 mask propagation（SAM 2 等），已明确延后。
+
+两个固定无 remove 目标帧的误擦现为：chinese1 第 296 帧 **0.0**（静态时空窗误擦被 temporal 段关闭），others 第 361 帧 **0.063446**（上述亚采样空窗）。相比 v1 的 3.19% / 10.03%，temporal 执行把其中一个空窗完全关闭。
+
+旧静态 Golden IoU 仍只作 `legacy_calibration_metric`，不构成质量结论。
+
 ## 回滚与后续决策
 
 没有数据迁移：文档、manifest、评估器和标注可按阶段独立撤销；`result/` 生成物可安全清理。若这三条样例过于相似，schema 与评估器仍有效，但结论必须停留在“当前三条样例”。扩大到 20–30 条合法用户素材是在本阶段完成后才作出的独立决定。

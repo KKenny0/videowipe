@@ -31,8 +31,14 @@ from videowipe.detect import (
     resolve_detect_params,
     select_clean_candidates,
 )
+from videowipe.plan import (
+    build_wipe_plan,
+    compute_source,
+    predicted_mask_at,
+    remove_union_mask,
+)
 
-FACT_BASELINE_REPORT_SCHEMA_VERSION = 1
+FACT_BASELINE_REPORT_SCHEMA_VERSION = 2
 FACT_BASELINE_MANIFEST_SCHEMA_VERSION = 1
 
 
@@ -769,10 +775,24 @@ def evaluate_fact_baseline(
     for video_spec in manifest["videos"]:
         video_name = video_spec["file"]
         video_path = _resolve_within(input_root, video_name, "Manifest video")
-        result, selected, generated, execution_path = _detect_video(
+        result, _default_selected, _static, execution_path = _detect_video(
             str(video_path), detect_mode, ocr_mode
         )
         shape = tuple(result.frame_shape)
+        # Build a WipePlan (default flow, no user direction) so the fact
+        # baseline reflects the safety rule + temporal segments — the same
+        # decision the engine makes on a default clean run. Per-frame metrics
+        # use the plan's temporal prediction rather than one static mask.
+        plan = build_wipe_plan(
+            result.candidates,
+            sample_indices=result.sample_indices,
+            n_valid=len(result.sample_indices),
+            source=compute_source(str(video_path)),
+            frame_shape=shape,
+            explicit_remove_ids=set(),
+        )
+        selected = [c for c in result.candidates if c.id in {t.id for t in plan.remove_tracks}]
+        generated = remove_union_mask(plan)
         if generated.shape != shape:
             raise ValueError(f"Generated mask shape mismatch for {video_path}: {generated.shape} vs {shape}")
         objects = {obj["id"]: obj for obj in video_spec["objects"]}
@@ -789,10 +809,13 @@ def evaluate_fact_baseline(
             remove = np.isin(indexed, [key for key, value in objects.items() if value["action"] == "remove"])
             keep = np.isin(indexed, [key for key, value in objects.items() if value["action"] == "keep"])
             has_remove = bool(remove.any())
-            jaccard = _compute_mask_iou(generated, remove) if has_remove else None
-            boundary_f = compute_boundary_f(generated, remove) if has_remove else None
-            frame_keep_injury = float((generated & keep).sum()) / float(keep.sum()) if keep.any() else None
-            false_removal = float(generated.sum()) / float(generated.size) if not has_remove else None
+            # Per-frame temporal prediction from the plan (vs. the old replayed
+            # static mask). This is what closes subtitle-gap false erasures.
+            prediction = predicted_mask_at(plan, frame_index)
+            jaccard = _compute_mask_iou(prediction, remove) if has_remove else None
+            boundary_f = compute_boundary_f(prediction, remove) if has_remove else None
+            frame_keep_injury = float((prediction & keep).sum()) / float(keep.sum()) if keep.any() else None
+            false_removal = float(prediction.sum()) / float(prediction.size) if not has_remove else None
             matches = _visible_annotation_matches(
                 indexed, objects, candidate_masks, selected_ids
             )
@@ -817,7 +840,7 @@ def evaluate_fact_baseline(
                 frame_index,
                 fixed_frames[frame_index],
                 indexed,
-                generated,
+                prediction,
                 objects,
             )
             frame_reports.append(

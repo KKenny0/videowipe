@@ -45,6 +45,8 @@ from videowipe.plan import (
     compute_source,
     is_temporal,
     load_wipe_plan,
+    predicted_mask_at,
+    remove_union_mask,
     save_wipe_plan,
     validate_plan,
 )

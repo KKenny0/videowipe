@@ -662,3 +662,34 @@ def is_temporal(plan: WipePlan) -> bool:
         if not (len(t.segments) == 1 and t.segments[0] == Segment(0, frame_count)):
             return True
     return False
+
+
+def predicted_mask_at(plan: WipePlan, frame_index: int) -> np.ndarray:
+    """Boolean ``(H, W)`` remove-prediction mask at *frame_index*.
+
+    Union of every remove track whose segments contain *frame_index*. This is
+    the per-frame prediction a temporal plan makes; the fact-baseline evaluator
+    uses it instead of replaying one static mask on every annotated frame.
+    """
+    height, width = plan.source.height, plan.source.width
+    mask = np.zeros((height, width), dtype=bool)
+    for t in plan.remove_tracks:
+        if any(s.start <= frame_index < s.end for s in t.segments) and t.mask is not None:
+            arr = np.asarray(t.mask)
+            if arr.ndim == 3:
+                arr = arr[:, :, 0]
+            mask |= arr.astype(bool)
+    return mask
+
+
+def remove_union_mask(plan: WipePlan) -> np.ndarray:
+    """Boolean ``(H, W)`` spatial union of all remove tracks (time-independent)."""
+    height, width = plan.source.height, plan.source.width
+    mask = np.zeros((height, width), dtype=bool)
+    for t in plan.remove_tracks:
+        if t.mask is not None:
+            arr = np.asarray(t.mask)
+            if arr.ndim == 3:
+                arr = arr[:, :, 0]
+            mask |= arr.astype(bool)
+    return mask
