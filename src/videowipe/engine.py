@@ -451,7 +451,9 @@ class WipeEngine:
                 # Temporal plans drive STTN per-frame via frame_mask; static
                 # (full-video) plans reuse the fast whole-video mask path.
                 if is_temporal(wipe_plan):
-                    self._task_impl.frame_mask = self._build_frame_mask(wipe_plan)
+                    self._task_impl.frame_mask = self._build_frame_mask(
+                        wipe_plan, self._task_impl.feather_radius
+                    )
                 det_frame_shape = (wipe_plan.source.height, wipe_plan.source.width)
                 mask_arr = self._union_mask_from_plan(wipe_plan, det_frame_shape)
                 cv2.imwrite(
@@ -874,14 +876,16 @@ class WipeEngine:
         )
 
     @staticmethod
-    def _build_frame_mask(plan: WipePlan):
-        """Build a ``frame_mask(global_idx) -> (H, W) uint8`` callable for STTN.
+    def _build_frame_mask(plan: WipePlan, feather_radius: int = 0):
+        """Build a ``frame_mask(global_idx) -> (H, W)`` callable for STTN.
 
         The returned mask is the spatial union of every remove track whose
-        segments contain *global_idx*. Computed on demand (no per-frame
-        caching) so memory stays bounded on long videos; cost is O(#remove
-        tracks) small ``np.maximum`` ops per frame. Returns ``None`` when
-        there are no remove tracks (caller should not install a frame mask).
+        segments contain *global_idx*. When *feather_radius* > 0 it is
+        Gaussian-feathered to match the static ``mask_from_candidates`` path
+        (so temporal plans do not regress to hard rectangle seams); the
+        interior (>=1) is pinned back to full opacity. Computed on demand so
+        memory stays bounded; cost is O(#remove tracks) plus one blur per
+        active frame. Returns ``None`` when there are no remove tracks.
         """
         remove_tracks = plan.remove_tracks
         if not remove_tracks:
@@ -894,12 +898,19 @@ class WipeEngine:
                 arr = arr[:, :, 0]
             prepared.append((arr, [(s.start, s.end) for s in t.segments]))
 
+        kernel = max(3, feather_radius * 2 + 1) if feather_radius > 0 else None
+        sigma = feather_radius / 2.0
+
         def frame_mask(global_idx: int) -> np.ndarray:
             mask = np.zeros((height, width), dtype=np.uint8)
             for arr, segments in prepared:
-                if any(start <= global_idx < end for start, end in segments):
-                    if arr is not None:
-                        np.maximum(mask, arr, out=mask)
+                if any(start <= global_idx < end for start, end in segments) and arr is not None:
+                    np.maximum(mask, arr, out=mask)
+            if kernel is not None and mask.any():
+                flat = mask.astype(np.float32)
+                blurred = cv2.GaussianBlur(flat, (kernel, kernel), sigma)
+                flat = np.where(flat >= 1.0, 1.0, blurred)
+                return np.clip(flat, 0.0, 1.0)
             return mask
 
         return frame_mask

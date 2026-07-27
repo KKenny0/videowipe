@@ -1616,3 +1616,38 @@ def test_file_based_backend_rejects_temporal_plan(tmp_path):
             )
     finally:
         engine.cleanup()
+
+
+def test_build_frame_mask_feathers_temporal_path_to_match_static():
+    """feather_radius>0 yields a soft float mask; ==0 yields hard uint8 (F3 guard).
+
+    The temporal frame_mask must feather like the static mask_from_candidates
+    path, otherwise temporal plans regress to hard rectangle seams.
+    """
+    from types import SimpleNamespace
+
+    from videowipe.plan import Segment, Source, Track, WipePlan
+
+    H, W = 64, 96
+    band = np.zeros((H, W), dtype=np.uint8)
+    band[20:40, 20:40] = 1  # square region with a hard edge
+    plan = WipePlan(
+        kind="wipe_plan", schema_version=1,
+        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
+        request={},
+        temporal_resolution=SimpleNamespace(max_gap_frames=15, max_gap_seconds=3.75, max_boundary_error_frames=7),
+        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
+        tracks=[Track(id="c1", type="subtitle", label="a", action="remove",
+                      bbox=(20, 20, 40, 40), confidence=0.9, presence_fraction=1.0,
+                      decision_reason="x", segments=[Segment(0, 60)], mask_key="c1", mask=band)],
+    )
+    hard = WipeEngine._build_frame_mask(plan, feather_radius=0)(10)
+    soft = WipeEngine._build_frame_mask(plan, feather_radius=4)(10)
+    # hard path: uint8 in {0,1}
+    assert hard.dtype == np.uint8
+    assert set(np.unique(hard)).issubset({0, 1})
+    # soft path: float32 in [0,1], interior pinned to 1.0, edge is fractional
+    assert soft.dtype == np.float32
+    assert 0.0 <= soft.min() and soft.max() <= 1.0
+    assert soft[30, 30] == 1.0  # interior
+    assert 0.0 < soft[19, 30] < 1.0  # just outside the top edge -> feathered

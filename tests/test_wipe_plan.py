@@ -395,3 +395,34 @@ def test_remove_union_mask_is_time_independent():
     assert union.dtype == bool
     # the union covers the candidate's spatial mask regardless of frame
     assert union[85, 50]
+
+
+def test_compute_source_rounds_frame_count(monkeypatch, tmp_path):
+    """compute_source rounds CAP_PROP_FRAME_COUNT to match read_frame_info (A1).
+
+    Truncating would leave the plan one frame short of STTN's loop bound for
+    non-integer frame counts, silently un-inpaintainting the trailing frame.
+    """
+    from videowipe.plan import compute_source
+
+    _write_video(tmp_path / "v.mp4", frames=10)
+    real_cap = cv2.VideoCapture
+
+    class FakeCap:
+        def __init__(self, path):
+            self._real = real_cap(path)
+
+        def isOpened(self):
+            return self._real.isOpened()
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 10.6  # fractional codec-metadata value
+            return self._real.get(prop)
+
+        def release(self):
+            self._real.release()
+
+    monkeypatch.setattr("videowipe.plan.cv2.VideoCapture", FakeCap)
+    src = compute_source(str(tmp_path / "v.mp4"))
+    assert src.frame_count == 11  # round(10.6), not trunc(10.6)==10

@@ -266,7 +266,11 @@ def compute_source(video_path: str) -> Source:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        # Round to match tasks.base.read_frame_info (int(x + 0.5)); truncating
+        # here would make the plan's frame_count one short of STTN's loop bound
+        # for non-integer CAP_PROP_FRAME_COUNT, leaving the trailing frame
+        # un-inpainted.
+        frame_count = int((cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) + 0.5)
     finally:
         cap.release()
     return Source(
