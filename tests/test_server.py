@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from videowipe.cli import _build_parser
+from videowipe.plan import build_wipe_plan, compute_source, save_wipe_plan
 from videowipe.server import jobs
 from videowipe.server import app as server_app
 
@@ -58,6 +60,7 @@ class FakeEngine:
                 "preview": preview,
                 "intent": intent,
                 "mask": mask,
+                "plan": kwargs.get("plan"),
             }
         )
         output_path = Path(output)
@@ -102,6 +105,10 @@ class FakeEngine:
             mask_image = np.zeros((64, 96), dtype=np.uint8)
             mask_image[50:60, 10:86] = 255
             cv2.imwrite(str(output_path / "auto_mask.png"), mask_image)
+            # Phase A: the real engine also writes a WipePlan during preview.
+            # Build one bound to this test video so the server's plan-driven
+            # confirm path can load + mutate + execute it.
+            self._write_plan(video, output_path)
             return str(output_path)
 
         if progress is not None:
@@ -110,6 +117,36 @@ class FakeEngine:
         result = output_path / "input_clean.mp4"
         shutil.copyfile(video, result)
         return str(result)
+
+    @staticmethod
+    def _write_plan(video, output_path):
+        """Write a real wipe_plan.json + .npz bound to *video* (c1 remove, c2 keep)."""
+        def _candidate(cid, type_, label, bbox, confidence, default_remove):
+            x1, y1, x2, y2 = bbox
+            mask = np.zeros((64, 96), dtype=np.uint8)
+            mask[y1:y2 + 1, x1:x2 + 1] = 1
+            return SimpleNamespace(
+                id=cid,
+                type=type_,
+                label=label,
+                bbox=tuple(bbox),
+                confidence=confidence,
+                default_remove=default_remove,
+                mask=mask,
+                presence_frames=[0, 2, 4, 6],
+            )
+
+        plan = build_wipe_plan(
+            [
+                _candidate("c1", "subtitle", "bottom subtitle", [10, 50, 86, 60], 0.9, True),
+                _candidate("c2", "watermark", "top watermark", [4, 4, 28, 16], 0.6, False),
+            ],
+            sample_indices=[0, 2, 4, 6],
+            n_valid=4,
+            source=compute_source(video),
+            frame_shape=(64, 96),
+        )
+        save_wipe_plan(plan, str(output_path))
 
     def cleanup(self):
         pass
@@ -233,10 +270,18 @@ def test_preview_returns_candidates(client, tmp_path):
     assert [candidate["id"] for candidate in body["candidates"]] == ["c1", "c2"]
     assert body["default_selected_ids"] == ["c1"]
     assert fake.calls[0]["intent"] == "remove bottom subtitles"
+    # Phase B: preview also surfaces the plan's tracks (with actions + segments).
+    tracks = body["tracks"]
+    assert [track["id"] for track in tracks] == ["c1", "c2"]
+    assert {track["id"]: track["action"] for track in tracks} == {
+        "c1": "remove",
+        "c2": "keep",
+    }
+    assert all(track.get("segments") is not None for track in tracks)
 
 
 def test_confirm_runs_and_progress_sse(client, tmp_path):
-    test_client, _ = client
+    test_client, fake = client
     video = tmp_path / "input.mp4"
     _write_test_video(video)
     job_id = _post_video(test_client, video).json()["id"]
@@ -253,6 +298,15 @@ def test_confirm_runs_and_progress_sse(client, tmp_path):
     assert "data:" in progress.text
     assert '"state": "done"' in progress.text
     assert '"progress": 1.0' in progress.text
+
+    # Phase B: confirm executes via the plan (precise NPZ masks), not a
+    # bbox-approximated mask. The bbox path is gone entirely.
+    assert not hasattr(server_app, "_mask_from_selected_bboxes")
+    confirm_call = fake.calls[-1]
+    assert confirm_call["mask"] is None
+    assert confirm_call["plan"] is not None
+    actions = {track.id: track.action for track in confirm_call["plan"].tracks}
+    assert actions == {"c1": "remove", "c2": "keep"}
 
 
 @pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")

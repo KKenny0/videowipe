@@ -7,14 +7,12 @@ import threading
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from videowipe.detect import CleanCandidate, mask_from_candidates
-from videowipe.engine import WipeEngine, _DEFAULT_FEATHER_RADIUS
+from videowipe.engine import WipeEngine
+from videowipe.plan import JSON_FILENAME, load_wipe_plan
 from videowipe.server.jobs import (
     Job,
     JobBusy,
@@ -67,6 +65,19 @@ def _load_candidates(job: Job) -> list[dict]:
         return json.load(fh).get("candidates", [])
 
 
+def _load_tracks(job: Job) -> list[dict]:
+    """Metadata-only track view of the plan for the UI; empty if absent.
+
+    Read as plain JSON (no SHA/mask validation) — this is display only. The
+    plan is validated when it is executed, not when it is shown.
+    """
+    path = Path(job.output_dir) / JSON_FILENAME
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh).get("tracks", [])
+
+
 def _run_preview(job: Job, intent: str | None) -> None:
     try:
         _get_engine().process(
@@ -90,51 +101,25 @@ def _run_preview(job: Job, intent: str | None) -> None:
         _set_error(job, exc)
 
 
-def _mask_from_selected_bboxes(job: Job, selected_ids: list[str]) -> str:
-    candidates = _load_candidates(job)
-    wanted = set(selected_ids)
-    auto_mask = cv2.imread(str(Path(job.output_dir) / "auto_mask.png"), cv2.IMREAD_GRAYSCALE)
-    if auto_mask is None:
-        raise ValueError("auto_mask.png is missing; preview must finish before confirm")
-    h, w = auto_mask.shape[:2]
-
-    selected_candidates = []
-    for item in candidates:
-        if item.get("id") not in wanted:
-            continue
-        selected_candidates.append(
-            CleanCandidate(
-                id=item["id"],
-                type=item.get("type", "unknown_text"),
-                label=item.get("label", item["id"]),
-                bbox=tuple(item["bbox"]),
-                confidence=float(item.get("confidence", 0.0)),
-                frame_fraction=float(item.get("frame_fraction", 0.0)),
-                reason=item.get("reason", ""),
-                default_remove=bool(item.get("default_remove", False)),
-            )
-        )
-
-    mask = mask_from_candidates(
-        selected_candidates,
-        (h, w),
-        feather_radius=_DEFAULT_FEATHER_RADIUS,
-    )
-    path = Path(job.output_dir) / "selected_mask.png"
-    cv2.imwrite(str(path), (np.clip(mask, 0.0, 1.0) * 255).astype(np.uint8))
-    return str(path)
-
-
 def _run_inpaint(job: Job) -> None:
     try:
         with job.lock:
             selected_ids = list(job.selected_ids)
-            default_selected_ids = list(job.default_selected_ids)
 
-        if set(selected_ids) == set(default_selected_ids):
-            mask_path = str(Path(job.output_dir) / "auto_mask.png")
-        else:
-            mask_path = _mask_from_selected_bboxes(job, selected_ids)
+        # Phase A wrote wipe_plan.json + .npz during preview. Confirm overrides
+        # each track's action from the selection (chosen ids → remove, the rest
+        # → keep) and executes the plan. This uses the plan's precise per-track
+        # NPZ masks and temporal segments instead of reconstructing a mask from
+        # bboxes, so a changed selection no longer degrades to an approximation
+        # and the default selection runs temporally (closing subtitle-gap
+        # false erasures on the web path too).
+        plan = load_wipe_plan(
+            str(Path(job.output_dir) / JSON_FILENAME),
+            video_path=job.video_path,
+        )
+        selected = set(selected_ids)
+        for track in plan.tracks:
+            track.action = "remove" if track.id in selected else "keep"
 
         def _progress(done: int, total: int) -> None:
             with job.lock:
@@ -142,7 +127,7 @@ def _run_inpaint(job: Job) -> None:
 
         result_path = _get_engine().process(
             video=job.video_path,
-            mask=mask_path,
+            plan=plan,
             output=job.output_dir,
             progress=_progress,
         )
@@ -234,6 +219,7 @@ def preview(job_id: str):
         "id": job.id,
         "state": snapshot["state"],
         "candidates": candidates,
+        "tracks": _load_tracks(job),
         "preview_url": f"/jobs/{job.id}/preview-image",
         "default_selected_ids": snapshot["default_selected_ids"],
     }
