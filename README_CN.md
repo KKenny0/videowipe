@@ -119,6 +119,40 @@ with WipeEngine(task="detext") as engine:
 
 `WipeEngine.run()` 返回 `WipeResult`；无效输入、缺少后端、取消和处理失败会抛出稳定的 `WipeError` 子类。兼容入口 `process()` 与 `remove_text()` 继续保留。长期 Worker 和第三方模型接入可参考可运行的[批处理示例](examples/batch_worker.py)与[自定义 Inpainter 示例](examples/custom_inpainter.py)。
 
+### 审阅与编辑 WipePlan
+
+clean 流水线会生成一份 `WipePlan`：可读、可审阅的 JSON 计划，每个检测目标是一条 *track*，带 `remove`|`keep` 动作、生效时间段（segments）和精确 mask。可以不加载修复模型先生成计划，再执行审阅或修改过的计划。
+
+```python
+from videowipe import WipeEngine, WipeRequest
+
+engine = WipeEngine(task="clean")
+plan = engine.plan(WipeRequest(video="input.mp4", output_dir="plan/"))
+# → plan/wipe_plan.json + plan/wipe_plan_masks.npz
+engine.cleanup()
+```
+
+`wipe_plan.json` 对 agent 可读。只编辑每条 track 的 `action` 和 `segments`——空间 mask 存在同目录的 `.npz`，不要改动。随后对同一视频校验并执行修改后的计划：
+
+```python
+with WipeEngine(task="clean") as engine:
+    result = engine.run(WipeRequest(
+        video="input.mp4",
+        output_dir="result/",
+        plan="plan/wipe_plan.json",
+    ))
+    print(result.warnings, result.timings)
+```
+
+或使用 CLI：
+
+```bash
+videowipe clean input.mp4 --preview -o plan/                       # 生成计划
+videowipe clean input.mp4 --plan plan/wipe_plan.json -o result/    # 执行计划
+```
+
+VideoWipe 不绑定任何 LLM 或云服务——计划就是普通 JSON，任何编辑器或本地 agent 都能修改。计划绑定其源视频；对不同的视频执行同一份计划会被拒绝。
+
 ### CLI
 
 ```bash
@@ -170,6 +204,7 @@ videowipe clean input.mp4 --confirm
 | `--region` | 屏幕区域（可重复）：`top`、`bottom`、`top-left`、`top-right`、`bottom-left`、`bottom-right`、`center` | 所有区域 |
 | `--intent` | 自然语言清除意图 | — |
 | `--preview` | 仅输出检测产物（不执行修复） | 关闭 |
+| `--plan` | 执行已有的 `wipe_plan.json` 而非重新检测（与 `-m, --mask` 互斥） | — |
 | `--confirm` | 显示检测目标并确认后再处理 | 关闭 |
 | `--detect-mode` | 检测预设：`fast`（24帧）、`balanced`（50帧）、`sensitive`（80帧） | `balanced` |
 | `--ocr` | OCR 文字识别：`auto`、`off`、`rapidocr` | `auto` |

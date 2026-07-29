@@ -129,6 +129,47 @@ available. See the runnable [batch worker](examples/batch_worker.py) and
 [custom Inpainter](examples/custom_inpainter.py) examples for long-lived and
 registry-based integrations.
 
+### Review and edit the WipePlan
+
+The clean pipeline produces a `WipePlan`: a plain-JSON, reviewable plan where
+each detected target is a *track* with a `remove`|`keep` action, a time range
+(segments), and a precise mask. Generate it without loading the inpainting
+model, then execute a reviewed or edited plan.
+
+```python
+from videowipe import WipeEngine, WipeRequest
+
+engine = WipeEngine(task="clean")
+plan = engine.plan(WipeRequest(video="input.mp4", output_dir="plan/"))
+# → plan/wipe_plan.json + plan/wipe_plan_masks.npz
+engine.cleanup()
+```
+
+`wipe_plan.json` is agent-readable. Edit only each track's `action` and
+`segments` — the spatial masks live in the sidecar `.npz` and must not be
+touched. Then validate and execute the edited plan against the same video:
+
+```python
+with WipeEngine(task="clean") as engine:
+    result = engine.run(WipeRequest(
+        video="input.mp4",
+        output_dir="result/",
+        plan="plan/wipe_plan.json",
+    ))
+    print(result.warnings, result.timings)
+```
+
+Or from the CLI:
+
+```bash
+videowipe clean input.mp4 --preview -o plan/                       # generate the plan
+videowipe clean input.mp4 --plan plan/wipe_plan.json -o result/    # execute it
+```
+
+VideoWipe binds to no LLM or cloud service — the plan is ordinary JSON, so any
+editor or local agent can modify it. A plan is bound to its source video;
+executing it against a different video is rejected.
+
 ### CLI
 
 ```bash
@@ -181,6 +222,7 @@ videowipe clean input.mp4 --confirm
 | `--region` | Screen region (can repeat): `top`, `bottom`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `center` | all regions |
 | `--intent` | Natural-language cleanup intent | — |
 | `--preview` | Write detection artifacts only (no inpainting) | off |
+| `--plan` | Execute an existing `wipe_plan.json` instead of detecting (mutually exclusive with `-m, --mask`) | — |
 | `--confirm` | Show detected targets and confirm before processing | off |
 | `--detect-mode` | Detection preset: `fast` (24 frames), `balanced` (50), `sensitive` (80) | `balanced` |
 | `--ocr` | OCR text recognition: `auto`, `off`, `rapidocr` | `auto` |
