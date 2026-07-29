@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from videowipe.engine import WipeEngine
-from videowipe.plan import JSON_FILENAME, load_wipe_plan
+from videowipe.plan import JSON_FILENAME, load_wipe_plan, save_wipe_plan
 from videowipe.server.jobs import (
     Job,
     JobBusy,
@@ -108,18 +108,25 @@ def _run_inpaint(job: Job) -> None:
 
         # Phase A wrote wipe_plan.json + .npz during preview. Confirm overrides
         # each track's action from the selection (chosen ids → remove, the rest
-        # → keep) and executes the plan. This uses the plan's precise per-track
-        # NPZ masks and temporal segments instead of reconstructing a mask from
-        # bboxes, so a changed selection no longer degrades to an approximation
-        # and the default selection runs temporally (closing subtitle-gap
-        # false erasures on the web path too).
-        plan = load_wipe_plan(
-            str(Path(job.output_dir) / JSON_FILENAME),
-            video_path=job.video_path,
-        )
+        # → keep), persists the confirmed plan, and executes it. This uses the
+        # plan's precise per-track NPZ masks and temporal segments instead of
+        # reconstructing a mask from bboxes, so a changed selection no longer
+        # degrades to an approximation and the default selection runs temporally
+        # (closing subtitle-gap false erasures on the web path too).
+        #
+        # Load without video_path: load_wipe_plan otherwise enforces
+        # require_remove on the DEFAULT plan (before the selection is applied),
+        # which would reject the legitimate case of toggling a track to remove
+        # when the default plan is all-keep (e.g. a video whose only overlay is
+        # a safety-kept logo). engine.process re-validates the mutated plan and
+        # re-derives the source SHA, so video binding and NPZ integrity are
+        # preserved; load_wipe_plan still verifies the NPZ sha here.
+        plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
         selected = set(selected_ids)
         for track in plan.tracks:
             track.action = "remove" if track.id in selected else "keep"
+            track.decision_reason = f"user-confirm:{track.action}"
+        save_wipe_plan(plan, job.output_dir)
 
         def _progress(done: int, total: int) -> None:
             with job.lock:

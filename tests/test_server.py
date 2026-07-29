@@ -309,6 +309,61 @@ def test_confirm_runs_and_progress_sse(client, tmp_path):
     assert actions == {"c1": "remove", "c2": "keep"}
 
 
+def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):
+    """An all-keep default plan (e.g. a video whose only overlay is a
+    safety-kept logo) must still let the user toggle a track to remove and run.
+    Confirm must apply the selection before any require_remove check, not
+    reject the default plan up front."""
+    test_client, fake = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+
+    # Replace the preview's plan with an all-keep one bound to the same video.
+    job_dir = tmp_path / "jobs" / job_id
+
+    def _keep_candidate(cid, label, bbox):
+        x1, y1, x2, y2 = bbox
+        mask = np.zeros((64, 96), dtype=np.uint8)
+        mask[y1:y2 + 1, x1:x2 + 1] = 1
+        return SimpleNamespace(
+            id=cid,
+            type="logo",
+            label=label,
+            bbox=tuple(bbox),
+            confidence=0.9,
+            default_remove=False,
+            mask=mask,
+            presence_frames=[0, 2, 4, 6],
+        )
+
+    all_keep = build_wipe_plan(
+        [
+            _keep_candidate("c1", "top logo", [4, 4, 28, 16]),
+            _keep_candidate("c2", "corner logo", [60, 4, 80, 16]),
+        ],
+        sample_indices=[0, 2, 4, 6],
+        n_valid=4,
+        source=compute_source(str(job_dir / "input.mp4")),
+        frame_shape=(64, 96),
+    )
+    save_wipe_plan(all_keep, str(job_dir))
+
+    confirm = test_client.post(
+        f"/jobs/{job_id}/confirm",
+        json={"selected_ids": ["c1"]},
+    )
+    assert confirm.status_code == 200
+    _wait_for_state(test_client, job_id, "done")
+
+    executed = fake.calls[-1]["plan"]
+    assert {track.id: track.action for track in executed.tracks} == {
+        "c1": "remove",
+        "c2": "keep",
+    }
+
+
 @pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")
 def test_download_returns_mp4_with_audio(client, tmp_path):
     test_client, _ = client
