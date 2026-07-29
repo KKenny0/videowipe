@@ -1,7 +1,7 @@
 # VideoWipe WipePlan 与时序轨道实施计划
 
 Date: 2026-07-26
-Status: Approved — Phase A 已实施，等待代码审查收口
+Status: Accepted — Phase A 已通过验收，Phase B 可开始实施
 
 ## 结论
 
@@ -176,7 +176,7 @@ JSON 保持 agent 可读；精确二值空间 mask 存入同目录、压缩且 `
 - 将这两项认定为 **WipePlan v1 已知时序分辨率例外**，不再阻塞 Phase A；对采样证据能够观察到的空窗，预测仍必须正确关闭。
 - 原阈值继续保留为引入逐帧 mask propagation 后的 WipePlan 后续版本目标，不为了贴合当前三个样例而调宽阈值。
 - 后续复跑不得低于当前五项已通过指标，也不得让已可观察空窗重新产生误擦。
-- 本修订只处理质量门槛的范围冲突，不豁免代码审查发现；Phase A 整体验收仍需完成 confirm 动作映射、执行时精确 mask 强制校验和逃逸 symlink 校验。
+- 本修订只处理质量门槛的范围冲突，不豁免代码审查发现；confirm 动作映射、执行时精确 mask 强制校验和逃逸 symlink 校验已在 `ff1f207` 收口，并通过针对性测试、全量 `make check` 与正式事实基线复验。Phase A 整体已验收。
 
 ## 阶段 B：CLI、Web 与 AI-native 入口
 

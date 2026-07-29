@@ -109,7 +109,7 @@ Phase A 门槛对照（`make fact-baseline-formal`）：
 
 本次决定保留原阈值与原始测量，不按当前样例反向放宽数字。Phase A 的质量结论记录为：**五项通过，两项未达但获范围豁免，质量门槛有条件接受**。后续版本引入更高时序分辨率或逐帧 mask propagation 后，重新启用两项原阈值作为阻塞门槛。
 
-这项质量豁免不等于 Phase A 整体代码验收。confirm 动作映射、执行时精确 mask 强制校验和逃逸 symlink 校验仍须独立收口；修复后的正式基线不得使当前五项已通过指标退化，也不得破坏 chinese1 第 296 帧已经达到的 `0.0` 可观察空窗误擦结果。
+这项质量豁免不替代代码验收。confirm 动作映射、执行时精确 mask 强制校验和逃逸 symlink 校验已在 `ff1f207` 收口，并通过针对性测试、全量 `make check` 与正式事实基线复验；当前五项已通过指标未退化，chinese1 第 296 帧继续保持 `0.0` 可观察空窗误擦结果。Phase A 整体已验收。
 
 旧静态 Golden IoU 仍只作 `legacy_calibration_metric`，不构成质量结论。
 
