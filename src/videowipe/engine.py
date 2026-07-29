@@ -481,6 +481,13 @@ class WipeEngine:
             print(f"Preview saved to {output}")
             return output
 
+        # A fresh plan must be executable before any backend loads: it needs at
+        # least one remove track and a precise mask on each (an all-keep plan
+        # from `confirm none`, or a metadata-only plan, stops here without
+        # loading the model).
+        if self._active_plan is not None:
+            validate_plan(self._active_plan, require_remove=True)
+
         # Resolve mask file path for external command or normal pipeline
         if mask is not None:
             mask_path_saved = mask
@@ -695,7 +702,7 @@ class WipeEngine:
             source=source,
             frame_shape=result.frame_shape,
             request=request_snapshot,
-            explicit_remove_ids=selected_ids if user_directed else set(),
+            **self._explicit_selection_kwargs(result.candidates, selected_ids, user_directed),
         )
         save_wipe_plan(wipe_plan, output_dir)
         mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
@@ -730,10 +737,25 @@ class WipeEngine:
             source=source,
             frame_shape=result.frame_shape,
             request=request_snapshot,
-            explicit_remove_ids=selected_ids if user_directed else set(),
+            **self._explicit_selection_kwargs(result.candidates, selected_ids, user_directed),
         )
         save_wipe_plan(wipe_plan, output)
         return wipe_plan
+
+    @staticmethod
+    def _explicit_selection_kwargs(candidates, selected_ids, user_directed):
+        """Build ``explicit_remove_ids`` / ``explicit_keep_ids`` for build_wipe_plan.
+
+        When the user made a genuine decision, the selection is the complete,
+        final remove set: chosen ids → remove, every other candidate → keep
+        (so deselecting or ``confirm none`` actually keeps objects). Otherwise
+        both sets are empty and the safety rule + detector default decide.
+        """
+        if not user_directed:
+            return {"explicit_remove_ids": set(), "explicit_keep_ids": set()}
+        selected = set(selected_ids)
+        keep = {c.id for c in candidates} - selected
+        return {"explicit_remove_ids": selected, "explicit_keep_ids": keep}
 
     def _detect_clean(
         self, video, detector, targets, intent, agent, regions,
@@ -832,11 +854,12 @@ class WipeEngine:
             "detect_mode": effective_mode,
             "ocr": effective_ocr,
         }
-        # The default selection (no user direction) is NOT a genuine explicit
-        # choice — leaving explicit_remove_ids empty lets the safety rule
-        # protect persistent top overlays in the default flow. Only real user
-        # direction (targets/intent/agent/regions) counts as explicit.
-        user_directed = bool(targets or intent or agent or regions)
+        # A "genuine user decision" makes the selection the complete, final
+        # remove set: targets/intent/regions/confirm all qualify. An agent
+        # argument alone (no intent) never runs agent selection, so it must
+        # NOT count as user direction by itself — hence `agent` is absent from
+        # the OR (agent-with-intent is already covered by `intent`).
+        user_directed = bool(targets or intent or regions or confirm)
         return result, {c.id for c in selected}, request_snapshot, user_directed
 
     @staticmethod
@@ -859,17 +882,24 @@ class WipeEngine:
         return load_wipe_plan(os.fspath(plan), video_path=video)
 
     def _union_mask_from_plan(self, plan: WipePlan, frame_shape: tuple[int, int]):
-        """Spatial union of the plan's remove tracks, with the task's feather radius."""
+        """Spatial union of the plan's remove tracks, with the task's feather radius.
+
+        Every remove track must carry a precise mask; a missing mask is an
+        error rather than a silent bbox-rectangle fallback (the executed mask
+        must reflect what the plan actually selected, not an approximation).
+        """
         from types import SimpleNamespace
 
         from videowipe.detect import mask_from_candidates
 
         adapters = []
         for t in plan.remove_tracks:
-            mask_nd = None
-            if t.mask is not None:
-                arr = np.asarray(t.mask)
-                mask_nd = arr[:, :, None] if arr.ndim == 2 else arr
+            if t.mask is None:
+                raise InvalidInputError(
+                    f"remove track {t.id} has no precise mask; cannot build union"
+                )
+            arr = np.asarray(t.mask)
+            mask_nd = arr[:, :, None] if arr.ndim == 2 else arr
             adapters.append(SimpleNamespace(mask=mask_nd, bbox=t.bbox))
         return mask_from_candidates(
             adapters, frame_shape, feather_radius=self._task_impl.feather_radius,

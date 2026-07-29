@@ -426,3 +426,110 @@ def test_compute_source_rounds_frame_count(monkeypatch, tmp_path):
     monkeypatch.setattr("videowipe.plan.cv2.VideoCapture", FakeCap)
     src = compute_source(str(tmp_path / "v.mp4"))
     assert src.frame_count == 11  # round(10.6), not trunc(10.6)==10
+
+
+# ── Fix 1: explicit_keep_ids + complete action mapping ──────────────────────
+
+def test_explicit_keep_overrides_default_remove_for_unselected():
+    """A default-remove candidate the user did NOT select is kept (Fix 1).
+
+    c2 is bottom-region (not a top overlay) with default_remove=True; only
+    explicit_keep keeps it. Before Fix 1 it fell through to default_remove.
+    """
+    bottom_a = _candidate(cid="c1", bbox=(10, 80, 40, 95), default_remove=True, presence_frames=[0, 20])
+    bottom_b = _candidate(cid="c2", bbox=(60, 80, 90, 95), default_remove=True, presence_frames=[0, 20])
+    plan = build_wipe_plan(
+        [bottom_a, bottom_b], [0, 20, 40, 59], 4, _source(60), (100, 100),
+        explicit_remove_ids={"c1"}, explicit_keep_ids={"c2"},
+    )
+    actions = {t.id: t.action for t in plan.tracks}
+    assert actions == {"c1": "remove", "c2": "keep"}
+    c2 = next(t for t in plan.tracks if t.id == "c2")
+    assert "explicit-keep" in c2.decision_reason
+
+
+def test_explicit_remove_takes_precedence_over_explicit_keep():
+    """When an id is in both sets, remove wins (priority order)."""
+    c = _candidate(cid="c1", bbox=(10, 80, 40, 95), default_remove=True, presence_frames=[0])
+    plan = build_wipe_plan(
+        [c], [0, 20], 2, _source(60), (100, 100),
+        explicit_remove_ids={"c1"}, explicit_keep_ids={"c1"},
+    )
+    assert plan.tracks[0].action == "remove"
+
+
+def test_no_user_direction_leaves_explicit_sets_empty():
+    """Default flow: neither explicit set populated; safety + default decide."""
+    top = _candidate(cid="logo", bbox=(40, 5, 60, 15), default_remove=True, presence_frames=[0, 20, 40, 59])
+    bottom = _candidate(cid="sub", bbox=(10, 80, 90, 95), default_remove=True, presence_frames=[0, 20])
+    plan = build_wipe_plan(
+        [top, bottom], [0, 20, 40, 59], 4, _source(60), (100, 100),
+        explicit_remove_ids=set(), explicit_keep_ids=set(),
+    )
+    actions = {t.id: t.action for t in plan.tracks}
+    assert actions == {"logo": "keep", "sub": "remove"}  # safety keeps top; default removes bottom
+
+
+# ── Fix 2: precise masks required on remove tracks at execution ─────────────
+
+def test_remove_track_without_mask_passes_metadata_check():
+    """A maskless remove track is fine for metadata inspection (no require_remove)."""
+    plan = _plan_with_two_tracks()
+    for t in plan.tracks:
+        if t.action == "remove":
+            t.mask = None
+    validate_plan(plan)  # structural only — must not raise
+
+
+def test_remove_track_without_mask_rejected_for_execution():
+    plan = _plan_with_two_tracks()
+    for t in plan.tracks:
+        if t.action == "remove":
+            t.mask = None
+    with pytest.raises(InvalidInputError, match="no precise mask"):
+        validate_plan(plan, require_remove=True)
+
+
+def test_union_mask_rejects_missing_remove_mask():
+    """Engine raises rather than silently widening a maskless track to its bbox."""
+    from videowipe.engine import WipeEngine
+
+    plan = _plan_with_two_tracks()
+    for t in plan.tracks:
+        if t.action == "remove":
+            t.mask = None
+    engine = WipeEngine(task="clean")
+    with pytest.raises(InvalidInputError, match="no precise mask"):
+        engine._union_mask_from_plan(plan, (100, 100))
+
+
+def test_normal_plan_with_precise_masks_passes_execution_check():
+    plan = _plan_with_two_tracks()
+    validate_plan(plan, require_remove=True)  # must not raise
+
+
+# ── Fix 3: reject sidecar symlinks escaping the plan directory ──────────────
+
+def test_load_rejects_sidecar_symlink_to_outside(tmp_path):
+    """An NPZ replaced by a symlink that escapes the plan dir is rejected."""
+    import shutil
+
+    plan = _plan_with_two_tracks()
+    save_wipe_plan(plan, str(tmp_path))
+    npz = tmp_path / MASK_FILENAME
+    outside = tmp_path.parent / "outside_stolen.npz"
+    shutil.move(str(npz), str(outside))
+    os.symlink(str(outside), str(npz))
+    with pytest.raises(InvalidInputError, match="escapes plan directory"):
+        load_wipe_plan(str(tmp_path / JSON_FILENAME))
+
+
+def test_save_rejects_preexisting_escaping_symlink(tmp_path):
+    """A pre-existing escaping symlink at the NPZ path blocks save; external file untouched."""
+    outside = tmp_path.parent / "external_target.npz"
+    outside.write_bytes(b"do-not-overwrite")
+    (tmp_path / MASK_FILENAME).symlink_to(str(outside))
+    plan = _plan_with_two_tracks()
+    with pytest.raises(InvalidInputError, match="escapes plan directory"):
+        save_wipe_plan(plan, str(tmp_path))
+    assert outside.read_bytes() == b"do-not-overwrite"

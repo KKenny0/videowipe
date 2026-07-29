@@ -1,7 +1,7 @@
 # VideoWipe WipePlan 与时序轨道实施计划
 
-Date: 2026-07-26  
-Status: Proposed — 待批准，不开始实现
+Date: 2026-07-26
+Status: Approved — Phase A 已实施，等待代码审查收口
 
 ## 结论
 
@@ -165,6 +165,18 @@ JSON 保持 agent 可读；精确二值空间 mask 存入同目录、压缩且 `
 | 分类语义匹配率 | 不低于当前 `0.500000` |
 
 同时逐张比较 temporal mask、indexed annotation 与 `input/detext_examples/mask/*.png`；旧 Golden 继续只作为 calibration，不升级为质量真值。
+
+#### Phase A 验收修订（2026-07-28）
+
+正式 schema v2 事实报告中，七项门槛有五项通过；“无 remove 帧平均误擦面积”和“任一无 remove 帧误擦面积”未达到原阈值。两项失败均来自 `others.mp4` 第 361 帧：该空窗短于 `balanced` 模式的相邻采样间隔，且前后采样点都观察到字幕存在。WipePlan v1 只根据采样证据做最近状态插值，因此没有足够信息恢复这个未被观测到的空窗。
+
+产品验收决定：
+
+- 保留原始阈值、实测值和“未达”事实，不把结果重写为通过。
+- 将这两项认定为 **WipePlan v1 已知时序分辨率例外**，不再阻塞 Phase A；对采样证据能够观察到的空窗，预测仍必须正确关闭。
+- 原阈值继续保留为引入逐帧 mask propagation 后的 WipePlan 后续版本目标，不为了贴合当前三个样例而调宽阈值。
+- 后续复跑不得低于当前五项已通过指标，也不得让已可观察空窗重新产生误擦。
+- 本修订只处理质量门槛的范围冲突，不豁免代码审查发现；Phase A 整体验收仍需完成 confirm 动作映射、执行时精确 mask 强制校验和逃逸 symlink 校验。
 
 ## 阶段 B：CLI、Web 与 AI-native 入口
 

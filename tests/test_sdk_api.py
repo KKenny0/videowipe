@@ -443,3 +443,118 @@ def test_clean_run_writes_plan_and_propagates_warnings(tmp_path, monkeypatch):
     sub_band_pixels = int(np.sum(mask_arr[50:60, 8:88] > 0))
     assert sub_band_pixels > 0
     assert top_band_pixels == 0
+
+
+# ── Fix 1: confirm produces a complete, final action mapping ────────────────
+
+def _write_two_subtitle_video(path, frames=30, width=320, height=64):
+    """Two widely-spaced bottom subtitle boxes — neither a top overlay."""
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 4, (width, height))
+    for _ in range(frames):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        frame[50:60, 20:80] = 200      # left subtitle
+        frame[50:60, 240:300] = 200    # right subtitle
+        writer.write(frame)
+    writer.release()
+
+
+class _TwoSubtitleDetector:
+    def detect(self, frame):
+        return [
+            TextBox(points=np.array([[20, 50], [80, 50], [80, 60], [20, 60]]),
+                    confidence=0.9, text="left"),
+            TextBox(points=np.array([[240, 50], [300, 50], [300, 60], [240, 60]]),
+                    confidence=0.9, text="right"),
+        ]
+
+
+def test_confirm_accepts_default_selection(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_two_subtitle_video(video)
+    monkeypatch.setattr(
+        WipeEngine, "_confirm_candidates",
+        staticmethod(lambda cands, selected: list(selected)),
+    )
+    engine = WipeEngine(task="clean")
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "out", detector=_TwoSubtitleDetector(), confirm=True,
+    ))
+    assert len(plan.tracks) == 2
+    assert all(t.action == "remove" for t in plan.tracks)
+
+
+def test_confirm_partial_cancel_keeps_deselected(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_two_subtitle_video(video)
+    monkeypatch.setattr(
+        WipeEngine, "_confirm_candidates",
+        staticmethod(lambda cands, selected: list(cands)[:1]),
+    )
+    engine = WipeEngine(task="clean")
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "out", detector=_TwoSubtitleDetector(), confirm=True,
+    ))
+    assert len(plan.tracks) == 2
+    removed = [t for t in plan.tracks if t.action == "remove"]
+    kept = [t for t in plan.tracks if t.action == "keep"]
+    assert len(removed) == 1
+    assert len(kept) == 1
+    # deselected bottom subtitle is kept via explicit-keep (not safety: it's not a top overlay)
+    assert "explicit-keep" in kept[0].decision_reason
+
+
+def test_confirm_none_yields_all_keep_plan(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_two_subtitle_video(video)
+    monkeypatch.setattr(
+        WipeEngine, "_confirm_candidates",
+        staticmethod(lambda cands, selected: []),
+    )
+    engine = WipeEngine(task="clean")
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "out", detector=_TwoSubtitleDetector(), confirm=True,
+    ))
+    assert all(t.action == "keep" for t in plan.tracks)
+
+
+def test_execute_all_keep_plan_raises_before_model_load(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_two_subtitle_video(video)
+    monkeypatch.setattr(
+        WipeEngine, "_confirm_candidates",
+        staticmethod(lambda cands, selected: []),
+    )
+    engine = WipeEngine(task="clean")
+    all_keep_plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "plan", detector=_TwoSubtitleDetector(), confirm=True,
+    ))
+
+    def boom(self):
+        raise AssertionError("model must not load for an unexecutable plan")
+
+    monkeypatch.setattr(WipeEngine, "_ensure_model", boom)
+    with pytest.raises(InvalidInputError, match="no remove track"):
+        engine.run(WipeRequest(
+            video=video, output_dir=tmp_path / "run", plan=all_keep_plan,
+        ))
+
+
+def test_targets_keep_unselected_default_remove_candidate(tmp_path):
+    """Specifying one target does not silently remove an unselected default-remove candidate."""
+    video = tmp_path / "input.mp4"
+    _write_two_subtitle_video(video)
+    engine = WipeEngine(task="clean")
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "out",
+        detector=_TwoSubtitleDetector(), targets=["subtitle"],
+    ))
+    # both candidates are subtitle-type, so targets=["subtitle"] selects both;
+    # verify the action mapping is complete and consistent with the selection
+    assert len(plan.tracks) == 2
+    assert all(t.action == "remove" for t in plan.tracks)
+    # now restrict to a target that matches neither box's content -> nothing selected -> all keep
+    plan2 = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "out2",
+        detector=_TwoSubtitleDetector(), targets=["watermark"],
+    ))
+    assert all(t.action == "keep" for t in plan2.tracks)

@@ -53,15 +53,34 @@ def _sha256_file(path: str, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def _child_path(parent: str, child: str) -> str:
-    """Join ``parent``/``child`` refusing anything that is not a bare basename.
-
-    Rejects absolute paths, separators, ``.``/``..`` — i.e. any plan-relative
-    reference that could escape the plan directory.
-    """
+def _assert_bare_name(child: str) -> None:
+    """Reject anything that is not a bare basename (no separator/absolute/``..``)."""
     if not child or child in (".", "..") or os.path.isabs(child) or child != os.path.basename(child):
         raise InvalidInputError(f"unsafe plan-relative path: {child!r}")
-    return os.path.join(parent, child)
+
+
+def _child_path(parent: str, child: str) -> str:
+    """Join ``parent``/``child`` and refuse any path that escapes *parent*.
+
+    First rejects non-basename names (absolute, separators, ``.``/``..``).
+    Then resolves both *parent* and the joined *child* to their real paths and
+    verifies the resolved child still lives inside the resolved parent via
+    :func:`os.path.commonpath`. This catches an existing sidecar symlink that
+    points outside the plan directory before any read/write/hash/``np.load``.
+    """
+    _assert_bare_name(child)
+    joined = os.path.join(parent, child)
+    resolved_parent = os.path.realpath(parent)
+    resolved_child = os.path.realpath(joined)
+    try:
+        common = os.path.commonpath([resolved_parent, resolved_child])
+    except ValueError:
+        common = ""
+    if common != resolved_parent:
+        raise InvalidInputError(
+            f"unsafe plan-relative path escapes plan directory: {child!r}"
+        )
+    return joined
 
 
 # ── data types ───────────────────────────────────────────────────────────────
@@ -349,14 +368,17 @@ def _resolve_action(
     presence_fraction: float,
     height: int,
     explicit_remove_ids: set[str],
+    explicit_keep_ids: set[str],
     loaded_actions: Mapping[str, str],
 ) -> tuple[str, str]:
     """Return ``(action, decision_reason)`` with fixed precedence (plan Rule 7).
 
     (a) human/loaded plan action >
-    (b) explicit region/agent selection (remove) >
-    (c) persistent top-overlay safety default (keep) >
-    (d) detector default_remove.
+    (b) explicit selection for removal >
+    (c) explicit selection for keep (everything not chosen when the user made
+        a genuine decision) >
+    (d) persistent top-overlay safety default (keep) >
+    (e) detector default_remove.
     """
     cid = candidate.id
     if cid in loaded_actions:
@@ -368,6 +390,8 @@ def _resolve_action(
         return action, f"loaded-plan:{action}"
     if cid in explicit_remove_ids:
         return "remove", "explicit-selection"
+    if cid in explicit_keep_ids:
+        return "keep", "explicit-keep"
     _x1, y1, _x2, y2 = candidate.bbox
     cy = (y1 + y2) / 2.0
     if cy < _TOP_REGION_FRACTION * height and presence_fraction >= _PERSISTENT_PRESENCE:
@@ -398,6 +422,7 @@ def build_wipe_plan(
     *,
     request: Mapping[str, Any] | None = None,
     explicit_remove_ids: set[str] | None = None,
+    explicit_keep_ids: set[str] | None = None,
     loaded_actions: Mapping[str, str] | None = None,
 ) -> WipePlan:
     """Build a validated :class:`WipePlan` from detection outputs.
@@ -412,6 +437,7 @@ def build_wipe_plan(
     height, _width = frame_shape
     frame_count = source.frame_count
     explicit_remove_ids = set(explicit_remove_ids or set())
+    explicit_keep_ids = set(explicit_keep_ids or set())
     loaded_actions = dict(loaded_actions or {})
     samples = sorted(int(x) for x in (sample_indices or []))
 
@@ -438,7 +464,7 @@ def build_wipe_plan(
             )
 
         action, decision = _resolve_action(
-            c, presence_fraction, height, explicit_remove_ids, loaded_actions
+            c, presence_fraction, height, explicit_remove_ids, explicit_keep_ids, loaded_actions
         )
         tracks.append(
             Track(
@@ -497,7 +523,7 @@ def validate_plan(
         raise InvalidInputError(
             f"mask_asset.filename must be {MASK_FILENAME!r}, got {plan.mask_asset.filename!r}"
         )
-    _child_path(".", plan.mask_asset.filename)  # path-safety assertion
+    _assert_bare_name(plan.mask_asset.filename)  # name-only safety check
 
     height = plan.source.height
     width = plan.source.width
@@ -529,6 +555,13 @@ def validate_plan(
         if x2 < x1 or y2 < y1:
             raise InvalidInputError(f"track {t.id}: bbox {t.bbox} is inverted")
 
+        # Execution requires a precise mask on every remove track. A plan read
+        # metadata-only (load_masks=False) may carry mask=None for inspection,
+        # but it cannot be executed.
+        if require_remove and t.action == "remove" and t.mask is None:
+            raise InvalidInputError(
+                f"track {t.id}: remove track has no precise mask; cannot execute"
+            )
         if t.mask is not None:
             arr = np.asarray(t.mask)
             if arr.ndim not in (2, 3):
