@@ -944,37 +944,46 @@
       }
     }
 
-    function renderCandidates(candidates) {
+    function formatSegments(segments) {
+      if (!segments || !segments.length) return "no time range";
+      // Segments are half-open [start, end); show the inclusive frame range.
+      return segments.map((s) => `frames ${s[0]}-${s[1] - 1}`).join(", ");
+    }
+
+    // Render the plan's tracks. Each row is a whole-track remove/keep toggle:
+    // a checked checkbox means "remove this track" (mirrors the plan action).
+    // No draggable timeline — v1 only toggles whole tracks.
+    function renderTracks(tracks) {
       candidateList.innerHTML = "";
-      candidateCount.textContent = `${candidates.length} found`;
-      if (!candidates.length) {
+      candidateCount.textContent = `${tracks.length} track${tracks.length === 1 ? "" : "s"}`;
+      if (!tracks.length) {
         candidateList.innerHTML = '<div class="empty-list">No targets were detected in this preview.</div>';
         confirmBtn.disabled = true;
         return;
       }
-      candidates.forEach((candidate) => {
+      tracks.forEach((track) => {
         const row = document.createElement("label");
         row.className = "candidate";
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
-        checkbox.value = candidate.id;
-        checkbox.checked = Boolean(candidate.selected);
+        checkbox.value = track.id;
+        checkbox.checked = track.action === "remove";
 
         const main = document.createElement("span");
         main.className = "candidate-main";
 
         const name = document.createElement("span");
         name.className = "candidate-name";
-        name.textContent = `${candidate.id} - ${candidate.label || candidate.type}`;
+        name.textContent = `${track.id} - ${track.label || track.type}`;
 
         const meta = document.createElement("span");
         meta.className = "candidate-meta";
-        meta.textContent = `bbox ${candidate.bbox.join(",")}`;
+        meta.textContent = formatSegments(track.segments);
 
         const pill = document.createElement("span");
         pill.className = "pill";
-        pill.textContent = candidate.type;
+        pill.textContent = track.type;
 
         main.append(name, meta);
         row.append(checkbox, main, pill);
@@ -1017,7 +1026,17 @@
       previewImage.src = `${preview.preview_url}?t=${Date.now()}`;
       previewImage.style.display = "block";
       previewEmpty.style.display = "none";
-      renderCandidates(preview.candidates);
+      // Prefer the plan's tracks; fall back to candidates for one compat cycle.
+      const tracks = (preview.tracks && preview.tracks.length)
+        ? preview.tracks
+        : preview.candidates.map((candidate) => ({
+            id: candidate.id,
+            type: candidate.type,
+            label: candidate.label,
+            action: candidate.selected ? "remove" : "keep",
+            segments: [],
+          }));
+      renderTracks(tracks);
       setProgress(0);
       setOutput("Ready to clean", "Review targets, then start video cleanup.");
       confirmBtn.style.display = "";
