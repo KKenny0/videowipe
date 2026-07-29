@@ -31,8 +31,14 @@ def _build_parser():
 
     clean = subparsers.add_parser("clean", help="Clean subtitles and text overlays")
     clean.add_argument("video", help="Input video path")
-    clean.add_argument("-m", "--mask", default=None,
-                       help="Mask image path (skip detection if provided)")
+    # A hand-drawn mask and a reviewed/agent-edited WipePlan are two ways to
+    # skip detection; they are mutually exclusive (the engine enforces this
+    # too, but argparse gives a cleaner pre-flight error).
+    mask_or_plan = clean.add_mutually_exclusive_group()
+    mask_or_plan.add_argument("-m", "--mask", default=None,
+                              help="Mask image path (skip detection if provided)")
+    mask_or_plan.add_argument("--plan", default=None,
+                              help="Execute an existing wipe_plan.json instead of detecting")
     clean.add_argument("-o", "--output", default="result/", help="Output directory")
     clean.add_argument("-w", "--weight", default=None, help="Model weight path")
     clean.add_argument("-g", "--gap", type=int, default=200,
@@ -131,6 +137,7 @@ def main():
             regions=getattr(args, "region", None),
             preview=getattr(args, "preview", False),
             confirm=getattr(args, "confirm", False),
+            plan=getattr(args, "plan", None),
         )
     except Exception as exc:
         print(f"videowipe: {exc}", file=sys.stderr)

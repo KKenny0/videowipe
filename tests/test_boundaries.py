@@ -3,6 +3,7 @@ import os
 import pathlib
 import re
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -29,6 +30,12 @@ from videowipe.inpainters import STTNInpainter, get_registry
 from videowipe.inpainters.base import InpaintJob
 from videowipe.external import ExternalInpainter, ExternalModelError, run_external
 from videowipe.tasks.base import read_mask, validate_mask_shape
+from videowipe.plan import (
+    JSON_FILENAME,
+    build_wipe_plan,
+    compute_source,
+    save_wipe_plan,
+)
 
 
 def _write_test_video(path, width=96, height=64, frames=4, draw=None):
@@ -63,6 +70,119 @@ def test_cli_exposes_detext_and_clean_commands():
     assert region.region == ["top-right"]
     with pytest.raises(SystemExit):
         parser.parse_args(["delogo", "-v", "input.mp4", "-m", "mask.png"])
+
+
+# ── Phase B / B1: CLI --plan ─────────────────────────────────────────────────
+
+def _plan_candidate(cid, frame_shape, default_remove=True):
+    """Duck-typed candidate with a precise mask, for build_wipe_plan."""
+    h, w = frame_shape
+    mask = np.zeros((h, w), dtype=np.uint8)
+    mask[50:60, 8:88] = 1
+    return SimpleNamespace(
+        id=cid,
+        type="subtitle",
+        label=f"{cid} subtitle",
+        bbox=(8, 50, 88, 60),
+        confidence=0.9,
+        default_remove=default_remove,
+        mask=mask,
+        presence_frames=[],  # full-video segment; CLI test does not need temporal math
+    )
+
+
+def _save_two_track_plan(video_path, plan_dir):
+    """Build + save a real WipePlan bound to *video_path* (c1 remove, c2 keep)."""
+    cap = cv2.VideoCapture(str(video_path))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    cap.release()
+    source = compute_source(str(video_path))
+    plan = build_wipe_plan(
+        [
+            _plan_candidate("c1", (h, w), default_remove=True),
+            _plan_candidate("c2", (h, w), default_remove=False),
+        ],
+        sample_indices=[0, 2, 4, 6],
+        n_valid=4,
+        source=source,
+        frame_shape=(h, w),
+    )
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    save_wipe_plan(plan, str(plan_dir))
+    return plan_dir / JSON_FILENAME
+
+
+class _FakeCleanTask:
+    """Stand-in for the STTN task: records nothing, writes a sentinel output."""
+
+    _bm = None
+    backend = type("B", (), {"__name__": "FakeBackend"})()
+    output_suffix = "clean"
+    feather_radius = 0
+    frame_mask = None
+
+    def process_video(self, reader, frame_info, mask_arr, output_dir,
+                      video_path="", progress=None):
+        self._bm["timing"]["inpainting_s"] = 0.001
+        out_path = pathlib.Path(output_dir) / "output_clean.mp4"
+        out_path.write_bytes(b"clean")
+        return str(out_path)
+
+    def cleanup(self):
+        pass
+
+
+def test_cli_clean_exposes_plan_mutually_exclusive_with_mask():
+    parser = _build_parser()
+    args = parser.parse_args(["clean", "input.mp4", "--plan", "wipe_plan.json"])
+    assert args.plan == "wipe_plan.json"
+    # --mask and --plan cannot be combined; argparse rejects before the engine.
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["clean", "input.mp4", "--mask", "m.png", "--plan", "p.json"]
+        )
+
+
+def test_cli_clean_plan_round_trip_executes_and_rejects_mismatch(monkeypatch, tmp_path):
+    monkeypatch.setattr(WipeEngine, "_ensure_model", lambda self: None)
+    monkeypatch.setattr(
+        "videowipe.engine._TASK_CLASSES", {"clean": lambda **kw: _FakeCleanTask()}
+    )
+
+    def run_cli(*argv):
+        monkeypatch.setattr(sys, "argv", ["videowipe", *argv])
+        cli.main()
+
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    plan_path = _save_two_track_plan(video, tmp_path / "plan")
+
+    # Execute the generated plan unchanged.
+    out = tmp_path / "run"
+    run_cli("clean", str(video), "--plan", str(plan_path), "-o", str(out))
+    assert (out / "output_clean.mp4").exists()
+
+    # Execute a modified plan: swap the two tracks' actions in the JSON. The
+    # NPZ (and its sha) is untouched, so load_wipe_plan still validates; the
+    # newly-remove track's precise mask is already in the NPZ.
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    original = {t["id"]: t["action"] for t in data["tracks"]}
+    for track in data["tracks"]:
+        track["action"] = "keep" if track["id"] == "c1" else "remove"
+    plan_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    out2 = tmp_path / "run2"
+    run_cli("clean", str(video), "--plan", str(plan_path), "-o", str(out2))
+    assert (out2 / "output_clean.mp4").exists()
+    assert original["c1"] == "remove"  # confirm the edit actually flipped it
+
+    # Source mismatch: the plan is bound to `video`; running it against a
+    # different video is rejected before any model loads.
+    other = tmp_path / "other.mp4"
+    _write_test_video(other, width=128)
+    with pytest.raises(SystemExit):
+        run_cli("clean", str(other), "--plan", str(plan_path),
+                "-o", str(tmp_path / "run3"))
 
 
 def test_version_fields_are_in_sync():
