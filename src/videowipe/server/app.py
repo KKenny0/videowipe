@@ -87,11 +87,27 @@ def _run_preview(job: Job, intent: str | None) -> None:
             preview=True,
         )
         candidates = _load_candidates(job)
-        default_selected = [
-            candidate["id"]
-            for candidate in candidates
-            if candidate.get("selected")
-        ]
+        # WipePlan is the single source of truth for remove/keep once it
+        # exists. Derive the default confirmation selection from its track
+        # actions so a stale clean_candidates.json (whose `selected` field
+        # predates the plan) cannot silently flip a safety-kept track — e.g.
+        # a persistent top logo the plan keeps — to remove on a no-body
+        # confirm. The candidate `selected` field stays as a fallback for
+        # jobs that predate the plan. Check file existence, not `if tracks`,
+        # so a present-but-empty plan is not mistaken for an old job.
+        plan_path = Path(job.output_dir) / JSON_FILENAME
+        if plan_path.exists():
+            default_selected = [
+                track["id"]
+                for track in _load_tracks(job)
+                if track.get("action") == "remove"
+            ]
+        else:
+            default_selected = [
+                candidate["id"]
+                for candidate in candidates
+                if candidate.get("selected")
+            ]
         with job.lock:
             job.default_selected_ids = default_selected
             job.selected_ids = list(default_selected)

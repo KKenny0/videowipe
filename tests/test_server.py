@@ -364,6 +364,48 @@ def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):
     }
 
 
+def test_confirm_without_selected_ids_uses_wipe_plan_actions(client, tmp_path, monkeypatch):
+    """A no-body confirm must follow the WipePlan's actions, not a stale
+    clean_candidates.json default. Simulate migration-period drift: the
+    candidate file marks c2 (a safety-kept logo) selected, but the plan
+    keeps it. Confirming with an empty body must still remove only c1."""
+    test_client, fake = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+
+    # Drift the candidate default so it disagrees with the plan: c2 is
+    # selected in clean_candidates.json but kept in wipe_plan.json.
+    original_load_candidates = server_app._load_candidates
+
+    def _drifting_load_candidates(job):
+        candidates = original_load_candidates(job)
+        for candidate in candidates:
+            if candidate["id"] == "c2":
+                candidate["selected"] = True
+        return candidates
+
+    monkeypatch.setattr(server_app, "_load_candidates", _drifting_load_candidates)
+
+    create_response = _post_video(test_client, video)
+    job_id = create_response.json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+
+    preview = test_client.get(f"/jobs/{job_id}/preview").json()
+    # The stale candidate default may still surface in `candidates`, but the
+    # plan-driven default selection must list only the remove track.
+    assert preview["default_selected_ids"] == ["c1"]
+
+    confirm = test_client.post(f"/jobs/{job_id}/confirm", json={})
+    assert confirm.status_code == 200
+    _wait_for_state(test_client, job_id, "done")
+
+    executed = fake.calls[-1]["plan"]
+    assert {track.id: track.action for track in executed.tracks} == {
+        "c1": "remove",
+        "c2": "keep",
+    }
+
+
 @pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")
 def test_download_returns_mp4_with_audio(client, tmp_path):
     test_client, _ = client
