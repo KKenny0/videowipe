@@ -6,7 +6,7 @@
 
 <p align="center">
   面向生产项目嵌入的视频清理引擎，用于擦除硬字幕、水印和文字叠加。<br>
-  通过 Python、CLI 或自有 Worker 完成目标检测、mask 生成和本地画面修复。
+  通过 Python、CLI 或自有 Worker 完成目标检测、时序轨道审阅和本地画面修复。
 </p>
 
 <p align="center">
@@ -27,9 +27,10 @@ videowipe 是可复用的 Python 视频清理引擎。一个 `WipeEngine` 可以
 
 ## 功能
 
-videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间戳。一条命令完成完整流水线：采样帧 → 检测文字区域 → 选择目标（支持 OCR 和自然语言意图解析）→ 生成 mask → 修复背景。
+videowipe 可以检测并擦除视频中的硬字幕、水印、Logo 和时间戳。一条命令完成完整流水线：采样帧 → 检测文字区域 → 生成可审阅的 WipePlan → 选择 remove/keep 轨道 → 修复背景。
 
 无需手动提供 mask。内置检测器开箱即用，支持多语种内容。
+每条轨道独立保存生效时间段和精确 mask，字幕消失后，不会继续擦除后续帧里的同一片区域。
 
 默认使用 STTN 作为修复后端。通过 `--external-command` 可接入任何外部模型 — [ProPainter](https://github.com/sczhou/ProPainter) 已验证为更高质量的替代方案。
 
@@ -123,6 +124,8 @@ with WipeEngine(task="detext") as engine:
 
 clean 流水线会生成一份 `WipePlan`：可读、可审阅的 JSON 计划，每个检测目标是一条 *track*，带 `remove`|`keep` 动作、生效时间段（segments）和精确 mask。可以不加载修复模型先生成计划，再执行审阅或修改过的计划。
 
+画面顶部的常驻叠加默认保留，只有明确选择时才会移除。采样较稀造成的边界误差会写入 warnings，不会伪装成逐帧精确判断。
+
 ```python
 from videowipe import WipeEngine, WipeRequest
 
@@ -171,7 +174,7 @@ videowipe serve
 # 打开 http://127.0.0.1:8000
 ```
 
-浏览器流程完全在本地运行：上传视频、预览并确认检测到的目标、执行清理，然后下载保留原始音轨的 MP4。
+浏览器流程完全在本地运行：上传视频，查看每条轨道的动作和生效时间段，在 remove 与 keep 之间切换整条轨道，然后下载清理后的 MP4。确认后会直接执行审阅过的 WipePlan 及其精确 mask，不会根据预览框重新拼出近似 mask。文件始终留在本机，下载的视频保留原始音轨。
 
 | 上传 | 预览目标 | 下载 |
 |------|----------|------|
@@ -303,11 +306,11 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 
 流水线分三个阶段：
 
-1. **检测** — 基于 DBNet 的文字检测器对视频进行多帧采样，逐帧定位文字区域，按位置聚类，选出最佳预览帧。开箱即用，支持多语种。
+1. **检测**：基于 DBNet 的文字检测器对视频进行多帧采样，逐帧定位文字区域，记录目标在时间上的出现情况，再把检测结果聚合成稳定轨道。开箱即用，支持多语种。
 
-2. **目标选择** — 检测到的区域按类型分类（字幕、水印、Logo、时间戳）。可选 OCR 读取文字内容。意图解析器（基于规则或通过 `--agent` 接入 LLM）支持用自然语言指定要清除什么。
+2. **生成计划**：检测轨道按字幕、水印、Logo、时间戳分类，并写入经过校验的 WipePlan。计划包含 remove/keep 动作、左闭右开的时间段、源视频身份和精确 mask。可选 OCR 与意图解析帮助决定要移除什么。
 
-3. **修复** — 利用前后帧的时域信息填充被 mask 的区域。默认后端为 STTN（8 层时空 Transformer + CNN 编码器）。通过 `--external-command` 可替换为任何外部模型。
+3. **修复**：执行审阅后的计划，只在每一帧启用当时生效的 remove 轨道 mask。STTN 利用相邻帧填充这些区域，最终合成继续遵循逐帧 mask。没有时序区间的计划仍可使用静态外部修复后端。
 
 ## Docker
 

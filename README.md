@@ -6,7 +6,7 @@
 
 <p align="center">
   An embeddable video-cleanup engine for hardcoded subtitles, watermarks, and text overlays.<br>
-  Detect targets, generate masks, and inpaint locally from Python, CLI, or your own worker.
+  Detect targets, review time-aware remove/keep tracks, and inpaint locally from Python, CLI, or your own worker.
 </p>
 
 <p align="center">
@@ -27,9 +27,11 @@ The current product boundary is deliberately narrow: detect unwanted overlays, b
 
 ## What it does
 
-videowipe detects and removes hardcoded text, watermarks, logos, and timestamps from video. A full pipeline runs in one command: sample frames → detect text regions → select targets (with optional OCR and natural-language intent parsing) → generate masks → inpaint the background.
+videowipe detects and removes hardcoded text, watermarks, logos, and timestamps from video. A full pipeline runs in one command: sample frames → detect text regions → build a reviewable WipePlan → select remove/keep tracks → inpaint the background.
 
 No manual mask required. The built-in detector handles multilingual content out of the box.
+Each track keeps its own time ranges and precise mask, so a subtitle can disappear
+without erasing the same area in frames where it is absent.
 
 STTN is the default inpainting backend. Any external model can be plugged in via `--external-command` — [ProPainter](https://github.com/sczhou/ProPainter) has been validated as a higher-quality alternative.
 
@@ -136,6 +138,10 @@ each detected target is a *track* with a `remove`|`keep` action, a time range
 (segments), and a precise mask. Generate it without loading the inpainting
 model, then execute a reviewed or edited plan.
 
+Persistent overlays near the top of the frame default to `keep` unless the
+request explicitly selects them. Coarse sampling boundaries are recorded as
+warnings instead of being presented as frame-perfect decisions.
+
 ```python
 from videowipe import WipeEngine, WipeRequest
 
@@ -188,8 +194,11 @@ videowipe serve
 # Open http://127.0.0.1:8000
 ```
 
-The browser flow runs locally: upload a video, review detected targets, confirm, and download the cleaned MP4.
-Files stay on your machine, the preview step shows the detected regions before inpainting, and the downloaded MP4 keeps the original audio track.
+The browser flow runs locally: upload a video, review each track with its action
+and time ranges, toggle whole tracks between remove and keep, then download the
+cleaned MP4. Confirmation executes the reviewed WipePlan and its precise masks,
+not rectangles reconstructed from the preview. Files stay on your machine, and
+the downloaded MP4 keeps the original audio track.
 
 | Upload | Preview targets | Download |
 |--------|-----------------|----------|
@@ -321,11 +330,11 @@ Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show selec
 
 The pipeline has three stages:
 
-1. **Detection** — A DBNet-based text detector samples frames across the video, finds text regions in each frame, clusters them by position, and selects the best preview frame. Supports multilingual content out of the box.
+1. **Detection:** A DBNet-based text detector samples frames across the video, finds text regions in each frame, records temporal presence, and clusters detections into stable tracks. Supports multilingual content out of the box.
 
-2. **Target selection** — Detected regions are classified by type (subtitle, watermark, logo, timestamp). Optional OCR reads the text content. An intent parser (rule-based or LLM-backed via `--agent`) lets you specify what to remove in natural language.
+2. **Planning:** Detected tracks are classified by type (subtitle, watermark, logo, timestamp) and written to a validated WipePlan with remove/keep actions, half-open time segments, source identity, and precise mask assets. Optional OCR and intent parsing help decide what to remove.
 
-3. **Inpainting** — Masked regions are filled in using temporal information from neighboring frames. The default backend is STTN (8-layer spatial-temporal transformer with CNN encoder). Any external model can be substituted via `--external-command`.
+3. **Inpainting:** The reviewed plan activates only the remove-track masks that apply to each frame. STTN fills those regions from neighboring frames, while final blending follows the per-frame mask. Static external backends remain available for plans without temporal ranges.
 
 ## Docker
 
