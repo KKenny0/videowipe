@@ -37,7 +37,7 @@ from videowipe.errors import (
 )
 from videowipe.plan import (
     WipePlan,
-    build_wipe_plan,
+    build_refined_wipe_plan,
     compute_source,
     is_temporal,
     load_wipe_plan,
@@ -694,16 +694,10 @@ class WipeEngine:
             request.agent, list(request.regions or ()), request.detect_mode,
             request.ocr, output_dir, request.confirm,
         )
-        source = compute_source(video_path)
-        wipe_plan = build_wipe_plan(
-            result.candidates,
-            sample_indices=result.sample_indices,
-            n_valid=len(result.sample_indices),
-            source=source,
-            frame_shape=result.frame_shape,
-            request=request_snapshot,
-            **self._explicit_selection_kwargs(result.candidates, selected_ids, user_directed),
+        wipe_plan = self._build_fresh_clean_plan(
+            video_path, result, selected_ids, request_snapshot, user_directed,
         )
+        self._write_final_clean_artifacts(result, wipe_plan, output_dir)
         save_wipe_plan(wipe_plan, output_dir)
         mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
         cv2.imwrite(
@@ -729,18 +723,35 @@ class WipeEngine:
             video, detector, targets, intent, agent, regions,
             detect_mode, ocr, output, confirm,
         )
-        source = compute_source(video)
-        wipe_plan = build_wipe_plan(
-            result.candidates,
-            sample_indices=result.sample_indices,
-            n_valid=len(result.sample_indices),
-            source=source,
-            frame_shape=result.frame_shape,
-            request=request_snapshot,
-            **self._explicit_selection_kwargs(result.candidates, selected_ids, user_directed),
+        wipe_plan = self._build_fresh_clean_plan(
+            video, result, selected_ids, request_snapshot, user_directed,
         )
+        self._write_final_clean_artifacts(result, wipe_plan, output)
         save_wipe_plan(wipe_plan, output)
         return wipe_plan
+
+    def _build_fresh_clean_plan(
+        self, video, result, selected_ids, request_snapshot, user_directed,
+    ) -> WipePlan:
+        """Build the single provisional -> refine -> final clean-plan path."""
+        source = compute_source(video)
+        selection = self._explicit_selection_kwargs(
+            result.candidates, selected_ids, user_directed,
+        )
+        return build_refined_wipe_plan(
+            video, result, source,
+            refine=request_snapshot["detect_mode"] != "fast",
+            request=request_snapshot, **selection,
+        )
+
+    @staticmethod
+    def _write_final_clean_artifacts(result, wipe_plan, output):
+        from videowipe.detect import write_clean_artifacts
+
+        remove_ids = {track.id for track in wipe_plan.remove_tracks}
+        write_clean_artifacts(
+            result, [candidate for candidate in result.candidates if candidate.id in remove_ids], output,
+        )
 
     @staticmethod
     def _explicit_selection_kwargs(candidates, selected_ids, user_directed):

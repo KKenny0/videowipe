@@ -209,7 +209,7 @@ videowipe clean input.mp4 --confirm
 | `--preview` | 仅输出检测产物（不执行修复） | 关闭 |
 | `--plan` | 执行已有的 `wipe_plan.json` 而非重新检测（与 `-m, --mask` 互斥） | — |
 | `--confirm` | 显示检测目标并确认后再处理 | 关闭 |
-| `--detect-mode` | 检测预设：`fast`（24帧）、`balanced`（50帧）、`sensitive`（80帧） | `balanced` |
+| `--detect-mode` | 检测预设：`fast`（24 帧粗采样）；`balanced`（50 帧）和 `sensitive`（80 帧）会对选中的移除片段逐帧复检，以更准确保留字幕间隙 | `balanced` |
 | `--ocr` | OCR 文字识别：`auto`、`off`、`rapidocr` | `auto` |
 | `--agent` | 本地 LLM CLI 做意图选择（如 `claude`、`codex`） | — |
 | `--external-command` | 外部修复命令（绕过内置 STTN） | — |

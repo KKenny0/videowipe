@@ -83,6 +83,10 @@ class CleanCandidate:
     text_samples: list[str] = field(default_factory=list)
     presence_frames: list[int] = field(default_factory=list)
     mask: np.ndarray | None = field(default=None, repr=False)
+    # Runtime-only evidence used to sharpen temporal plan segments.  It is
+    # deliberately absent from to_dict()/WipePlan v1 serialization.
+    temporal_sample_indices: list[int] = field(default_factory=list, repr=False)
+    detector_backed: bool = field(default=False, repr=False)
 
     def to_dict(self) -> dict:
         """Return a JSON-safe representation without the binary mask."""
@@ -108,6 +112,7 @@ class CleanDetectionResult:
     frame_shape: tuple[int, int]
     sample_indices: list[int] = field(default_factory=list)
     preview_frame: np.ndarray | None = field(default=None, repr=False)
+    detector: TextDetector | None = field(default=None, repr=False)
 
 
 # ── Detector protocol ────────────────────────────────────────────────────────
@@ -766,6 +771,15 @@ def _iou_bbox(
     return inter / union if union > 0 else 0.0
 
 
+def _box_overlaps_bbox(
+    box: TextBox, bbox: tuple[int, int, int, int], width: int, height: int,
+) -> bool:
+    """Whether a detector box intersects a candidate bbox."""
+    bx1, by1, bx2, by2 = _bbox(box.points, width, height)
+    x1, y1, x2, y2 = bbox
+    return bx1 <= x2 and bx2 >= x1 and by1 <= y2 and by2 >= y1
+
+
 def _band_fallback_detect(
     frames: list[np.ndarray],
     detector: TextDetector,
@@ -1119,9 +1133,9 @@ def detect_clean_candidates(
             for sample_pos, boxes in enumerate(all_frame_boxes):
                 overlapped = False
                 for box in boxes:
-                    bx1, by1, bx2, by2 = _bbox(box.points, w, h)
-                    if bx1 <= x2 and bx2 >= x1 and by1 <= y2 and by2 >= y1:
+                    if _box_overlaps_bbox(box, (x1, y1, x2, y2), w, h):
                         overlapped = True
+                        bx1, by1, bx2, by2 = _bbox(box.points, w, h)
                         if box.text:
                             text_samples.append(box.text)
                         elif recognizer is not None:
@@ -1167,6 +1181,7 @@ def detect_clean_candidates(
                     text_samples=sorted(set(text_samples))[:5],
                     presence_frames=presence_frames,
                     mask=full_mask,
+                    detector_backed=True,
                 )
             )
 
@@ -1200,7 +1215,87 @@ def detect_clean_candidates(
         frame_shape=(h, w),
         sample_indices=valid_sample_indices,
         preview_frame=frames[best_preview_idx].copy() if detect_text and detector is not None else frames[0].copy(),
+        detector=detector,
     )
+
+
+def refine_temporal_presence(
+    video_path: str,
+    result: CleanDetectionResult,
+    candidate_segments: dict[str, Iterable[object]],
+    expected_frame_count: int,
+) -> list[str]:
+    """Densely recheck detector-backed remove candidates inside coarse segments.
+
+    Detection remains sequential and each active video frame is passed to the
+    detector once.  A detector error is negative evidence: keeping that frame
+    is safer than carrying forward a coarse remove decision.
+    """
+    detector = result.detector
+    candidates = {
+        candidate.id: candidate
+        for candidate in result.candidates
+        if candidate.id in candidate_segments and getattr(
+            candidate, "detector_backed", bool(candidate.presence_frames)
+        )
+    }
+    if detector is None or not candidates:
+        return []
+
+    segments = {
+        candidate_id: [
+            (int(segment.start), int(segment.end))
+            for segment in candidate_segments[candidate_id]
+        ]
+        for candidate_id in candidates
+    }
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video for temporal refinement: {video_path}")
+
+    warnings: list[str] = []
+    try:
+        frame_index = 0
+        while frame_index < expected_frame_count:
+            ok, frame = cap.read()
+            if not ok:
+                raise ValueError(
+                    f"Temporal refinement decoded {frame_index} frames; "
+                    f"expected {expected_frame_count}"
+                )
+            active = [
+                candidate
+                for candidate_id, candidate in candidates.items()
+                if any(start <= frame_index < end for start, end in segments[candidate_id])
+            ]
+            if active:
+                for candidate in active:
+                    candidate.temporal_sample_indices = sorted(set(
+                        candidate.temporal_sample_indices or result.sample_indices
+                    ) | {frame_index})
+                    candidate.presence_frames = [
+                        index for index in candidate.presence_frames if index != frame_index
+                    ]
+                try:
+                    boxes = detector.detect(frame)
+                except Exception as exc:  # safety boundary: failed frame remains keep.
+                    warnings.append(
+                        f"temporal refinement failed at frame {frame_index}; keeping frame: {exc}"
+                    )
+                else:
+                    for candidate in active:
+                        if any(
+                            _box_overlaps_bbox(box, candidate.bbox, frame.shape[1], frame.shape[0])
+                            for box in boxes
+                        ):
+                            candidate.presence_frames.append(frame_index)
+            frame_index += 1
+    finally:
+        cap.release()
+
+    for candidate in candidates.values():
+        candidate.presence_frames = sorted(set(candidate.presence_frames))
+    return warnings
 
 
 def select_clean_candidates(

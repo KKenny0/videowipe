@@ -450,11 +450,25 @@ def build_wipe_plan(
         seen.add(c.id)
 
         presence_frames = set(getattr(c, "presence_frames", []) or [])
-        presence_fraction = (len(presence_frames) / float(n_valid)) if n_valid > 0 else 0.0
+        candidate_samples = sorted(set(
+            int(x) for x in (getattr(c, "temporal_sample_indices", []) or [])
+        ))
+        effective_samples = candidate_samples or samples
+        effective_n_valid = len(candidate_samples) if candidate_samples else n_valid
+        presence_fraction = (
+            len(presence_frames) / float(effective_n_valid)
+            if effective_n_valid > 0 else 0.0
+        )
 
-        if presence_frames:
-            segs = segments_from_presence(samples, presence_frames, frame_count)
-            seg_note = f"{len(segs)} segment(s) from {len(presence_frames)}/{n_valid} samples"
+        if candidate_samples:
+            segs = segments_from_presence(effective_samples, presence_frames, frame_count)
+            seg_note = (
+                f"{len(segs)} segment(s) from {len(presence_frames)}/"
+                f"{effective_n_valid} samples"
+            )
+        elif presence_frames:
+            segs = segments_from_presence(effective_samples, presence_frames, frame_count)
+            seg_note = f"{len(segs)} segment(s) from {len(presence_frames)}/{effective_n_valid} samples"
         else:
             segs = [Segment(0, frame_count)] if frame_count > 0 else []
             seg_note = "full-video (no per-frame evidence)"
@@ -502,6 +516,47 @@ def build_wipe_plan(
     )
     validate_plan(plan, frame_shape=frame_shape)
     return plan
+
+
+def build_refined_wipe_plan(
+    video_path: str,
+    result: Any,
+    source: Source,
+    *,
+    refine: bool,
+    request: Mapping[str, Any] | None = None,
+    explicit_remove_ids: set[str] | None = None,
+    explicit_keep_ids: set[str] | None = None,
+    loaded_actions: Mapping[str, str] | None = None,
+) -> WipePlan:
+    """Build one provisional -> refine -> final plan from detection output."""
+    kwargs = {
+        "request": request,
+        "explicit_remove_ids": explicit_remove_ids,
+        "explicit_keep_ids": explicit_keep_ids,
+        "loaded_actions": loaded_actions,
+    }
+    provisional = build_wipe_plan(
+        result.candidates, result.sample_indices, len(result.sample_indices),
+        source, result.frame_shape, **kwargs,
+    )
+    if not refine:
+        return provisional
+
+    from videowipe.detect import refine_temporal_presence
+
+    warnings = refine_temporal_presence(
+        video_path, result,
+        {track.id: track.segments for track in provisional.remove_tracks},
+        source.frame_count,
+    )
+    final = build_wipe_plan(
+        result.candidates, result.sample_indices, len(result.sample_indices),
+        source, result.frame_shape, **kwargs,
+    )
+    final.warnings.extend(warnings)
+    validate_plan(final, frame_shape=result.frame_shape)
+    return final
 
 
 # ── validation ───────────────────────────────────────────────────────────────

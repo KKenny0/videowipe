@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 import pytest
 
+import videowipe.detect as detect_module
+from videowipe.detect import CleanCandidate, CleanDetectionResult, TextBox, refine_temporal_presence
 from videowipe.errors import InvalidInputError
 from videowipe.plan import (
     JSON_FILENAME,
@@ -16,6 +18,7 @@ from videowipe.plan import (
     Segment,
     Source,
     build_wipe_plan,
+    build_refined_wipe_plan,
     compute_source,
     is_temporal,
     load_wipe_plan,
@@ -33,6 +36,7 @@ def _candidate(
     default_remove=True,
     mask=None,
     presence_frames=None,
+    temporal_sample_indices=None,
     confidence=0.9,
 ):
     h, w = 100, 100
@@ -50,6 +54,7 @@ def _candidate(
         default_remove=default_remove,
         mask=mask,
         presence_frames=list(presence_frames or []),
+        temporal_sample_indices=list(temporal_sample_indices or []),
     )
 
 
@@ -98,6 +103,193 @@ def test_segments_multiple_runs_compress_to_half_open_intervals():
 def test_segments_empty_when_no_samples():
     assert segments_from_presence([], {5}, 60) == []
     assert segments_from_presence([5], {5}, 0) == []
+
+
+def test_refinement_rechecks_each_active_frame_once_and_splits_a_gap(tmp_path):
+    video = tmp_path / "gap.mp4"
+    _write_video(video, frames=5)
+    candidate = _candidate(presence_frames=[0, 4])
+
+    class Detector:
+        def __init__(self):
+            self.calls = 0
+
+        def detect(self, _frame):
+            current = self.calls
+            self.calls += 1
+            if current == 2:
+                return []
+            return [TextBox(
+                points=np.array([[10, 80], [90, 80], [90, 95], [10, 95]]),
+                confidence=1.0,
+            )]
+
+    detector = Detector()
+    result = CleanDetectionResult(
+        [candidate], (100, 100), sample_indices=[0, 4], detector=detector,
+    )
+    warnings = refine_temporal_presence(
+        str(video), result, {candidate.id: [Segment(0, 5)]}, 5,
+    )
+
+    assert warnings == []
+    assert detector.calls == 5
+    assert candidate.temporal_sample_indices == [0, 1, 2, 3, 4]
+    assert candidate.presence_frames == [0, 1, 3, 4]
+    plan = build_wipe_plan([candidate], [0, 4], 2, _source(5), (100, 100))
+    assert plan.tracks[0].segments == [Segment(0, 2), Segment(3, 5)]
+
+
+def test_refinement_failure_keeps_frame_and_records_warning(tmp_path):
+    video = tmp_path / "failure.mp4"
+    _write_video(video, frames=3)
+    candidate = _candidate(presence_frames=[0, 2])
+
+    class Detector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("detector unavailable")
+            return [TextBox(
+                points=np.array([[10, 80], [90, 80], [90, 95], [10, 95]]),
+                confidence=1.0,
+            )]
+
+    result = CleanDetectionResult(
+        [candidate], (100, 100), sample_indices=[0, 2], detector=Detector(),
+    )
+    warnings = refine_temporal_presence(
+        str(video), result, {candidate.id: [Segment(0, 3)]}, 3,
+    )
+
+    assert candidate.presence_frames == [0, 2]
+    assert any("frame 1" in warning and "keeping frame" in warning for warning in warnings)
+
+
+def test_track_specific_samples_keep_legacy_candidates_unchanged():
+    refined = _candidate(
+        cid="refined", presence_frames=[0, 1, 3, 4],
+        temporal_sample_indices=[0, 1, 2, 3, 4],
+    )
+    legacy = _candidate(cid="legacy", presence_frames=[0, 4])
+    plan = build_wipe_plan([refined, legacy], [0, 4], 2, _source(5), (100, 100))
+
+    tracks = {track.id: track for track in plan.tracks}
+    assert tracks["refined"].segments == [Segment(0, 2), Segment(3, 5)]
+    assert tracks["refined"].presence_fraction == pytest.approx(0.8)
+    assert tracks["legacy"].segments == [Segment(0, 5)]
+
+
+def test_clean_candidate_positional_mask_compatibility():
+    mask = np.ones((100, 100), dtype=np.uint8)
+    candidate = CleanCandidate(
+        "c1", "subtitle", "bottom subtitle", (10, 80, 90, 95),
+        0.9, 1.0, "test", True, [], [0, 2], mask,
+    )
+
+    assert candidate.mask is mask
+    plan = build_wipe_plan([candidate], [0, 2], 2, _source(3), (100, 100))
+    assert plan.remove_tracks[0].mask is not None
+
+
+def test_refinement_rejects_premature_decode(monkeypatch):
+    frames = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(2)]
+
+    class Capture:
+        def isOpened(self):
+            return True
+
+        def read(self):
+            return (True, frames.pop(0)) if frames else (False, None)
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(detect_module.cv2, "VideoCapture", lambda _path: Capture())
+    candidate = _candidate(presence_frames=[0])
+    result = CleanDetectionResult(
+        [candidate], (100, 100), sample_indices=[0],
+        detector=type("Detector", (), {"detect": lambda self, frame: []})(),
+    )
+
+    with pytest.raises(ValueError, match=r"decoded 2 frames; expected 3"):
+        refine_temporal_presence(
+            "input.mp4", result, {candidate.id: [Segment(0, 3)]}, 3,
+        )
+
+
+def test_exact_decode_shares_detector_and_leaves_keep_track_unchanged(monkeypatch):
+    frames = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(3)]
+
+    class Capture:
+        read_calls = 0
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            self.read_calls += 1
+            return True, frames.pop(0)
+
+        def release(self):
+            pass
+
+    capture = Capture()
+    monkeypatch.setattr(detect_module.cv2, "VideoCapture", lambda _path: capture)
+
+    class Detector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+            return [TextBox(
+                points=np.array([[10, 80], [90, 80], [90, 95], [10, 95]]),
+                confidence=1.0,
+            )]
+
+    detector = Detector()
+    first = _candidate(cid="c1", presence_frames=[0, 2])
+    second = _candidate(cid="c2", presence_frames=[0, 2])
+    keep = _candidate(cid="keep", default_remove=False, presence_frames=[0, 2])
+    result = CleanDetectionResult(
+        [first, second, keep], (100, 100), sample_indices=[0, 2], detector=detector,
+    )
+
+    refine_temporal_presence(
+        "input.mp4", result,
+        {"c1": [Segment(0, 3)], "c2": [Segment(0, 3)]}, 3,
+    )
+
+    assert capture.read_calls == 3
+    assert detector.calls == 3
+    assert result.detector is detector
+    assert first.temporal_sample_indices == [0, 1, 2]
+    assert second.temporal_sample_indices == [0, 1, 2]
+    assert keep.presence_frames == [0, 2]
+    assert keep.temporal_sample_indices == []
+
+
+def test_fast_plan_bypasses_dense_refinement():
+    class Detector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+            raise AssertionError("fast mode must not refine")
+
+    candidate = _candidate(presence_frames=[0, 2])
+    detector = Detector()
+    result = CleanDetectionResult(
+        [candidate], (100, 100), sample_indices=[0, 2], detector=detector,
+    )
+    plan = build_refined_wipe_plan(
+        "unused.mp4", result, _source(3), refine=False,
+    )
+
+    assert detector.calls == 0
+    assert plan.remove_tracks[0].segments == [Segment(0, 3)]
 
 
 # ── decision priority + safety rule ──────────────────────────────────────────

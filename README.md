@@ -233,7 +233,7 @@ videowipe clean input.mp4 --confirm
 | `--preview` | Write detection artifacts only (no inpainting) | off |
 | `--plan` | Execute an existing `wipe_plan.json` instead of detecting (mutually exclusive with `-m, --mask`) | — |
 | `--confirm` | Show detected targets and confirm before processing | off |
-| `--detect-mode` | Detection preset: `fast` (24 frames), `balanced` (50), `sensitive` (80) | `balanced` |
+| `--detect-mode` | Detection preset: `fast` (24 coarse frames); `balanced` (50) and `sensitive` (80) densely recheck selected remove segments for sharper subtitle gaps | `balanced` |
 | `--ocr` | OCR text recognition: `auto`, `off`, `rapidocr` | `auto` |
 | `--agent` | Local LLM CLI for intent-based selection (e.g., `claude`, `codex`) | — |
 | `--external-command` | External inpainting command (bypasses built-in STTN) | — |

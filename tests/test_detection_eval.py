@@ -7,7 +7,13 @@ import cv2
 import numpy as np
 import pytest
 
-from videowipe.detect import CleanCandidate, CleanDetectionResult
+from videowipe.detect import (
+    CleanCandidate,
+    CleanDetectionResult,
+    TextBox,
+    detect_clean_candidates,
+)
+from videowipe.plan import build_refined_wipe_plan, compute_source
 
 
 def _load_eval_module():
@@ -37,6 +43,7 @@ def _candidate(mask, candidate_id="candidate-1", target_type="subtitle", default
         reason="test",
         default_remove=default_remove,
         mask=mask[..., None],
+        detector_backed=True,
     )
 
 
@@ -195,6 +202,72 @@ def test_keep_injury_and_no_target_false_removal(tmp_path):
     assert frame["remove_region_jaccard"] is None
     assert frame["keep_prediction_coverage"] == pytest.approx(1.0)
     assert frame["no_remove_false_removal_area_ratio"] == pytest.approx(4 / 96, abs=1e-6)
+
+
+def test_fact_baseline_uses_temporal_refinement_for_a_single_frame_gap(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    manifest = _write_manifest(tmp_path, np.zeros((8, 12), dtype=np.uint8))
+    candidate = _candidate(np.ones((8, 12), dtype=np.uint8))
+    candidate.presence_frames = [0, 2]
+
+    class Detector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+            if self.calls == 2:
+                return []
+            return [TextBox(
+                points=np.array([[0, 0], [11, 0], [11, 7], [0, 7]]), confidence=1.0,
+            )]
+
+    result = CleanDetectionResult(
+        [candidate], (8, 12), sample_indices=[0, 2], detector=Detector(),
+    )
+    monkeypatch.setattr(
+        module, "_detect_video",
+        lambda *args, **kwargs: (result, [candidate], candidate.mask.squeeze().astype(bool), "fake_detector"),
+    )
+    report = module.evaluate_fact_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "report.json"), str(tmp_path / "previews"),
+    )
+
+    assert report["videos"][0]["frames"][0]["no_remove_false_removal_area_ratio"] == 0.0
+
+
+def test_band_fallback_candidate_keeps_coarse_semantics(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_video(video, width=96, height=64)
+
+    class BandOnlyDetector:
+        calls = 0
+
+        def detect(self, frame):
+            self.calls += 1
+            h, w = frame.shape[:2]
+            if h < 50:
+                return [TextBox(
+                    points=np.array([[2, h - 10], [w - 2, h - 10], [w - 2, h - 2], [2, h - 2]]),
+                    confidence=0.9,
+                )]
+            return []
+
+    result = detect_clean_candidates(
+        str(video), detector=BandOnlyDetector(), sample_count=3, subtitle_fallback="light",
+    )
+    candidate = result.candidates[0]
+    calls_before_plan = result.detector.calls
+    plan = build_refined_wipe_plan(
+        str(video), result, compute_source(str(video)), refine=True,
+    )
+
+    assert not candidate.detector_backed
+    assert result.detector.calls == calls_before_plan
+    assert candidate.temporal_sample_indices == []
+    assert candidate.presence_frames == []
+    assert [(segment.start, segment.end) for segment in plan.remove_tracks[0].segments] == [(0, 3)]
+    assert any("no per-frame presence evidence" in warning for warning in plan.warnings)
 
 
 def test_manifest_duplicate_ids_fail(tmp_path):

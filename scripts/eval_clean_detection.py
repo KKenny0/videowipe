@@ -32,7 +32,7 @@ from videowipe.detect import (
     select_clean_candidates,
 )
 from videowipe.plan import (
-    build_wipe_plan,
+    build_refined_wipe_plan,
     compute_source,
     predicted_mask_at,
     remove_union_mask,
@@ -224,6 +224,7 @@ def _evaluator_source_hash() -> str:
     return _sha256_named_files([
         ("scripts/eval_clean_detection.py", Path(__file__).resolve()),
         ("src/videowipe/detect.py", Path(sys.modules["videowipe.detect"].__file__).resolve()),
+        ("src/videowipe/plan.py", Path(sys.modules["videowipe.plan"].__file__).resolve()),
         ("src/videowipe/weights.py", Path(videowipe.__file__).resolve().parent / "weights.py"),
     ])
 
@@ -783,13 +784,9 @@ def evaluate_fact_baseline(
         # baseline reflects the safety rule + temporal segments — the same
         # decision the engine makes on a default clean run. Per-frame metrics
         # use the plan's temporal prediction rather than one static mask.
-        plan = build_wipe_plan(
-            result.candidates,
-            sample_indices=result.sample_indices,
-            n_valid=len(result.sample_indices),
-            source=compute_source(str(video_path)),
-            frame_shape=shape,
-            explicit_remove_ids=set(),
+        plan = build_refined_wipe_plan(
+            str(video_path), result, compute_source(str(video_path)),
+            refine=detect_mode != "fast", explicit_remove_ids=set(),
         )
         selected = [c for c in result.candidates if c.id in {t.id for t in plan.remove_tracks}]
         generated = remove_union_mask(plan)
