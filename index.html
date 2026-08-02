@@ -648,7 +648,7 @@
           </div>
           <h3 data-i18n="feat2_title">Pluggable backends</h3>
           <p data-i18n-html="feat2_desc">
-            Default STTN runs locally. Use the validated ProPainter adapter or connect another model through <code class="mono">--external-command</code> without replacing the planning pipeline.
+            Default STTN runs temporal plans locally. The validated ProPainter adapter and <code class="mono">--external-command</code> support static plans without time ranges.
           </p>
         </div>
         <div class="feature-card">
@@ -693,7 +693,7 @@
           <div class="step-num">3</div>
           <h3 data-i18n="step3_title">Local execution</h3>
           <p data-i18n="step3_desc">
-            Execute the reviewed plan with STTN or a compatible external model. The same source-bound plan reproduces the same mask decisions.
+            Execute temporal plans with STTN. ProPainter and other file-based external models accept static plans without time ranges. Source binding keeps mask decisions reproducible.
           </p>
         </div>
       </div>
@@ -845,7 +845,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         feat1_title: 'Reviewable WipePlan',
         feat1_desc: 'Detection produces a plain-JSON plan with remove/keep tracks, time ranges, and precise masks. Review or edit the decision before any pixels are changed.',
         feat2_title: 'Pluggable backends',
-        feat2_desc: 'Default STTN runs locally. Use the validated ProPainter adapter or connect another model through <code class="mono">--external-command</code> without replacing the planning pipeline.',
+        feat2_desc: 'Default STTN runs temporal plans locally. The validated ProPainter adapter and <code class="mono">--external-command</code> support static plans without time ranges.',
         feat3_title: 'Observable SDK',
         feat3_desc: '<code class="mono">plan()</code> and <code class="mono">run()</code> report structured progress and accept cooperative cancellation. Reuse one engine across a batch or worker.',
         pipe_label: 'Pipeline',
@@ -856,7 +856,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         step2_title: 'Plan review',
         step2_desc: 'Inspect remove/keep actions, temporal segments, and precise masks. Optional OCR, intent, and local-agent selection help choose the right targets.',
         step3_title: 'Local execution',
-        step3_desc: 'Execute the reviewed plan with STTN or a compatible external model. The same source-bound plan reproduces the same mask decisions.',
+        step3_desc: 'Execute temporal plans with STTN. ProPainter and other file-based external models accept static plans without time ranges. Source binding keeps mask decisions reproducible.',
         usage_label: 'Usage',
         usage_title: 'Python SDK or CLI',
         usage_dek: 'Embed the structured engine or use the command-line adapter over the same pipeline.',
@@ -891,7 +891,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         feat1_title: '可审阅的 WipePlan',
         feat1_desc: '检测结果会变成普通 JSON 计划，记录 remove/keep 轨道、生效时间段和精确 mask。在修改任何像素之前，先审阅或编辑决定。',
         feat2_title: '可插拔后端',
-        feat2_desc: '默认 STTN 在本地运行。可使用已验证的 ProPainter 适配器，或通过 <code class="mono">--external-command</code> 接入其他模型，无需替换规划管线。',
+        feat2_desc: '默认 STTN 可在本地执行时序计划。已验证的 ProPainter 适配器与 <code class="mono">--external-command</code> 仅支持不含时序范围的静态计划。',
         feat3_title: '可观测的 SDK',
         feat3_desc: '<code class="mono">plan()</code> 与 <code class="mono">run()</code> 会报告结构化进度并支持协作式取消；同一引擎可复用于批处理或 Worker。',
         pipe_label: '管线',
@@ -902,7 +902,7 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         step2_title: '计划审阅',
         step2_desc: '检查 remove/keep 动作、时序片段和精确 mask。可选 OCR、自然语言意图与本地 Agent 帮助选择正确目标。',
         step3_title: '本地执行',
-        step3_desc: '使用 STTN 或兼容的外部模型执行已审阅计划。绑定同一源视频的计划会复现相同的 mask 决策。',
+        step3_desc: '使用 STTN 执行时序计划；ProPainter 等文件型外部模型仅接受不含时序范围的静态计划。源视频绑定会保证 mask 决策可复现。',
         usage_label: '使用方式',
         usage_title: 'Python SDK 或命令行',
         usage_dek: '嵌入结构化引擎，或使用建立在同一管线上的命令行适配器。',
