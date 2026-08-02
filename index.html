@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VideoWipe — Remove hardcoded subtitles, watermarks, and text from video</title>
-  <meta name="description" content="Auto-detect and remove hardcoded text, watermarks, logos, and timestamps from video. One command, no manual masks.">
+  <title>VideoWipe — Reviewable, local-first video cleanup</title>
+  <meta name="description" content="Detect subtitles, watermarks, logos, and timestamps into a reviewable WipePlan, then inpaint locally from Python, CLI, or your own worker.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -262,6 +262,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
+      min-width: 0;
       overflow: hidden;
     }
     .code-header {
@@ -303,7 +304,7 @@
     .code-body .op { color: #ff7b72; }
     .code-body .num { color: #79c0ff; }
 
-    /* ── Logo strip (pip install badge) ── */
+    /* ── Install badge ── */
     .install-strip {
       background: var(--surface);
       border-top: 1px solid var(--border);
@@ -322,6 +323,8 @@
       font-size: 15px;
       color: var(--fg);
       background: var(--surface2);
+      max-width: 100%;
+      overflow-x: auto;
       padding: 10px 24px;
       border-radius: 8px;
       border: 1px solid var(--border2);
@@ -579,10 +582,10 @@
   <section class="hero" data-od-id="hero">
     <div class="container hero-grid">
       <div class="hero-text">
-        <div class="hero-eyebrow" data-i18n="hero_eyebrow">Open-source video inpainting tool</div>
-        <h1 data-i18n-html="hero_h1">Remove text from video.<br><span class="accent">One command.</span></h1>
+        <div class="hero-eyebrow" data-i18n="hero_eyebrow">Local-first video cleanup SDK</div>
+        <h1 data-i18n-html="hero_h1">Plan the wipe.<br><span class="accent">Then run it.</span></h1>
         <p class="hero-lead" data-i18n="hero_lead">
-          Auto-detect hardcoded subtitles, watermarks, logos, and timestamps. Generate masks and inpaint — no manual work needed. Multilingual out of the box.
+          Detect subtitles, watermarks, logos, and timestamps into a reviewable, time-aware WipePlan. Inspect remove/keep tracks, follow progress, cancel safely, and inpaint locally.
         </p>
         <div class="hero-actions">
           <a href="#usage" class="btn btn-primary" data-i18n="hero_cta_start">Get started</a>
@@ -595,14 +598,13 @@
           <span>quickstart.py</span>
         </div>
         <div class="code-body">
-<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">remove_text</span>
+<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">WipeEngine</span><span class="op">,</span> <span class="fn">WipeRequest</span>
 
-<span class="comment"># Mask is optional — subtitle regions</span>
-<span class="comment"># are auto-detected if omitted</span>
-<span class="fn">remove_text</span><span class="op">(</span>
-    <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span>
-    <span class="param">output</span><span class="op">=</span><span class="string">"result/"</span><span class="op">,</span>
-<span class="op">)</span>
+<span class="keyword">with</span> <span class="fn">WipeEngine</span><span class="op">(</span><span class="param">task</span><span class="op">=</span><span class="string">"clean"</span><span class="op">)</span> <span class="keyword">as</span> engine<span class="op">:</span>
+    plan <span class="op">=</span> engine<span class="op">.</span><span class="fn">plan</span><span class="op">(</span><span class="fn">WipeRequest</span><span class="op">(</span>
+        <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span>
+        <span class="param">output_dir</span><span class="op">=</span><span class="string">"plan/"</span><span class="op">,</span>
+    <span class="op">))</span>
         </div>
       </div>
     </div>
@@ -612,7 +614,7 @@
   <div class="install-strip" data-od-id="install">
     <div class="container install-inner">
       <div class="install-cmd">
-        <span class="dollar">$</span> pip install <span class="cmd">videowipe</span>
+        <span class="dollar">$</span> git clone <span class="cmd">https://github.com/KKenny0/videowipe.git</span>
       </div>
     </div>
   </div>
@@ -621,9 +623,9 @@
   <section class="section" id="features" data-od-id="features">
     <div class="container">
       <div class="section-label" data-i18n="feat_label">Features</div>
-      <div class="section-title" data-i18n="feat_title">Detect. Select. Inpaint.</div>
+      <div class="section-title" data-i18n="feat_title">Plan first. Pixels second.</div>
       <p class="section-dek" data-i18n="feat_dek">
-        A complete pipeline from frame sampling to mask generation to background restoration. Built for production use.
+        One local engine for detection, review, and inpainting — embeddable in Python workers, CLI workflows, and your own product.
       </p>
       <div class="features-grid">
         <div class="feature-card">
@@ -633,9 +635,9 @@
               <circle cx="12" cy="12" r="3"/>
             </svg>
           </div>
-          <h3 data-i18n="feat1_title">Auto-detection</h3>
+          <h3 data-i18n="feat1_title">Reviewable WipePlan</h3>
           <p data-i18n="feat1_desc">
-            DBNet-based text detector samples frames across the video, finds text regions, and clusters them by position. No manual mask drawing. Works with Chinese, English, Korean, Burmese, and more.
+            Detection produces a plain-JSON plan with remove/keep tracks, time ranges, and precise masks. Review or edit the decision before any pixels are changed.
           </p>
         </div>
         <div class="feature-card">
@@ -646,7 +648,7 @@
           </div>
           <h3 data-i18n="feat2_title">Pluggable backends</h3>
           <p data-i18n-html="feat2_desc">
-            Default STTN backend runs on CPU. Swap in ProPainter, LaMa, or any external model via <code class="mono">--external-command</code>. Same mask pipeline, better quality when you have GPU.
+            Default STTN runs locally. Use the validated ProPainter adapter or connect another model through <code class="mono">--external-command</code> without replacing the planning pipeline.
           </p>
         </div>
         <div class="feature-card">
@@ -655,9 +657,9 @@
               <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
             </svg>
           </div>
-          <h3 data-i18n="feat3_title">Intent-driven cleanup</h3>
+          <h3 data-i18n="feat3_title">Observable SDK</h3>
           <p data-i18n-html="feat3_desc">
-            Tell it what to remove in plain English: <code class="mono">--intent "remove bottom Chinese subtitles"</code>. Optional OCR reads text content. LLM-backed selection via <code class="mono">--agent</code>.
+            <code class="mono">plan()</code> and <code class="mono">run()</code> report structured progress and accept cooperative cancellation. Reuse one engine across a batch or worker.
           </p>
         </div>
       </div>
@@ -668,30 +670,30 @@
   <section class="section" id="how-it-works" data-od-id="how-it-works" style="background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
     <div class="container">
       <div class="section-label" data-i18n="pipe_label">Pipeline</div>
-      <div class="section-title" data-i18n="pipe_title">Three stages, zero config</div>
+      <div class="section-title" data-i18n="pipe_title">Detect. Review. Execute.</div>
       <p class="section-dek" data-i18n="pipe_dek">
-        The full pipeline runs in one command. Here's what happens under the hood.
+        Separate the cleanup decision from the expensive inpainting step.
       </p>
       <div class="pipeline-steps">
         <div class="step">
           <div class="step-num">1</div>
           <h3 data-i18n="step1_title">Detection</h3>
           <p data-i18n="step1_desc">
-            Sample frames across the video. Run DBNet text detection on each. Cluster results by spatial position and select the best preview frame.
+            Find text overlays and build candidate tracks. Balanced and sensitive modes densely recheck detector-backed remove ranges; coarse fallbacks stay explicit.
           </p>
         </div>
         <div class="step">
           <div class="step-num">2</div>
-          <h3 data-i18n="step2_title">Target selection</h3>
+          <h3 data-i18n="step2_title">Plan review</h3>
           <p data-i18n="step2_desc">
-            Classify regions as subtitle, watermark, logo, or timestamp. Optional OCR reads the text. Intent parser maps your instructions to specific targets.
+            Inspect remove/keep actions, temporal segments, and precise masks. Optional OCR, intent, and local-agent selection help choose the right targets.
           </p>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <h3 data-i18n="step3_title">Inpainting</h3>
+          <h3 data-i18n="step3_title">Local execution</h3>
           <p data-i18n="step3_desc">
-            Generate masks from selected regions. Fill in using temporal information from neighboring frames via STTN or your preferred external model.
+            Execute the reviewed plan with STTN or a compatible external model. The same source-bound plan reproduces the same mask decisions.
           </p>
         </div>
       </div>
@@ -702,31 +704,30 @@
   <section class="section" id="usage" data-od-id="usage">
     <div class="container">
       <div class="section-label" data-i18n="usage_label">Usage</div>
-      <div class="section-title" data-i18n="usage_title">Python API or CLI</div>
+      <div class="section-title" data-i18n="usage_title">Python SDK or CLI</div>
       <p class="section-dek" data-i18n="usage_dek">
-        Two ways to use VideoWipe — pick whichever fits your workflow.
+        Embed the structured engine or use the command-line adapter over the same pipeline.
       </p>
       <div class="examples-grid">
         <div class="hero-code">
           <div class="code-header">
             <div class="code-dots"><span></span><span></span><span></span></div>
-            <span>python — full pipeline</span>
+            <span>python — plan and run</span>
           </div>
           <div class="code-body">
-<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">WipeEngine</span>
+<span class="keyword">from</span> videowipe <span class="keyword">import</span> <span class="fn">CancellationToken</span><span class="op">,</span> <span class="fn">WipeEngine</span><span class="op">,</span> <span class="fn">WipeRequest</span>
 
-engine <span class="op">=</span> <span class="fn">WipeEngine</span><span class="op">(</span>
-    <span class="param">task</span><span class="op">=</span><span class="string">"clean"</span><span class="op">,</span>
-    <span class="param">detect_mode</span><span class="op">=</span><span class="string">"balanced"</span><span class="op">,</span>
-    <span class="param">ocr</span><span class="op">=</span><span class="string">"auto"</span><span class="op">,</span>
-<span class="op">)</span>
-engine<span class="op">.</span><span class="fn">process</span><span class="op">(</span>
-    <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span>
-    <span class="param">targets</span><span class="op">=</span><span class="op">[</span><span class="string">"subtitle"</span><span class="op">,</span> <span class="string">"watermark"</span><span class="op">]</span><span class="op">,</span>
-    <span class="param">intent</span><span class="op">=</span><span class="string">"remove Chinese subtitles"</span><span class="op">,</span>
-    <span class="param">output</span><span class="op">=</span><span class="string">"result/"</span><span class="op">,</span>
-<span class="op">)</span>
-engine<span class="op">.</span><span class="fn">cleanup</span><span class="op">()</span>
+<span class="keyword">def</span> <span class="fn">report</span><span class="op">(</span>event<span class="op">):</span>
+    <span class="fn">print</span><span class="op">(</span>event<span class="op">.</span>phase<span class="op">,</span> event<span class="op">.</span>completed<span class="op">,</span> event<span class="op">.</span>total<span class="op">)</span>
+
+<span class="keyword">with</span> <span class="fn">WipeEngine</span><span class="op">(</span><span class="param">task</span><span class="op">=</span><span class="string">"clean"</span><span class="op">)</span> <span class="keyword">as</span> engine<span class="op">:</span>
+    plan <span class="op">=</span> engine<span class="op">.</span><span class="fn">plan</span><span class="op">(</span>
+        <span class="fn">WipeRequest</span><span class="op">(</span><span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span> <span class="param">output_dir</span><span class="op">=</span><span class="string">"plan/"</span><span class="op">),</span>
+        <span class="param">on_progress</span><span class="op">=</span>report<span class="op">,</span> <span class="param">cancellation</span><span class="op">=</span><span class="fn">CancellationToken</span><span class="op">(),</span>
+    <span class="op">)</span>
+    result <span class="op">=</span> engine<span class="op">.</span><span class="fn">run</span><span class="op">(</span><span class="fn">WipeRequest</span><span class="op">(</span>
+        <span class="param">video</span><span class="op">=</span><span class="string">"input.mp4"</span><span class="op">,</span> <span class="param">output_dir</span><span class="op">=</span><span class="string">"result/"</span><span class="op">,</span> <span class="param">plan</span><span class="op">=</span>plan<span class="op">,</span>
+    <span class="op">),</span> <span class="param">on_progress</span><span class="op">=</span>report<span class="op">)</span>
           </div>
         </div>
         <div class="hero-code">
@@ -735,18 +736,15 @@ engine<span class="op">.</span><span class="fn">cleanup</span><span class="op">(
             <span>terminal — quick clean</span>
           </div>
           <div class="code-body">
-<span class="comment"># Auto-detect and remove all text</span>
-videowipe clean input.mp4 <span class="param">-o</span> result/
+<span class="comment"># Generate a reviewable WipePlan</span>
+videowipe clean input.mp4 <span class="param">--preview</span> <span class="param">-o</span> plan/
 
-<span class="comment"># Target specific types</span>
-videowipe clean input.mp4 <span class="param">--target</span> subtitle
-
-<span class="comment"># Natural language intent</span>
+<span class="comment"># Execute the reviewed plan</span>
 videowipe clean input.mp4 \
-  <span class="param">--intent</span> <span class="string">"remove bottom Chinese subtitles"</span>
+  <span class="param">--plan</span> plan/wipe_plan.json <span class="param">-o</span> result/
 
-<span class="comment"># Preview without processing</span>
-videowipe clean input.mp4 <span class="param">--preview</span> <span class="param">-o</span> result/
+<span class="comment"># Or run the full pipeline directly</span>
+videowipe clean input.mp4 <span class="param">-o</span> result/
 
 <span class="comment"># Docker (CPU)</span>
 docker run <span class="param">--rm</span> <span class="param">-v</span> <span class="string">"$(pwd)"</span>:/data \
@@ -763,19 +761,19 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
     <div class="container">
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-value">3.8+</div>
+          <div class="stat-value">3.10+</div>
           <div class="stat-label" data-i18n="stat1_label">Python version required</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">~480 MB</div>
-          <div class="stat-label" data-i18n="stat2_label">Docker CPU image</div>
+          <div class="stat-value">v1</div>
+          <div class="stat-label" data-i18n="stat2_label">Reviewable plan contract</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">0</div>
           <div class="stat-label" data-i18n="stat3_label">Manual masks needed</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">MIT</div>
+          <div class="stat-value">GPL-3.0</div>
           <div class="stat-label" data-i18n="stat4_label">Open-source license</div>
         </div>
       </div>
@@ -786,12 +784,12 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
   <section class="cta-section" data-od-id="cta">
     <div class="container">
       <div class="section-label" data-i18n="cta_label">Get started</div>
-      <div class="section-title" data-i18n="cta_title">Clean video, no manual work.</div>
+      <div class="section-title" data-i18n="cta_title">Build your cleanup pipeline.</div>
       <p class="section-dek" data-i18n="cta_dek">
-        Install with pip, run one command. Auto-detect handles the rest. Works on CPU, scales to GPU.
+        Clone the source, choose ONNX Runtime or PyTorch, and embed the same local engine used by the CLI and Web adapter.
       </p>
       <div class="cta-actions">
-        <a href="https://pypi.org/project/videowipe/" class="btn btn-primary" data-i18n="cta_install">Install from PyPI</a>
+        <a href="https://github.com/kkenny0/videowipe#install" class="btn btn-primary" data-i18n="cta_install">Install from source</a>
         <a href="https://github.com/kkenny0/videowipe" class="btn btn-ghost" data-i18n="cta_source">View source on GitHub</a>
       </div>
     </div>
@@ -817,11 +815,11 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
   <footer class="footer">
     <div class="container footer-inner">
       <div class="footer-copy">
-        VideoWipe · MIT License · <span data-i18n="footer_tagline">Auto-detect + pluggable inpainting</span>
+        VideoWipe · GPL-3.0 · <span data-i18n="footer_tagline">Reviewable plans + pluggable inpainting</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/kkenny0/videowipe">GitHub</a>
-        <a href="https://pypi.org/project/videowipe/">PyPI</a>
+        <a href="https://github.com/kkenny0/videowipe/releases">Releases</a>
         <a href="https://kkenny0.github.io/support/">Support</a>
         <a href="https://github.com/kkenny0/videowipe/blob/main/LICENSE">License</a>
       </div>
@@ -836,92 +834,92 @@ docker run <span class="param">--rm</span> <span class="param">-v</span> <span c
         nav_how: 'How it works',
         nav_usage: 'Usage',
         nav_support: 'Support',
-        hero_eyebrow: 'Open-source video inpainting tool',
-        hero_h1: 'Remove text from video.<br><span class="accent">One command.</span>',
-        hero_lead: 'Auto-detect hardcoded subtitles, watermarks, logos, and timestamps. Generate masks and inpaint — no manual work needed. Multilingual out of the box.',
+        hero_eyebrow: 'Local-first video cleanup SDK',
+        hero_h1: 'Plan the wipe.<br><span class="accent">Then run it.</span>',
+        hero_lead: 'Detect subtitles, watermarks, logos, and timestamps into a reviewable, time-aware WipePlan. Inspect remove/keep tracks, follow progress, cancel safely, and inpaint locally.',
         hero_cta_start: 'Get started',
         hero_cta_github: 'View on GitHub',
         feat_label: 'Features',
-        feat_title: 'Detect. Select. Inpaint.',
-        feat_dek: 'A complete pipeline from frame sampling to mask generation to background restoration. Built for production use.',
-        feat1_title: 'Auto-detection',
-        feat1_desc: 'DBNet-based text detector samples frames across the video, finds text regions, and clusters them by position. No manual mask drawing. Works with Chinese, English, Korean, Burmese, and more.',
+        feat_title: 'Plan first. Pixels second.',
+        feat_dek: 'One local engine for detection, review, and inpainting — embeddable in Python workers, CLI workflows, and your own product.',
+        feat1_title: 'Reviewable WipePlan',
+        feat1_desc: 'Detection produces a plain-JSON plan with remove/keep tracks, time ranges, and precise masks. Review or edit the decision before any pixels are changed.',
         feat2_title: 'Pluggable backends',
-        feat2_desc: 'Default STTN backend runs on CPU. Swap in ProPainter, LaMa, or any external model via <code class="mono">--external-command</code>. Same mask pipeline, better quality when you have GPU.',
-        feat3_title: 'Intent-driven cleanup',
-        feat3_desc: 'Tell it what to remove in plain English: <code class="mono">--intent "remove bottom Chinese subtitles"</code>. Optional OCR reads text content. LLM-backed selection via <code class="mono">--agent</code>.',
+        feat2_desc: 'Default STTN runs locally. Use the validated ProPainter adapter or connect another model through <code class="mono">--external-command</code> without replacing the planning pipeline.',
+        feat3_title: 'Observable SDK',
+        feat3_desc: '<code class="mono">plan()</code> and <code class="mono">run()</code> report structured progress and accept cooperative cancellation. Reuse one engine across a batch or worker.',
         pipe_label: 'Pipeline',
-        pipe_title: 'Three stages, zero config',
-        pipe_dek: 'The full pipeline runs in one command. Here\u2019s what happens under the hood.',
+        pipe_title: 'Detect. Review. Execute.',
+        pipe_dek: 'Separate the cleanup decision from the expensive inpainting step.',
         step1_title: 'Detection',
-        step1_desc: 'Sample frames across the video. Run DBNet text detection on each. Cluster results by spatial position and select the best preview frame.',
-        step2_title: 'Target selection',
-        step2_desc: 'Classify regions as subtitle, watermark, logo, or timestamp. Optional OCR reads the text. Intent parser maps your instructions to specific targets.',
-        step3_title: 'Inpainting',
-        step3_desc: 'Generate masks from selected regions. Fill in using temporal information from neighboring frames via STTN or your preferred external model.',
+        step1_desc: 'Find text overlays and build candidate tracks. Balanced and sensitive modes densely recheck detector-backed remove ranges; coarse fallbacks stay explicit.',
+        step2_title: 'Plan review',
+        step2_desc: 'Inspect remove/keep actions, temporal segments, and precise masks. Optional OCR, intent, and local-agent selection help choose the right targets.',
+        step3_title: 'Local execution',
+        step3_desc: 'Execute the reviewed plan with STTN or a compatible external model. The same source-bound plan reproduces the same mask decisions.',
         usage_label: 'Usage',
-        usage_title: 'Python API or CLI',
-        usage_dek: 'Two ways to use VideoWipe \u2014 pick whichever fits your workflow.',
+        usage_title: 'Python SDK or CLI',
+        usage_dek: 'Embed the structured engine or use the command-line adapter over the same pipeline.',
         stat1_label: 'Python version required',
-        stat2_label: 'Docker CPU image',
+        stat2_label: 'Reviewable plan contract',
         stat3_label: 'Manual masks needed',
         stat4_label: 'Open-source license',
         cta_label: 'Get started',
-        cta_title: 'Clean video, no manual work.',
-        cta_dek: 'Install with pip, run one command. Auto-detect handles the rest. Works on CPU, scales to GPU.',
-        cta_install: 'Install from PyPI',
+        cta_title: 'Build your cleanup pipeline.',
+        cta_dek: 'Clone the source, choose ONNX Runtime or PyTorch, and embed the same local engine used by the CLI and Web adapter.',
+        cta_install: 'Install from source',
         cta_source: 'View source on GitHub',
         support_label: 'Support',
         support_title: 'Help keep VideoWipe maintained.',
         support_dek: 'If VideoWipe saves you time on subtitle, watermark, or text-overlay cleanup, support helps keep model packaging, Docker images, detection tuning, and documentation maintained.',
         support_cta: 'Support the project',
-        footer_tagline: 'Auto-detect + pluggable inpainting'
+        footer_tagline: 'Reviewable plans + pluggable inpainting'
       },
       zh: {
         nav_features: '功能',
         nav_how: '工作原理',
         nav_usage: '使用方式',
         nav_support: '支持',
-        hero_eyebrow: '开源视频文字擦除工具',
-        hero_h1: '一键去除视频中的文字。<br><span class="accent">只需一行命令。</span>',
-        hero_lead: '自动检测硬字幕、水印、Logo 和时间戳。生成遮罩并修复画面——无需手动操作，原生支持多语言。',
+        hero_eyebrow: '本地优先的视频清理 SDK',
+        hero_h1: '先规划擦除。<br><span class="accent">再执行修复。</span>',
+        hero_lead: '将字幕、水印、Logo 和时间戳检测为可审阅、带时序的 WipePlan。先检查 remove/keep 轨道，再跟踪进度、按需取消，并在本地完成画面修复。',
         hero_cta_start: '开始使用',
         hero_cta_github: '查看 GitHub',
         feat_label: '功能',
-        feat_title: '检测 · 筛选 · 修复',
-        feat_dek: '从帧采样到遮罩生成再到背景修复的完整管线，为生产环境而设计。',
-        feat1_title: '自动检测',
-        feat1_desc: '基于 DBNet 的文字检测器对视频进行帧采样，定位文字区域并按位置聚类。无需手动绘制遮罩，支持中文、英文、韩文、缅甸语等多种语言。',
+        feat_title: '先定计划，再改像素',
+        feat_dek: '一套本地引擎完成检测、审阅与修复，可嵌入 Python Worker、命令行工作流或你自己的产品。',
+        feat1_title: '可审阅的 WipePlan',
+        feat1_desc: '检测结果会变成普通 JSON 计划，记录 remove/keep 轨道、生效时间段和精确 mask。在修改任何像素之前，先审阅或编辑决定。',
         feat2_title: '可插拔后端',
-        feat2_desc: '默认 STTN 后端可在 CPU 上运行。通过 <code class="mono">--external-command</code> 切换 ProPainter、LaMa 或任何外部模型。同一套遮罩管线，GPU 环境下效果更好。',
-        feat3_title: '意图驱动',
-        feat3_desc: '用自然语言告诉它要去除什么：<code class="mono">--intent "去除底部中文字幕"</code>。可选 OCR 读取文字内容，通过 <code class="mono">--agent</code> 实现大模型辅助选择。',
+        feat2_desc: '默认 STTN 在本地运行。可使用已验证的 ProPainter 适配器，或通过 <code class="mono">--external-command</code> 接入其他模型，无需替换规划管线。',
+        feat3_title: '可观测的 SDK',
+        feat3_desc: '<code class="mono">plan()</code> 与 <code class="mono">run()</code> 会报告结构化进度并支持协作式取消；同一引擎可复用于批处理或 Worker。',
         pipe_label: '管线',
-        pipe_title: '三个阶段，零配置',
-        pipe_dek: '一条命令运行完整管线。以下是背后的工作流程。',
+        pipe_title: '检测 · 审阅 · 执行',
+        pipe_dek: '将清理决策与耗时的画面修复分开。',
         step1_title: '检测',
-        step1_desc: '对视频进行帧采样，在每一帧上运行 DBNet 文字检测。按空间位置聚类结果，选择最佳预览帧。',
-        step2_title: '目标选择',
-        step2_desc: '将区域分类为字幕、水印、Logo 或时间戳。可选 OCR 读取文字内容。意图解析器将你的指令映射到具体目标。',
-        step3_title: '修复',
-        step3_desc: '从选定区域生成遮罩。利用相邻帧的时域信息，通过 STTN 或你偏好的外部模型进行画面修复。',
+        step1_desc: '定位文字叠加并建立候选轨道。balanced 和 sensitive 会逐帧复检有检测器证据的移除片段；粗时序 fallback 会被明确标记。',
+        step2_title: '计划审阅',
+        step2_desc: '检查 remove/keep 动作、时序片段和精确 mask。可选 OCR、自然语言意图与本地 Agent 帮助选择正确目标。',
+        step3_title: '本地执行',
+        step3_desc: '使用 STTN 或兼容的外部模型执行已审阅计划。绑定同一源视频的计划会复现相同的 mask 决策。',
         usage_label: '使用方式',
-        usage_title: 'Python API 或命令行',
-        usage_dek: '两种使用方式——选适合你工作流的那一种。',
+        usage_title: 'Python SDK 或命令行',
+        usage_dek: '嵌入结构化引擎，或使用建立在同一管线上的命令行适配器。',
         stat1_label: 'Python 版本要求',
-        stat2_label: 'Docker CPU 镜像',
+        stat2_label: '可审阅的计划契约',
         stat3_label: '需要手动绘制的遮罩',
         stat4_label: '开源许可证',
         cta_label: '开始使用',
-        cta_title: '干净视频，无需手动操作。',
-        cta_dek: 'pip 安装，一行命令。自动检测处理剩下的事。支持 CPU，可扩展至 GPU。',
-        cta_install: '从 PyPI 安装',
+        cta_title: '构建你的视频清理管线',
+        cta_dek: '从源码安装，选择 ONNX Runtime 或 PyTorch，并嵌入 CLI 与 Web 适配器共同使用的本地引擎。',
+        cta_install: '从源码安装',
         cta_source: '在 GitHub 查看源码',
         support_label: '支持项目',
         support_title: '帮助 VideoWipe 持续维护。',
         support_dek: '如果 VideoWipe 帮你节省了字幕、水印或文字叠加清理时间，你的支持会帮助我继续维护模型打包、Docker 镜像、检测调优和文档。',
         support_cta: '支持这个项目',
-        footer_tagline: '自动检测 + 可插拔修复引擎'
+        footer_tagline: '可审阅计划 + 可插拔修复'
       }
     };
 
