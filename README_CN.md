@@ -127,13 +127,23 @@ clean 流水线会生成一份 `WipePlan`：可读、可审阅的 JSON 计划，
 画面顶部的常驻叠加默认保留，只有明确选择时才会移除。采样较稀造成的边界误差会写入 warnings，不会伪装成逐帧精确判断。
 
 ```python
-from videowipe import WipeEngine, WipeRequest
+from videowipe import CancellationToken, WipeEngine, WipeRequest
+
+def report_plan(event):
+    print(event.phase, event.completed, event.total)
 
 engine = WipeEngine(task="clean")
-plan = engine.plan(WipeRequest(video="input.mp4", output_dir="plan/"))
+plan = engine.plan(
+    WipeRequest(video="input.mp4", output_dir="plan/"),
+    on_progress=report_plan,
+    cancellation=CancellationToken(),
+)
 # → plan/wipe_plan.json + plan/wipe_plan_masks.npz
 engine.cleanup()
 ```
+
+生成计划时会依次报告 `prepare`、`detect`、逐帧 `refine`、`persist` 和
+`complete` 阶段；`fast` 模式会按设计跳过 `refine`。
 
 `wipe_plan.json` 对 agent 可读。只编辑每条 track 的 `action` 和 `segments`——空间 mask 存在同目录的 `.npz`，不要改动。随后对同一视频校验并执行修改后的计划：
 
@@ -209,7 +219,7 @@ videowipe clean input.mp4 --confirm
 | `--preview` | 仅输出检测产物（不执行修复） | 关闭 |
 | `--plan` | 执行已有的 `wipe_plan.json` 而非重新检测（与 `-m, --mask` 互斥） | — |
 | `--confirm` | 显示检测目标并确认后再处理 | 关闭 |
-| `--detect-mode` | 检测预设：`fast`（24 帧粗采样）；`balanced`（50 帧）和 `sensitive`（80 帧）会对选中的移除片段逐帧复检，以更准确保留字幕间隙 | `balanced` |
+| `--detect-mode` | 检测预设：`fast`（24 帧粗采样）；`balanced`（50 帧）和 `sensitive`（80 帧）会逐帧复检有检测器证据的移除片段；仅由 fallback 发现的轨道保持粗时序并产生 warning | `balanced` |
 | `--ocr` | OCR 文字识别：`auto`、`off`、`rapidocr` | `auto` |
 | `--agent` | 本地 LLM CLI 做意图选择（如 `claude`、`codex`） | — |
 | `--external-command` | 外部修复命令（绕过内置 STTN） | — |

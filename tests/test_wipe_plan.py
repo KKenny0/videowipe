@@ -128,12 +128,18 @@ def test_refinement_rechecks_each_active_frame_once_and_splits_a_gap(tmp_path):
     result = CleanDetectionResult(
         [candidate], (100, 100), sample_indices=[0, 4], detector=detector,
     )
+    progress = []
+    cancellation_checks = []
     warnings = refine_temporal_presence(
         str(video), result, {candidate.id: [Segment(0, 5)]}, 5,
+        progress=lambda done, total: progress.append((done, total)),
+        check_cancelled=lambda: cancellation_checks.append(detector.calls),
     )
 
     assert warnings == []
     assert detector.calls == 5
+    assert cancellation_checks == [0, 1, 2, 3, 4]
+    assert progress == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
     assert candidate.temporal_sample_indices == [0, 1, 2, 3, 4]
     assert candidate.presence_frames == [0, 1, 3, 4]
     plan = build_wipe_plan([candidate], [0, 4], 2, _source(5), (100, 100))
@@ -214,10 +220,37 @@ def test_refinement_rejects_premature_decode(monkeypatch):
         detector=type("Detector", (), {"detect": lambda self, frame: []})(),
     )
 
+    progress = []
     with pytest.raises(ValueError, match=r"decoded 2 frames; expected 3"):
         refine_temporal_presence(
             "input.mp4", result, {candidate.id: [Segment(0, 3)]}, 3,
+            progress=lambda done, total: progress.append((done, total)),
         )
+    assert progress == [(1, 3), (2, 3)]
+
+
+def test_refinement_checks_cancellation_before_detector_work(tmp_path):
+    video = tmp_path / "cancel.mp4"
+    _write_video(video, frames=1)
+
+    class Detector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+
+    detector = Detector()
+    candidate = _candidate(presence_frames=[0])
+    result = CleanDetectionResult(
+        [candidate], (100, 100), sample_indices=[0], detector=detector,
+    )
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        refine_temporal_presence(
+            str(video), result, {candidate.id: [Segment(0, 1)]}, 1,
+            check_cancelled=lambda: (_ for _ in ()).throw(RuntimeError("cancelled")),
+        )
+    assert detector.calls == 0
 
 
 def test_exact_decode_shares_detector_and_leaves_keep_track_unchanged(monkeypatch):

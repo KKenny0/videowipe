@@ -1224,6 +1224,8 @@ def refine_temporal_presence(
     result: CleanDetectionResult,
     candidate_segments: dict[str, Iterable[object]],
     expected_frame_count: int,
+    progress=None,
+    check_cancelled=None,
 ) -> list[str]:
     """Densely recheck detector-backed remove candidates inside coarse segments.
 
@@ -1257,6 +1259,8 @@ def refine_temporal_presence(
     try:
         frame_index = 0
         while frame_index < expected_frame_count:
+            if check_cancelled is not None:
+                check_cancelled()
             ok, frame = cap.read()
             if not ok:
                 raise ValueError(
@@ -1290,6 +1294,8 @@ def refine_temporal_presence(
                         ):
                             candidate.presence_frames.append(frame_index)
             frame_index += 1
+            if progress is not None:
+                progress(frame_index, expected_frame_count)
     finally:
         cap.release()
 
@@ -1448,7 +1454,8 @@ def write_clean_artifacts(
                 1,
                 cv2.LINE_AA,
             )
-        cv2.imwrite(preview_path, preview)
+        if not cv2.imwrite(preview_path, preview):
+            raise OSError(f"Failed to write image: {preview_path}")
 
     return {"candidates": candidates_path, "preview": preview_path}
 

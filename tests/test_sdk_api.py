@@ -1,6 +1,9 @@
 import json
+import os
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from videowipe import (
@@ -14,6 +17,7 @@ from videowipe import (
     WipeRequest,
     WipeResult,
 )
+from videowipe.detect import TextBox
 
 
 def _fake_success(output_dir: Path):
@@ -238,7 +242,7 @@ def test_cancellation_during_complete_notification_keeps_success(tmp_path, monke
 
 
 def test_engine_busy_guard_and_cleanup_are_atomic():
-    engine = WipeEngine()
+    engine = WipeEngine(task="clean")
     assert engine._run_lock.acquire(blocking=False)
     try:
         with pytest.raises(ProcessingError) as busy:
@@ -247,6 +251,9 @@ def test_engine_busy_guard_and_cleanup_are_atomic():
         with pytest.raises(ProcessingError) as cleanup_busy:
             engine.cleanup()
         assert cleanup_busy.value.code == "ENGINE_BUSY"
+        with pytest.raises(ProcessingError) as plan_busy:
+            engine.plan(WipeRequest(video="input.mp4"))
+        assert plan_busy.value.code == "ENGINE_BUSY"
     finally:
         engine._run_lock.release()
 
@@ -336,13 +343,6 @@ def test_progress_event_with_unknown_total_has_no_fraction():
 
 # ── WipePlan Phase A / C3: plan() entry point + clean-path wiring ────────────
 
-import os
-
-import cv2
-import numpy as np
-
-from videowipe.detect import TextBox
-
 
 def _write_plan_video(path, frames=30, width=96, height=64):
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 4, (width, height))
@@ -391,6 +391,217 @@ def test_plan_builds_wipeplan_without_loading_model(tmp_path):
     top = [t for t in plan.tracks if (t.bbox[1] + t.bbox[3]) / 2 < 19]
     assert top and all(t.action == "keep" for t in top)
     assert any("safety:persistent-top-overlay" in t.decision_reason for t in top)
+
+
+@pytest.mark.parametrize(
+    ("api_request", "kwargs", "message"),
+    [
+        ({"video": "input.mp4"}, {}, "WipeRequest"),
+        (WipeRequest(video="input.mp4"), {"on_progress": "print"}, "on_progress"),
+        (WipeRequest(video="input.mp4"), {"cancellation": object()}, "CancellationToken"),
+    ],
+)
+def test_plan_validates_structured_api(api_request, kwargs, message):
+    with pytest.raises(InvalidInputError, match=message):
+        WipeEngine(task="clean").plan(api_request, **kwargs)
+
+
+def test_plan_reports_ordered_progress_and_fast_skips_refine(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=5)
+
+    events = []
+    WipeEngine(task="clean").plan(
+        WipeRequest(video=video, output_dir=tmp_path / "balanced", detector=_PlanFakeDetector()),
+        on_progress=events.append,
+    )
+    assert [(event.phase, event.completed, event.total) for event in events] == [
+        ("prepare", 0, 1),
+        ("detect", 0, 0),
+        ("detect", 1, 1),
+        *(("refine", index, 5) for index in range(1, 6)),
+        ("persist", 0, 1),
+        ("persist", 1, 1),
+        ("complete", 1, 1),
+    ]
+
+    fast_events = []
+    WipeEngine(task="clean").plan(
+        WipeRequest(
+            video=video, output_dir=tmp_path / "fast",
+            detector=_PlanFakeDetector(), detect_mode="fast",
+        ),
+        on_progress=fast_events.append,
+    )
+    assert "refine" not in [event.phase for event in fast_events]
+
+
+def test_plan_callback_failure_releases_engine(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=2)
+    engine = WipeEngine(task="clean")
+    callback_error = RuntimeError("consumer stopped")
+
+    with pytest.raises(RuntimeError) as raised:
+        engine.plan(
+            WipeRequest(video=video, output_dir=tmp_path / "failed"),
+            on_progress=lambda _event: (_ for _ in ()).throw(callback_error),
+        )
+    assert raised.value is callback_error
+
+    plan = engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "retry",
+        detector=_PlanFakeDetector(), detect_mode="fast",
+    ))
+    assert plan.tracks
+
+
+def test_plan_cancellation_from_complete_callback_is_observed(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=2)
+    token = CancellationToken()
+    events = []
+
+    def cancel_on_complete(event):
+        events.append(event)
+        if event.phase == "complete":
+            token.cancel()
+
+    with pytest.raises(ProcessingCancelledError):
+        WipeEngine(task="clean").plan(
+            WipeRequest(
+                video=video, output_dir=tmp_path / "out",
+                detector=_PlanFakeDetector(), detect_mode="fast",
+            ),
+            on_progress=cancel_on_complete,
+            cancellation=token,
+        )
+    assert events[-1].phase == "complete"
+
+
+def test_plan_does_not_finish_detect_when_preview_write_returns_false(
+    tmp_path, monkeypatch,
+):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=2)
+    events = []
+    monkeypatch.setattr("videowipe.detect.cv2.imwrite", lambda *_args: False)
+
+    with pytest.raises(OSError, match="clean_preview.jpg"):
+        WipeEngine(task="clean").plan(
+            WipeRequest(
+                video=video, output_dir=tmp_path / "out",
+                detector=_PlanFakeDetector(), detect_mode="fast",
+            ),
+            on_progress=events.append,
+        )
+    assert [(event.phase, event.completed) for event in events] == [
+        ("prepare", 0), ("detect", 0),
+    ]
+
+
+def test_plan_does_not_finish_persist_when_overview_write_returns_false(
+    tmp_path, monkeypatch,
+):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=2)
+    events = []
+    monkeypatch.setattr(
+        "videowipe.engine.cv2.imwrite",
+        lambda path, _image: not str(path).endswith("auto_mask.png"),
+    )
+
+    with pytest.raises(OSError, match="auto_mask.png"):
+        WipeEngine(task="clean").plan(
+            WipeRequest(
+                video=video, output_dir=tmp_path / "out",
+                detector=_PlanFakeDetector(), detect_mode="fast",
+            ),
+            on_progress=events.append,
+        )
+    assert [(event.phase, event.completed) for event in events[-2:]] == [
+        ("detect", 1), ("persist", 0),
+    ]
+
+
+def test_pre_cancelled_plan_never_enters_detection(monkeypatch):
+    engine = WipeEngine(task="clean")
+    token = CancellationToken()
+    token.cancel()
+    entered = []
+    monkeypatch.setattr(engine, "_detect_clean", lambda *args: entered.append(True))
+
+    with pytest.raises(ProcessingCancelledError):
+        engine.plan(WipeRequest(video="input.mp4"), cancellation=token)
+    assert entered == []
+
+
+def test_cancelling_refine_aborts_plan_and_engine_is_reusable(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=5)
+    output = tmp_path / "cancelled"
+    token = CancellationToken()
+    events = []
+    engine = WipeEngine(task="clean")
+
+    def cancel_on_refine(event):
+        events.append(event)
+        if event.phase == "refine":
+            token.cancel()
+
+    with pytest.raises(ProcessingCancelledError):
+        engine.plan(
+            WipeRequest(video=video, output_dir=output, detector=_PlanFakeDetector()),
+            on_progress=cancel_on_refine,
+            cancellation=token,
+        )
+    assert "complete" not in [event.phase for event in events]
+    assert not (output / "wipe_plan.json").exists()
+
+    assert engine.plan(WipeRequest(
+        video=video, output_dir=tmp_path / "retry",
+        detector=_PlanFakeDetector(), detect_mode="fast",
+    )).tracks
+
+
+def test_clean_preview_run_exposes_plan_progress_once(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=5)
+    events = []
+
+    WipeEngine(task="clean").run(
+        WipeRequest(
+            video=video, output_dir=tmp_path / "preview",
+            detector=_PlanFakeDetector(), preview=True,
+        ),
+        on_progress=events.append,
+    )
+
+    phases = [event.phase for event in events]
+    assert "refine" in phases
+    assert phases.count("complete") == 1
+
+
+def test_clean_preview_run_maps_failed_overview_write(tmp_path, monkeypatch):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=2)
+    events = []
+    monkeypatch.setattr(
+        "videowipe.engine.cv2.imwrite",
+        lambda path, _image: not str(path).endswith("auto_mask.png"),
+    )
+
+    with pytest.raises(ProcessingError, match="auto_mask.png"):
+        WipeEngine(task="clean").run(
+            WipeRequest(
+                video=video, output_dir=tmp_path / "out",
+                detector=_PlanFakeDetector(), detect_mode="fast", preview=True,
+            ),
+            on_progress=events.append,
+        )
+    assert [(event.phase, event.completed) for event in events[-2:]] == [
+        ("detect", 1), ("persist", 0),
+    ]
 
 
 def test_run_rejects_mask_and_plan_together(tmp_path):

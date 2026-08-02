@@ -528,6 +528,8 @@ def build_refined_wipe_plan(
     explicit_remove_ids: set[str] | None = None,
     explicit_keep_ids: set[str] | None = None,
     loaded_actions: Mapping[str, str] | None = None,
+    progress: Any = None,
+    check_cancelled: Any = None,
 ) -> WipePlan:
     """Build one provisional -> refine -> final plan from detection output."""
     kwargs = {
@@ -549,6 +551,8 @@ def build_refined_wipe_plan(
         video_path, result,
         {track.id: track.segments for track in provisional.remove_tracks},
         source.frame_count,
+        progress=progress,
+        check_cancelled=check_cancelled,
     )
     final = build_wipe_plan(
         result.candidates, result.sample_indices, len(result.sample_indices),

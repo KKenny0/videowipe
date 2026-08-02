@@ -143,13 +143,23 @@ request explicitly selects them. Coarse sampling boundaries are recorded as
 warnings instead of being presented as frame-perfect decisions.
 
 ```python
-from videowipe import WipeEngine, WipeRequest
+from videowipe import CancellationToken, WipeEngine, WipeRequest
+
+def report_plan(event):
+    print(event.phase, event.completed, event.total)
 
 engine = WipeEngine(task="clean")
-plan = engine.plan(WipeRequest(video="input.mp4", output_dir="plan/"))
+plan = engine.plan(
+    WipeRequest(video="input.mp4", output_dir="plan/"),
+    on_progress=report_plan,
+    cancellation=CancellationToken(),
+)
 # → plan/wipe_plan.json + plan/wipe_plan_masks.npz
 engine.cleanup()
 ```
+
+Plan generation reports `prepare`, `detect`, per-frame `refine`, `persist`,
+and `complete` phases. `fast` mode intentionally omits `refine`.
 
 `wipe_plan.json` is agent-readable. Edit only each track's `action` and
 `segments` — the spatial masks live in the sidecar `.npz` and must not be
@@ -233,7 +243,7 @@ videowipe clean input.mp4 --confirm
 | `--preview` | Write detection artifacts only (no inpainting) | off |
 | `--plan` | Execute an existing `wipe_plan.json` instead of detecting (mutually exclusive with `-m, --mask`) | — |
 | `--confirm` | Show detected targets and confirm before processing | off |
-| `--detect-mode` | Detection preset: `fast` (24 coarse frames); `balanced` (50) and `sensitive` (80) densely recheck selected remove segments for sharper subtitle gaps | `balanced` |
+| `--detect-mode` | Detection preset: `fast` (24 coarse frames); `balanced` (50) and `sensitive` (80) densely recheck detector-backed remove segments. Fallback-only tracks stay coarse and emit a warning | `balanced` |
 | `--ocr` | OCR text recognition: `auto`, `off`, `rapidocr` | `auto` |
 | `--agent` | Local LLM CLI for intent-based selection (e.g., `claude`, `codex`) | — |
 | `--external-command` | External inpainting command (bypasses built-in STTN) | — |

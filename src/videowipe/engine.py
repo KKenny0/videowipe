@@ -155,6 +155,7 @@ class WipeEngine:
         self._task_impl.feather_radius = _DEFAULT_FEATHER_RADIUS
         self._model_loaded = False
         self._active_cancellation: Optional[CancellationToken] = None
+        self._active_progress: Optional[ProgressCallback] = None
         self._run_lock = threading.Lock()
         # Warnings from the most recent process() call (e.g. WipePlan warnings),
         # surfaced through WipeResult by run(). Reset at the start of process().
@@ -211,22 +212,14 @@ class WipeEngine:
 
         token = cancellation or CancellationToken()
         self._active_cancellation = token
+        self._active_progress = on_progress
         artifact_before = self._artifact_snapshot(output_dir)
 
-        def emit(event: ProgressEvent) -> None:
-            token.raise_if_cancelled()
-            if on_progress is not None:
-                try:
-                    on_progress(event)
-                except Exception as exc:
-                    raise _ProgressCallbackError(exc) from exc
-            token.raise_if_cancelled()
-
         def legacy_progress(completed: int, total: int) -> None:
-            emit(ProgressEvent("inpaint", completed, total))
+            self._emit_progress(ProgressEvent("inpaint", completed, total))
 
         try:
-            emit(ProgressEvent("prepare", 0, 1))
+            self._emit_progress(ProgressEvent("prepare", 0, 1))
             output_path = self.process(
                 video=video_path,
                 mask=mask_path,
@@ -244,11 +237,8 @@ class WipeEngine:
                 plan=request.plan,
             )
             result = self._build_result(request, output_path, artifact_before)
-            if on_progress is not None:
-                try:
-                    on_progress(ProgressEvent("complete", 1, 1))
-                except Exception as exc:
-                    raise _ProgressCallbackError(exc) from exc
+            # A final notification cannot retroactively cancel a successful run.
+            self._emit_progress(ProgressEvent("complete", 1, 1), check_after=False)
             return result
         except _ProgressCallbackError as exc:
             raise exc.cause
@@ -274,6 +264,7 @@ class WipeEngine:
             raise ProcessingError(message, code=code, cause=exc) from exc
         finally:
             self._active_cancellation = None
+            self._active_progress = None
             self._run_lock.release()
 
     @staticmethod
@@ -342,6 +333,18 @@ class WipeEngine:
     def _check_cancelled(self) -> None:
         if self._active_cancellation is not None:
             self._active_cancellation.raise_if_cancelled()
+
+    def _emit_progress(
+        self, event: ProgressEvent, *, check_after: bool = True,
+    ) -> None:
+        self._check_cancelled()
+        if self._active_progress is not None:
+            try:
+                self._active_progress(event)
+            except Exception as exc:
+                raise _ProgressCallbackError(exc) from exc
+        if check_after:
+            self._check_cancelled()
 
     def _ensure_model(self):
         if self._model_loaded:
@@ -456,10 +459,13 @@ class WipeEngine:
                     )
                 det_frame_shape = (wipe_plan.source.height, wipe_plan.source.width)
                 mask_arr = self._union_mask_from_plan(wipe_plan, det_frame_shape)
-                cv2.imwrite(
-                    os.path.join(output, "auto_mask.png"),
-                    (mask_arr * 255).astype(np.uint8),
-                )
+                auto_mask_path = os.path.join(output, "auto_mask.png")
+                if not cv2.imwrite(
+                    auto_mask_path, (mask_arr * 255).astype(np.uint8),
+                ):
+                    raise OSError(f"Failed to write image: {auto_mask_path}")
+                if plan is None:
+                    self._emit_progress(ProgressEvent("persist", 1, 1))
                 if preview:
                     self._check_cancelled()
                     print(f"Preview saved to {output}")
@@ -670,7 +676,12 @@ class WipeEngine:
 
     # ── WipePlan: detection, construction, execution glue ────────────────────
 
-    def plan(self, request: WipeRequest) -> WipePlan:
+    def plan(
+        self,
+        request: WipeRequest,
+        on_progress: Optional[ProgressCallback] = None,
+        cancellation: Optional[CancellationToken] = None,
+    ) -> WipePlan:
         """Detect, build, and persist a :class:`WipePlan` without loading the model.
 
         Writes ``wipe_plan.json`` + ``wipe_plan_masks.npz`` (and the overview
@@ -679,32 +690,71 @@ class WipeEngine:
         default. Re-running with this plan (via ``WipeRequest(plan=...)``)
         reproduces the same mask deterministically.
         """
+        if not isinstance(request, WipeRequest):
+            raise InvalidInputError("request must be a WipeRequest instance")
+        if on_progress is not None and not callable(on_progress):
+            raise InvalidInputError("on_progress must be callable")
+        if cancellation is not None and not isinstance(cancellation, CancellationToken):
+            raise InvalidInputError("cancellation must be a CancellationToken")
+        if isinstance(request.targets, (str, bytes)):
+            raise InvalidInputError("targets must be a sequence of strings, not a string")
+        if isinstance(request.regions, (str, bytes)):
+            raise InvalidInputError("regions must be a sequence of strings, not a string")
         if request.mask is not None:
             raise InvalidInputError("mask and plan are mutually exclusive")
         if self.task != "clean":
             raise InvalidInputError("plan is only supported for the clean task")
-        video_path = os.fspath(request.video)
-        output_dir = os.fspath(request.output_dir)
+        try:
+            video_path = os.fspath(request.video)
+            output_dir = os.fspath(request.output_dir)
+            targets = list(request.targets)
+            regions = list(request.regions)
+        except TypeError as exc:
+            raise InvalidInputError(
+                "video and output_dir must be filesystem paths; "
+                "targets and regions must be sequences",
+                cause=exc,
+            ) from exc
         if not video_path or not output_dir:
             raise InvalidInputError("video and output_dir must not be empty")
-        os.makedirs(output_dir, exist_ok=True)
-        det = request.detector or self._detector
-        result, selected_ids, request_snapshot, user_directed = self._detect_clean(
-            video_path, det, list(request.targets or ()), request.intent,
-            request.agent, list(request.regions or ()), request.detect_mode,
-            request.ocr, output_dir, request.confirm,
-        )
-        wipe_plan = self._build_fresh_clean_plan(
-            video_path, result, selected_ids, request_snapshot, user_directed,
-        )
-        self._write_final_clean_artifacts(result, wipe_plan, output_dir)
-        save_wipe_plan(wipe_plan, output_dir)
-        mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
-        cv2.imwrite(
-            os.path.join(output_dir, "auto_mask.png"),
-            (mask_arr * 255).astype(np.uint8),
-        )
-        return wipe_plan
+        if not self._run_lock.acquire(blocking=False):
+            raise ProcessingError(
+                "This WipeEngine is already processing a request",
+                code="ENGINE_BUSY",
+                retryable=True,
+            )
+
+        self._active_cancellation = cancellation or CancellationToken()
+        self._active_progress = on_progress
+        try:
+            self._emit_progress(ProgressEvent("prepare", 0, 1))
+            os.makedirs(output_dir, exist_ok=True)
+            det = request.detector or self._detector
+            result, selected_ids, request_snapshot, user_directed = self._detect_clean(
+                video_path, det, targets, request.intent, request.agent, regions,
+                request.detect_mode, request.ocr, output_dir, request.confirm,
+            )
+            wipe_plan = self._build_fresh_clean_plan(
+                video_path, result, selected_ids, request_snapshot, user_directed,
+            )
+            self._emit_progress(ProgressEvent("persist", 0, 1))
+            self._write_final_clean_artifacts(result, wipe_plan, output_dir)
+            save_wipe_plan(wipe_plan, output_dir)
+            mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
+            auto_mask_path = os.path.join(output_dir, "auto_mask.png")
+            if not cv2.imwrite(
+                auto_mask_path, (mask_arr * 255).astype(np.uint8),
+            ):
+                raise OSError(f"Failed to write image: {auto_mask_path}")
+            self._emit_progress(ProgressEvent("persist", 1, 1))
+            self._emit_progress(ProgressEvent("complete", 1, 1))
+            return wipe_plan
+        except _ProgressCallbackError as exc:
+            raise exc.cause
+        finally:
+            self._active_cancellation = None
+            self._active_progress = None
+            self._run_lock.release()
 
     def _resolve_clean_plan(
         self, plan, video, detector, targets, intent, agent, regions,
@@ -726,6 +776,7 @@ class WipeEngine:
         wipe_plan = self._build_fresh_clean_plan(
             video, result, selected_ids, request_snapshot, user_directed,
         )
+        self._emit_progress(ProgressEvent("persist", 0, 1))
         self._write_final_clean_artifacts(result, wipe_plan, output)
         save_wipe_plan(wipe_plan, output)
         return wipe_plan
@@ -741,7 +792,12 @@ class WipeEngine:
         return build_refined_wipe_plan(
             video, result, source,
             refine=request_snapshot["detect_mode"] != "fast",
-            request=request_snapshot, **selection,
+            request=request_snapshot,
+            progress=lambda done, total: self._emit_progress(
+                ProgressEvent("refine", done, total)
+            ),
+            check_cancelled=self._check_cancelled,
+            **selection,
         )
 
     @staticmethod
@@ -829,6 +885,7 @@ class WipeEngine:
         effective_ocr = ocr or self._ocr
         recognizer = self._build_recognizer(effective_ocr)
 
+        self._emit_progress(ProgressEvent("detect", 0, 0))
         result = detect_clean_candidates(
             video,
             detector=detector,
@@ -871,6 +928,7 @@ class WipeEngine:
         # NOT count as user direction by itself — hence `agent` is absent from
         # the OR (agent-with-intent is already covered by `intent`).
         user_directed = bool(targets or intent or regions or confirm)
+        self._emit_progress(ProgressEvent("detect", 1, 1))
         return result, {c.id for c in selected}, request_snapshot, user_directed
 
     @staticmethod
