@@ -124,7 +124,9 @@ with WipeEngine(task="detext") as engine:
 
 clean 流水线会生成一份 `WipePlan`：可读、可审阅的 JSON 计划，每个检测目标是一条 *track*，带 `remove`|`keep` 动作、生效时间段（segments）和精确 mask。可以不加载修复模型先生成计划，再执行审阅或修改过的计划。
 
-画面顶部的常驻叠加默认保留，只有明确选择时才会移除。采样较稀造成的边界误差会写入 warnings，不会伪装成逐帧精确判断。
+画面顶部的常驻叠加默认保留，只有明确选择时才会移除。`balanced` 和
+`sensitive` 模式会逐帧复检有检测器证据的移除轨道；`fast` 模式和仅由
+fallback 发现的轨道保持粗时序，并通过 warning 如实记录这一限制。
 
 ```python
 from videowipe import CancellationToken, WipeEngine, WipeRequest

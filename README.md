@@ -139,8 +139,9 @@ each detected target is a *track* with a `remove`|`keep` action, a time range
 model, then execute a reviewed or edited plan.
 
 Persistent overlays near the top of the frame default to `keep` unless the
-request explicitly selects them. Coarse sampling boundaries are recorded as
-warnings instead of being presented as frame-perfect decisions.
+request explicitly selects them. In `balanced` and `sensitive` modes,
+detector-backed remove tracks are rechecked frame by frame; `fast` mode and
+fallback-only tracks stay coarse and record that limitation as a warning.
 
 ```python
 from videowipe import CancellationToken, WipeEngine, WipeRequest

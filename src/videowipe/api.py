@@ -36,7 +36,7 @@ class WipeRequest:
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    """Structured progress emitted by :meth:`WipeEngine.run`."""
+    """Structured progress emitted by :meth:`WipeEngine.run` and ``plan``."""
 
     phase: str
     completed: int = 0
