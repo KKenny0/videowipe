@@ -1,332 +1,111 @@
 <p align="center">
-  <img src="assets/logo.svg" width="80" height="80" alt="videowipe">
+  <img src="assets/logo.svg" width="80" height="80" alt="VideoWipe logo">
 </p>
 
-<h1 align="center">videowipe</h1>
+<h1 align="center">VideoWipe</h1>
 
 <p align="center">
-  An embeddable video-cleanup engine for hardcoded subtitles, watermarks, and text overlays.<br>
-  Detect targets, review time-aware remove/keep tracks, and inpaint locally from Python, CLI, or your own worker.
+  <strong>Open-source tool to remove hardcoded subtitles, watermarks, logos, and timestamps from video — locally.</strong>
+</p>
+
+<p align="center">
+  Detect burn-in text · preview what will be removed · clean the background · keep the original audio.<br>
+  No cloud upload. Works from CLI, a local web UI, Docker, or Python.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/Runs-locally-success.svg" alt="Runs locally">
+  <img src="https://img.shields.io/badge/Docker-CPU%20%7C%20GPU-2496ED.svg" alt="Docker CPU and GPU">
 </p>
 
 <p align="center">
   <a href="README_CN.md">中文</a>
+  ·
+  <a href="#quick-start">Quick start</a>
+  ·
+  <a href="#faq">FAQ</a>
+  ·
+  <a href="#docker">Docker</a>
 </p>
 
 ---
 
-## SDK first
+## What is VideoWipe?
 
-videowipe is a reusable Python engine for video-cleanup pipelines. Create one `WipeEngine`, reuse it across a batch so the model stays loaded, or register a different inpainting backend behind the same whole-video protocol. The CLI, local Web UI, and Docker images are adapters over that engine rather than separate product runtimes.
+**VideoWipe** is an open-source, self-hosted video cleanup tool. It finds **hardcoded (burn-in) subtitles**, **watermarks**, **logos**, and **timestamps**, lets you **review** what to remove, then **inpaints** the covered pixels so the background looks continuous again.
 
-The current product boundary is deliberately narrow: detect unwanted overlays, build a mask, and reconstruct the covered video region. Translation workspaces, timelines, publishing workflows, and agent chat interfaces are not part of the core SDK.
+Typical searches it answers:
 
-## What it does
+- remove hardcoded subtitles from video
+- remove watermark / logo from video (delogo)
+- offline / local video text removal
+- open-source alternative to online subtitle removers
 
-videowipe detects and removes hardcoded text, watermarks, logos, and timestamps from video. A full pipeline runs in one command: sample frames → detect text regions → build a reviewable WipePlan → select remove/keep tracks → inpaint the background.
+Files stay on your machine. The cleaned MP4 keeps the **original audio track**.
 
-No manual mask required. The built-in detector handles multilingual content out of the box.
-Each track keeps its own time ranges and precise mask, so a subtitle can disappear
-without erasing the same area in frames where it is absent.
+> Not soft subtitles: VideoWipe does **not** strip `.srt` / `.ass` tracks. It removes text that is **burned into the picture**.
 
-STTN is the default inpainting backend. Any external model can be plugged in via `--external-command` — [ProPainter](https://github.com/sczhou/ProPainter) has been validated as a higher-quality alternative.
+## Quick start
 
-## Install
+**Requirements:** Python 3.10+, and either ONNX Runtime or PyTorch. Model weights download automatically on first run to `~/.videowipe/weights/`.
 
-Requires Python 3.10+ and either ONNX Runtime or PyTorch. The base SDK uses
-`opencv-python-headless`, so it can run in workers and containers without a
-desktop display server.
-VideoWipe is not published to PyPI yet; install it from source:
+VideoWipe is not on PyPI yet — install from source:
 
 ```bash
 git clone https://github.com/KKenny0/videowipe.git
 cd videowipe
-
-# Headless SDK with the lightweight ONNX Runtime backend:
 pip install -e ".[onnx]"
 
-# Add the local Web adapter when needed:
-pip install -e ".[web,onnx]"
-
-# Optional extras:
-pip install -e ".[torch]"  # PyTorch backend
-pip install -e ".[ocr]"    # OCR text recognition
-pip install -e ".[propainter]"  # adapter dependencies; no model/code bundled
-```
-
-Model weights download automatically on first run to `~/.videowipe/weights/`. No manual setup needed.
-
-## Usage
-
-### Python API
-
-```python
-from videowipe import remove_text
-
-# Mask is optional — subtitle regions are auto-detected if omitted
-remove_text(
-    video="input.mp4",
-    output="result/",
-)
-
-# Or provide your own mask for full control
-remove_text(
-    video="input.mp4",
-    mask="mask.png",
-    output="result/",
-)
-```
-
-### Full pipeline with target selection
-
-Use `task="clean"` for the complete detection pipeline with target selection, intent parsing, and OCR:
-
-```python
-from videowipe import WipeEngine
-
-engine = WipeEngine(task="clean", detect_mode="balanced", ocr="auto")
-engine.process(
-    video="input.mp4",
-    targets=["subtitle", "watermark"],
-    regions=["bottom"],
-    intent="remove Chinese subtitles and logo watermark",
-    output="result/",
-)
-engine.cleanup()
-```
-
-### Batch processing
-
-Use the structured SDK contract and reuse the engine to avoid reloading the
-model. A cancellation token belongs to one request; create a new token for the
-next job.
-
-```python
-from videowipe import CancellationToken, WipeEngine, WipeRequest
-
-def report(event):
-    print(event.phase, event.completed, event.total)
-
-with WipeEngine(task="detext") as engine:
-    result = engine.run(
-        WipeRequest(
-            video="clip1.mp4",
-            mask="mask.png",
-            output_dir="result/clip1",
-        ),
-        on_progress=report,
-        cancellation=CancellationToken(),
-    )
-    print(result.output_path, result.backend, result.timings)
-```
-
-`WipeEngine.run()` returns `WipeResult` and raises stable `WipeError`
-subclasses for invalid input, missing backends, cancellation, and processing
-failures. The compatible `process()` and `remove_text()` entry points remain
-available. See the runnable [batch worker](examples/batch_worker.py) and
-[custom Inpainter](examples/custom_inpainter.py) examples for long-lived and
-registry-based integrations.
-
-### Review and edit the WipePlan
-
-The clean pipeline produces a `WipePlan`: a plain-JSON, reviewable plan where
-each detected target is a *track* with a `remove`|`keep` action, a time range
-(segments), and a precise mask. Generate it without loading the inpainting
-model, then execute a reviewed or edited plan.
-
-Persistent overlays near the top of the frame default to `keep` unless the
-request explicitly selects them. In `balanced` and `sensitive` modes,
-detector-backed remove tracks are rechecked frame by frame; `fast` mode and
-fallback-only tracks stay coarse and record that limitation as a warning.
-
-```python
-from videowipe import CancellationToken, WipeEngine, WipeRequest
-
-def report_plan(event):
-    print(event.phase, event.completed, event.total)
-
-engine = WipeEngine(task="clean")
-plan = engine.plan(
-    WipeRequest(video="input.mp4", output_dir="plan/"),
-    on_progress=report_plan,
-    cancellation=CancellationToken(),
-)
-# → plan/wipe_plan.json + plan/wipe_plan_masks.npz
-engine.cleanup()
-```
-
-Plan generation reports `prepare`, `detect`, per-frame `refine`, `persist`,
-and `complete` phases. `fast` mode intentionally omits `refine`.
-
-`wipe_plan.json` is agent-readable. Edit only each track's `action` and
-`segments` — the spatial masks live in the sidecar `.npz` and must not be
-touched. Then validate and execute the edited plan against the same video:
-
-```python
-with WipeEngine(task="clean") as engine:
-    result = engine.run(WipeRequest(
-        video="input.mp4",
-        output_dir="result/",
-        plan="plan/wipe_plan.json",
-    ))
-    print(result.warnings, result.timings)
-```
-
-Or from the CLI:
-
-```bash
-videowipe clean input.mp4 --preview -o plan/                       # generate the plan
-videowipe clean input.mp4 --plan plan/wipe_plan.json -o result/    # execute it
-```
-
-VideoWipe binds to no LLM or cloud service — the plan is ordinary JSON, so any
-editor or local agent can modify it. A plan is bound to its source video;
-executing it against a different video is rejected.
-
-### CLI
-
-```bash
-# Auto-detect and remove all text overlays (recommended)
+# Auto-detect and remove hardcoded text overlays
 videowipe clean input.mp4 -o result/
-
-# With manual mask
-videowipe clean input.mp4 -m mask.png -o result/
 ```
 
-### Local web UI
+Prefer a browser UI (still local):
 
 ```bash
 pip install -e ".[web,onnx]"
 videowipe serve
-# Open http://127.0.0.1:8000
+# Open http://127.0.0.1:8000 — upload, preview tracks, download cleaned MP4
 ```
 
-The browser flow runs locally: upload a video, review each track with its action
-and time ranges, toggle whole tracks between remove and keep, then download the
-cleaned MP4. Confirmation executes the reviewed WipePlan and its precise masks,
-not rectangles reconstructed from the preview. Files stay on your machine, and
-the downloaded MP4 keeps the original audio track.
+No Python? Use [Docker](#docker).
 
-| Upload | Preview targets | Download |
-|--------|-----------------|----------|
-| <img src="pics/web-ui/01-upload.png" width="260" alt="VideoWipe web upload screen"> | <img src="pics/web-ui/02-preview.png" width="260" alt="VideoWipe web target preview screen"> | <img src="pics/web-ui/03-download.png" width="260" alt="VideoWipe web download screen"> |
+Optional extras: `.[torch]` (PyTorch), `.[ocr]` (OCR text recognition), `.[propainter]` (adapter deps only; model not bundled).
 
-#### `clean` command options
+## Features
 
-```bash
-# Only remove specific target types
-videowipe clean input.mp4 --target subtitle
-videowipe clean input.mp4 --target watermark
+| | |
+|--|--|
+| **Hardcoded subtitle removal** | Burn-in / burned-in text, including multi-language clips |
+| **Watermark, logo, timestamp cleanup** | Persistent corner marks and on-screen clocks |
+| **Auto detection** | No hand-drawn mask required (you can still supply one) |
+| **Preview before erase** | Review each track: remove or keep, with time ranges |
+| **Local-first** | CLI, web UI, Docker, Python SDK — no cloud account |
+| **Original audio preserved** | Cleaned video keeps the source soundtrack |
+| **Multilingual detection** | Chinese, English, Korean, and more out of the box |
+| **Pluggable quality** | Default STTN; optional [ProPainter](https://github.com/sczhou/ProPainter) or any external inpainting command |
+| **Batch / embeddable** | Reuse one engine across many videos in your own worker |
 
-# Target a specific screen region
-videowipe clean input.mp4 --region bottom
-videowipe clean input.mp4 --region top-right
-
-# Natural language intent
-videowipe clean input.mp4 --intent "remove bottom Chinese subtitles"
-
-# Preview detection results without processing
-videowipe clean input.mp4 --preview -o result/
-
-# Interactively confirm detected targets
-videowipe clean input.mp4 --confirm
-```
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--target` | Target type to clean (can repeat): `subtitle`, `timestamp`, `watermark`, `logo` | auto-detect all |
-| `--region` | Screen region (can repeat): `top`, `bottom`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `center` | all regions |
-| `--intent` | Natural-language cleanup intent | — |
-| `--preview` | Write detection artifacts only (no inpainting) | off |
-| `--plan` | Execute an existing `wipe_plan.json` instead of detecting (mutually exclusive with `-m, --mask`) | — |
-| `--confirm` | Show detected targets and confirm before processing | off |
-| `--detect-mode` | Detection preset: `fast` (24 coarse frames); `balanced` (50) and `sensitive` (80) densely recheck detector-backed remove segments. Fallback-only tracks stay coarse and emit a warning | `balanced` |
-| `--ocr` | OCR text recognition: `auto`, `off`, `rapidocr` | `auto` |
-| `--agent` | Local LLM CLI for intent-based selection (e.g., `claude`, `codex`) | — |
-| `--external-command` | External inpainting command (bypasses built-in STTN) | — |
-| `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
-| `-d, --dual` | Show original video side-by-side in output | off |
-| `-m, --mask` | Mask image path (auto-detect if omitted) | auto |
-
-<details>
-<summary><strong>Legacy: detext command</strong></summary>
-
-The `detext` command auto-detects subtitles only. Prefer `clean` for new usage.
-
-```bash
-# Auto-detect subtitles
-videowipe detext -v input.mp4 -o result/
-
-# With manual mask
-videowipe detext -v input.mp4 -m mask.png -o result/
-```
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-v, --video` | Input video path | required |
-| `-m, --mask` | Mask image path (auto-detect if omitted) | auto |
-| `-o, --output` | Output directory | `result/` |
-| `-w, --weight` | Model weight path. PyTorch accepts `.pth`/`.pt`; ONNX expects a prefix path ending in `.onnx` with matching `_encoder`, `_transformer`, and `_decoder` files. | auto |
-| `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
-| `-d, --dual` | Show original video side-by-side in output | off |
-| `--external-command` | External inpainting command (bypasses built-in STTN) | — |
-
-</details>
-
-## External models
-
-Pass `--external-command` to use any third-party inpainting model instead of the built-in STTN. The command receives `<video> <mask> <output_dir>` and must produce an output video in the output directory.
-
-[ProPainter](https://github.com/sczhou/ProPainter) has been validated as a higher-quality alternative. A ready-to-use wrapper is included:
-
-```bash
-# Clone ProPainter outside this repo first
-git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
-
-# Use via the named model (recommended)
-videowipe clean input.mp4 --model propainter --propainter-dir ../models/ProPainter
-
-# Or via the generic external command (equivalent, now argv-form)
-videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
-```
-
-> **Note:** ProPainter requires a GPU with ~16GB VRAM for 480p video and is licensed under NTU S-Lab License 1.0 (non-commercial).
-
-<details>
-<summary><strong>Quality comparison: ProPainter vs STTN</strong></summary>
-
-Tested on a multilingual music video (Korean + Burmese subtitles, 852x480, 10s clip). Both models used the same mask.
-
-| Original | ProPainter (GPU fp16) | STTN (CPU ONNX) |
-|----------|----------------------|-----------------|
-| <img src="pics/comparison/others_original.png" width="260"> | <img src="pics/comparison/others_propainter.png" width="260"> | <img src="pics/comparison/others_sttn.png" width="260"> |
-
-Comparison images are in `pics/comparison/`.
-
-</details>
-
-## Preview
+## Demo
 
 ### Subtitle removal
 
 | Before | After |
 |--------|-------|
-| <img src="pics/de-text/detext_9_ko_before.JPG" width="400"> | <img src="pics/de-text/detext_9_ko_after.JPG" width="400"> |
+| <img src="pics/de-text/detext_9_ko_before.JPG" width="400" alt="Before: video frame with hardcoded Korean subtitle"> | <img src="pics/de-text/detext_9_ko_after.JPG" width="400" alt="After: VideoWipe removed hardcoded Korean subtitle"> |
 
-<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch video</a></p>
+<p align="center"><a href="http://www.seeprettyface.com/mp4/video-inpainting/detext_06.mp4">Watch sample video</a></p>
 
-### Auto-detection accuracy
+### Auto-detection (no manual mask)
 
-Built-in detector locates text regions across multilingual content without manual masks:
+Built-in detector finds text regions across multilingual content:
 
 <p float="left">
-  <img src="pics/detection/chinese1_detected.jpg" width="32%">
-  <img src="pics/detection/english1_detected.jpg" width="32%">
-  <img src="pics/detection/others_detected.jpg" width="32%">
+  <img src="pics/detection/chinese1_detected.jpg" width="32%" alt="VideoWipe auto-detecting Chinese hardcoded subtitles">
+  <img src="pics/detection/english1_detected.jpg" width="32%" alt="VideoWipe auto-detecting English hardcoded subtitles">
+  <img src="pics/detection/others_detected.jpg" width="32%" alt="VideoWipe auto-detecting multilingual subtitles and watermark">
 </p>
 
 | Video | Candidates | Selected | Types |
@@ -335,21 +114,119 @@ Built-in detector locates text regions across multilingual content without manua
 | English clip | 2 | 2 | bottom subtitle |
 | Music video (Korean + Burmese) | 7 | 5 | top watermark, bottom multilingual subtitles |
 
-Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show selected regions for inpainting.
+Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show regions selected for cleanup.
+
+### Local web UI
+
+| Upload | Preview targets | Download |
+|--------|-----------------|----------|
+| <img src="pics/web-ui/01-upload.png" width="260" alt="VideoWipe web UI: upload a video to clean"> | <img src="pics/web-ui/02-preview.png" width="260" alt="VideoWipe web UI: preview detected subtitles and watermarks"> | <img src="pics/web-ui/03-download.png" width="260" alt="VideoWipe web UI: download cleaned MP4 with original audio"> |
+
+## Who is it for?
+
+- **Creators & editors** cleaning archive footage before re-cut
+- **Researchers & archivists** removing platform watermarks from reference clips (respect copyright and terms)
+- **Anyone** who does not want to upload private video to a cloud “one-click remover”
+- **Developers** who need a local pipeline: detect → review → inpaint, not a black-box website
+
+### Common use cases
+
+- Remove **burned-in bottom subtitles** from drama or lecture clips
+- Clean a **corner logo / watermark** before reuse
+- Strip **on-screen timestamps** or platform chrome
+- On multilingual videos, **preview first**, then remove only the tracks you care about
+- Run **batch jobs** on a worker without a desktop display
 
 ## How it works
 
-The pipeline has three stages:
+Three stages:
 
-1. **Detection:** A DBNet-based text detector samples frames across the video, finds text regions in each frame, records temporal presence, and clusters detections into stable tracks. Supports multilingual content out of the box.
+1. **Detection** — Sample frames, find text regions, group them into stable tracks over time (multilingual, no manual mask required).
+2. **Planning** — Build a reviewable **WipePlan**: each track has type (subtitle / watermark / logo / timestamp), remove|keep action, time segments, and a precise mask.
+3. **Inpainting** — Only remove-track masks are applied per frame; default **STTN** fills from neighboring frames. Optional external models (e.g. ProPainter) plug in for higher quality.
 
-2. **Planning:** Detected tracks are classified by type (subtitle, watermark, logo, timestamp) and written to a validated WipePlan with remove/keep actions, half-open time segments, source identity, and precise mask assets. Optional OCR and intent parsing help decide what to remove.
+You can stop after detection (`--preview`), edit the plan JSON, then run cleanup — so the tool does not erase blindly.
 
-3. **Inpainting:** The reviewed plan activates only the remove-track masks that apply to each frame. STTN fills those regions from neighboring frames, while final blending follows the per-frame mask. Static external backends remain available for plans without temporal ranges.
+## VideoWipe vs alternatives
+
+| | Online removers | Hand masks (AE / Resolve) | **VideoWipe** |
+|--|-----------------|---------------------------|---------------|
+| Privacy | Upload required | Local | **Local** |
+| Auto-detect burn-in text | Sometimes | Manual | **Yes** |
+| Review before erase | Rare | Manual | **Yes (plan / web UI)** |
+| Cost | Subscription / credits | Labor | **Open source, self-hosted** |
+| Embed in your pipeline | Hard | Hard | **Python SDK + CLI** |
+
+### What VideoWipe is not
+
+- Not a **soft subtitle** editor (`.srt` / `.ass`)
+- Not a **translation** or re-caption product
+- Not a promise of perfect pixels on every shot — fast motion and complex textures are harder; **preview first**
+- Not a cloud SaaS — you run it yourself
+
+## CLI usage
+
+```bash
+# Recommended: auto-detect and remove overlays
+videowipe clean input.mp4 -o result/
+
+# Only subtitles, only bottom of frame
+videowipe clean input.mp4 --target subtitle --region bottom -o result/
+
+# Natural-language intent
+videowipe clean input.mp4 --intent "remove bottom Chinese subtitles" -o result/
+
+# Preview detection only (no inpainting)
+videowipe clean input.mp4 --preview -o plan/
+
+# Execute a reviewed plan
+videowipe clean input.mp4 --plan plan/wipe_plan.json -o result/
+
+# Manual mask when you want full control
+videowipe clean input.mp4 -m mask.png -o result/
+```
+
+#### `clean` options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--target` | Target type (repeatable): `subtitle`, `timestamp`, `watermark`, `logo` | auto-detect all |
+| `--region` | Screen region (repeatable): `top`, `bottom`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `center` | all regions |
+| `--intent` | Natural-language cleanup intent | — |
+| `--preview` | Write detection artifacts only (no inpainting) | off |
+| `--plan` | Execute an existing `wipe_plan.json` (mutually exclusive with `-m, --mask`) | — |
+| `--confirm` | Show detected targets and confirm before processing | off |
+| `--detect-mode` | `fast` (24 frames); `balanced` (50) / `sensitive` (80) densely recheck detector-backed remove segments | `balanced` |
+| `--ocr` | OCR: `auto`, `off`, `rapidocr` | `auto` |
+| `--agent` | Local LLM CLI for intent-based selection (e.g. `claude`, `codex`) | — |
+| `--external-command` | External inpainting command (bypasses built-in STTN) | — |
+| `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
+| `-d, --dual` | Side-by-side original in the output | off |
+| `-m, --mask` | Mask image path | auto |
+
+<details>
+<summary><strong>Legacy: detext command</strong></summary>
+
+`detext` auto-detects subtitles only. Prefer `clean` for new usage.
+
+```bash
+videowipe detext -v input.mp4 -o result/
+videowipe detext -v input.mp4 -m mask.png -o result/
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-v, --video` | Input video path | required |
+| `-m, --mask` | Mask image path | auto |
+| `-o, --output` | Output directory | `result/` |
+| `-w, --weight` | Model weight path (PyTorch `.pth`/`.pt`, or ONNX prefix) | auto |
+| `-g, --gap` | Segment length per pass | `200` |
+| `-d, --dual` | Side-by-side original in the output | off |
+| `--external-command` | External inpainting command | — |
+
+</details>
 
 ## Docker
-
-No Python? No problem. Run videowipe directly with Docker.
 
 **CPU:**
 
@@ -365,11 +242,7 @@ docker pull ghcr.io/kkenny0/videowipe:gpu
 docker run --rm --gpus all -v "$(pwd)":/data ghcr.io/kkenny0/videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
-The floating `latest` and `gpu` tags track the current main build. Versioned
-CPU and GPU tags are published only after the matching release workflow
-succeeds; check the GHCR package before pinning a versioned image.
-
-Use the included wrapper script to auto-select the CPU or GPU image:
+Or use the wrapper (auto-picks CPU/GPU):
 
 ```bash
 ./scripts/docker-videowipe.sh clean input.mp4 -o result/
@@ -377,48 +250,173 @@ Use the included wrapper script to auto-select the CPU or GPU image:
 
 | Image | Size | GPU | Notes |
 |-------|------|-----|-------|
-| `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | No | CPU only, smallest image |
-| `ghcr.io/kkenny0/videowipe:gpu` | ~1.4 GB | Yes | Latest prebuilt GPU image |
+| `ghcr.io/kkenny0/videowipe:latest` | ~480 MB | No | CPU only, smallest |
+| `ghcr.io/kkenny0/videowipe:gpu` | ~1.4 GB | Yes | Prebuilt GPU image |
 | `videowipe:gpu` | ~1.4 GB | Yes | Local build tag |
 
-### Build from source
+Floating `latest` / `gpu` track the current main build. Pin versioned tags from GHCR after a successful release.
 
-Use `--target` to select the image variant:
+<details>
+<summary><strong>Build from source</strong></summary>
 
 ```bash
-# CPU
 docker build --target runtime-cpu -t videowipe:latest .
-
-# GPU (requires NVIDIA Container Toolkit at build time for base image)
 docker build --target runtime-gpu --build-arg VARIANT=gpu -t videowipe:gpu .
 ```
 
-> **Note:** The GPU image requires a machine with NVIDIA runtime to verify CUDA execution. Without it, ONNX Runtime silently falls back to CPU.
-
-Run after building:
+GPU image needs NVIDIA runtime for CUDA; otherwise ONNX Runtime falls back to CPU.
 
 ```bash
-# CPU
 docker run --rm -v "$(pwd)":/data videowipe:latest clean /data/input.mp4 -o /data/result/
-
-# GPU
 docker run --rm --gpus all -v "$(pwd)":/data videowipe:gpu clean /data/input.mp4 -o /data/result/
 ```
 
+</details>
+
+## Higher-quality inpainting (optional)
+
+Default backend is **STTN** (works on CPU via ONNX). For tougher shots, plug in an external model.
+
+[ProPainter](https://github.com/sczhou/ProPainter) is validated as a higher-quality option:
+
+```bash
+git clone https://github.com/sczhou/ProPainter.git ../models/ProPainter
+
+videowipe clean input.mp4 --model propainter --propainter-dir ../models/ProPainter
+# equivalent:
+videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
+```
+
+> **Note:** ProPainter needs a GPU with ~16GB VRAM for 480p, and uses NTU S-Lab License 1.0 (non-commercial).
+
+<details>
+<summary><strong>Quality comparison: ProPainter vs STTN</strong></summary>
+
+Multilingual music video (Korean + Burmese subtitles, 852×480, 10s). Same mask for both.
+
+| Original | ProPainter (GPU fp16) | STTN (CPU ONNX) |
+|----------|----------------------|-----------------|
+| <img src="pics/comparison/others_original.png" width="260" alt="Original frame with hardcoded subtitles"> | <img src="pics/comparison/others_propainter.png" width="260" alt="ProPainter inpainting result"> | <img src="pics/comparison/others_sttn.png" width="260" alt="STTN inpainting result"> |
+
+</details>
+
+## Python API (for pipelines)
+
+The same engine powers CLI, web, and Docker. Use it when you want batch jobs or a custom worker.
+
+```python
+from videowipe import remove_text
+
+# Mask optional — regions auto-detected if omitted
+remove_text(video="input.mp4", output="result/")
+```
+
+Full clean pipeline with target selection:
+
+```python
+from videowipe import WipeEngine
+
+engine = WipeEngine(task="clean", detect_mode="balanced", ocr="auto")
+engine.process(
+    video="input.mp4",
+    targets=["subtitle", "watermark"],
+    regions=["bottom"],
+    intent="remove Chinese subtitles and logo watermark",
+    output="result/",
+)
+engine.cleanup()
+```
+
+Batch with a long-lived engine (model stays loaded):
+
+```python
+from videowipe import CancellationToken, WipeEngine, WipeRequest
+
+with WipeEngine(task="detext") as engine:
+    result = engine.run(
+        WipeRequest(video="clip1.mp4", mask="mask.png", output_dir="result/clip1"),
+        cancellation=CancellationToken(),
+    )
+    print(result.output_path, result.backend, result.timings)
+```
+
+See [examples/batch_worker.py](examples/batch_worker.py) and [examples/custom_inpainter.py](examples/custom_inpainter.py).
+
+<details>
+<summary><strong>Review and edit the WipePlan</strong></summary>
+
+Generate a plan without loading the inpainting model, edit track `action` / `segments` in JSON (do not edit the sidecar `.npz` masks), then execute:
+
+```python
+from videowipe import CancellationToken, WipeEngine, WipeRequest
+
+engine = WipeEngine(task="clean")
+plan = engine.plan(
+    WipeRequest(video="input.mp4", output_dir="plan/"),
+    cancellation=CancellationToken(),
+)
+engine.cleanup()
+
+with WipeEngine(task="clean") as engine:
+    result = engine.run(WipeRequest(
+        video="input.mp4",
+        output_dir="result/",
+        plan="plan/wipe_plan.json",
+    ))
+```
+
+```bash
+videowipe clean input.mp4 --preview -o plan/
+videowipe clean input.mp4 --plan plan/wipe_plan.json -o result/
+```
+
+The plan is ordinary JSON — no LLM or cloud required. A plan is bound to its source video.
+
+</details>
+
+## FAQ
+
+**Does VideoWipe remove soft subtitles (`.srt` / `.ass`)?**  
+No. Soft tracks are separate files or streams. VideoWipe removes **hardcoded / burn-in** text painted into the video frames.
+
+**Do my videos leave my computer?**  
+Default path is fully local (CLI, web UI on `127.0.0.1`, Docker with a bind mount). Nothing is uploaded to a VideoWipe cloud.
+
+**Is the original audio kept?**  
+Yes. Downloaded / output MP4 keeps the source audio track.
+
+**Do I need a GPU?**  
+No. CPU + ONNX Runtime works. GPU images and PyTorch/ProPainter paths are faster or higher quality when available.
+
+**Is it on PyPI?**  
+Not yet. Install from this repo or pull the Docker image.
+
+**Hardcoded subtitle vs watermark — can I choose?**  
+Yes. Use `--target subtitle` / `--target watermark` / `--region bottom`, natural-language `--intent`, or the web UI track toggles.
+
+**STTN or ProPainter?**  
+STTN is the default (lighter, CPU-friendly). ProPainter often looks better on hard regions but needs more VRAM and a non-commercial license for that model.
+
+**Will cleanup always look perfect?**  
+No tool can guarantee that. Fast motion, thin textures, and semi-transparent marks are harder. Use **preview / confirm** before a long run.
+
+**Can I plug this into my own product or worker?**  
+Yes. Treat VideoWipe as an embeddable engine: one `WipeEngine`, stable request/result types, optional custom inpainters. Product boundary is detect → plan → inpaint — not a full NLE or cloud studio.
+
 ## Support
 
-If videowipe saves you time on subtitle, watermark, or text-overlay cleanup, you can support continued maintenance here:
+If VideoWipe saves you time on subtitle, watermark, or overlay cleanup:
 
 <https://kkenny0.github.io/support/>
 
-Support helps keep model packaging, Docker images, detection tuning, and documentation maintained.
+Support helps maintain model packaging, Docker images, detection tuning, and docs.
 
 ## Credits
 
-This project builds on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) implementation. The built-in text detection model is from [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR).
+Built on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe). Built-in text detection from [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR).
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).
 
-This repository derives from GPL-3.0-licensed Video-Auto-Wipe code. If you distribute videowipe or a combined work, review the GPL-3.0 obligations that apply to your distribution model.
+This repository derives from GPL-3.0-licensed Video-Auto-Wipe. If you distribute VideoWipe or a combined work, review the GPL-3.0 obligations for your distribution model.

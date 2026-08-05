@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "videowipe"
 version = "0.7.0"
-description = "Embeddable video-cleanup engine for subtitles, watermarks, and text overlays"
+description = "Open-source local tool to remove hardcoded subtitles, watermarks, logos, and timestamps from video"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
