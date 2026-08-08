@@ -145,7 +145,16 @@ class ONNXBackend(InpaintBackend):
                 "ONNX backend expects a prefix path ending in .onnx. Missing files: "
                 + ", ".join(missing)
             )
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        available = ort.get_available_providers()
+        if "CPUExecutionProvider" not in available:
+            raise RuntimeError(
+                "ONNX Runtime CPUExecutionProvider is required for STTN"
+            )
+        providers = [
+            provider
+            for provider in ("CUDAExecutionProvider", "CPUExecutionProvider")
+            if provider in available
+        ]
 
         self.encoder_session = ort.InferenceSession(
             f"{base}_encoder.onnx", providers=providers

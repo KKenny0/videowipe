@@ -1,19 +1,23 @@
+import gc
 import importlib.util
 import json
 import pathlib
 import subprocess
+import weakref
 
 import cv2
 import numpy as np
 import pytest
 
+import videowipe.detect as detect_module
 from videowipe.detect import (
     CleanCandidate,
     CleanDetectionResult,
     TextBox,
     detect_clean_candidates,
+    refine_temporal_presence,
 )
-from videowipe.plan import build_refined_wipe_plan, compute_source
+from videowipe.plan import Segment, build_refined_wipe_plan, compute_source
 
 
 def _load_eval_module():
@@ -616,6 +620,83 @@ def test_detect_captures_per_frame_presence_and_sample_indices(tmp_path):
     expected = {idx for idx in result.sample_indices if idx % 2 == 0}
     assert set(sub.presence_frames) == expected
     assert sub.presence_frames != result.sample_indices  # genuinely temporal, not full-video
+
+
+def test_clean_detection_streams_main_then_fallback_with_exact_output(monkeypatch):
+    calls = []
+    frame_refs = []
+
+    def sample_frames(_path, count):
+        for index in range(count):
+            frame = np.full((100, 100, 3), index, dtype=np.uint8)
+            frame_refs.append(weakref.ref(frame))
+            yield index, frame
+
+    class FakeDetector:
+        def detect(self, frame):
+            calls.append(frame.shape)
+            if frame.shape[0] != 100:
+                return []
+            return [TextBox(
+                points=np.array([[20, 80], [80, 80], [80, 90], [20, 90]]),
+                confidence=0.9,
+                text="sub",
+            )]
+
+    monkeypatch.setattr(
+        detect_module, "_iter_sample_frames_with_indices", sample_frames,
+    )
+    result = detect_clean_candidates(
+        "unused.mp4", FakeDetector(), sample_count=3,
+        subtitle_fallback="light",
+    )
+
+    assert calls == [(100, 100, 3)] * 3 + [(40, 100, 3)] * 6
+    assert result.sample_indices == [0, 1, 2]
+    assert sorted(result.sampled_frame_boxes) == [0, 1, 2]
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert (candidate.bbox, candidate.type, candidate.default_remove) == (
+        (0, 76, 99, 94), "subtitle", True,
+    )
+    assert candidate.presence_frames == [0, 1, 2]
+    expected_mask = np.zeros((100, 100, 1), dtype=np.uint8)
+    expected_mask[76:95] = 1
+    np.testing.assert_array_equal(candidate.mask, expected_mask)
+
+    gc.collect()
+    assert frame_refs and all(ref() is None for ref in frame_refs)
+
+
+def test_temporal_refinement_reuses_sampled_frame_boxes(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_video(video, width=100, height=100, frames=3)
+
+    class FakeDetector:
+        calls = 0
+
+        def detect(self, _frame):
+            self.calls += 1
+            return [TextBox(
+                points=np.array([[20, 80], [80, 80], [80, 90], [20, 90]]),
+                confidence=0.9,
+            )]
+
+    detector = FakeDetector()
+    result = detect_clean_candidates(
+        str(video), detector, sample_count=3,
+    )
+    candidate = result.candidates[0]
+    assert detector.calls == 3
+
+    warnings = refine_temporal_presence(
+        str(video), result, {candidate.id: [Segment(0, 3)]}, 3,
+    )
+
+    assert warnings == []
+    assert detector.calls == 3
+    assert candidate.temporal_sample_indices == [0, 1, 2]
+    assert candidate.presence_frames == [0, 1, 2]
 
 
 def test_candidate_to_dict_exposes_presence_frames():

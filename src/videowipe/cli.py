@@ -18,8 +18,13 @@ def _build_parser():
                      help="Mask image path (auto-detect if omitted)")
     sub.add_argument("-o", "--output", default="result/", help="Output directory")
     sub.add_argument("-w", "--weight", default=None, help="Model weight path")
-    sub.add_argument("-g", "--gap", type=int, default=200,
-                     help="Segment length per pass; higher = better quality")
+    sub.add_argument(
+        "-g", "--gap", type=int, default=25,
+        help=(
+            "Frames per segment (default: 25, conservative performance/quality "
+            "balance); larger values add context but cost grows superlinearly"
+        ),
+    )
     sub.add_argument("-d", "--dual", action="store_true",
                      help="Show original video side-by-side")
     sub.add_argument("--external-command", default=None,
@@ -41,8 +46,13 @@ def _build_parser():
                               help="Execute an existing wipe_plan.json instead of detecting")
     clean.add_argument("-o", "--output", default="result/", help="Output directory")
     clean.add_argument("-w", "--weight", default=None, help="Model weight path")
-    clean.add_argument("-g", "--gap", type=int, default=200,
-                       help="Segment length per pass; higher = better quality")
+    clean.add_argument(
+        "-g", "--gap", type=int, default=25,
+        help=(
+            "Frames per segment (default: 25, conservative performance/quality "
+            "balance); larger values add context but cost grows superlinearly"
+        ),
+    )
     clean.add_argument("-d", "--dual", action="store_true",
                        help="Show original video side-by-side")
     clean.add_argument(

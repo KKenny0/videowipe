@@ -31,7 +31,8 @@ class InpaintJob:
         fps, frame_count, width, height: video metadata.
         device: ``"auto"`` | ``"cpu"`` | ``"cuda"``.
         dual: when True, emit side-by-side original + inpainted output.
-        gap: segment-length hint used by frame-based inpainters.
+        gap: segment-length hint used by frame-based inpainters. The default
+            25 conservatively balances temporal context and performance.
         output_suffix: filename suffix for the output video (e.g. ``"detext"``).
         reader: ``cv2.VideoCapture`` for frame-based inpainters; may be ``None``
             for file-based inpainters. The caller owns the reader lifecycle.
@@ -59,7 +60,7 @@ class InpaintJob:
     height: int
     device: str = "auto"
     dual: bool = False
-    gap: int = 200
+    gap: int = 25
     output_suffix: str = "detext"
     reader: object = None
     progress: Optional[Callable[[int, int], None]] = None

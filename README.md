@@ -200,7 +200,7 @@ videowipe clean input.mp4 -m mask.png -o result/
 | `--ocr` | OCR: `auto`, `off`, `rapidocr` | `auto` |
 | `--agent` | Local LLM CLI for intent-based selection (e.g. `claude`, `codex`) | — |
 | `--external-command` | External inpainting command (bypasses built-in STTN) | — |
-| `-g, --gap` | Segment length per pass; higher = better quality, slower | `200` |
+| `-g, --gap` | Frames per inpainting segment. `25` balances performance and quality; larger values add temporal context but grow compute and memory superlinearly | `25` |
 | `-d, --dual` | Side-by-side original in the output | off |
 | `-m, --mask` | Mask image path | auto |
 
@@ -220,7 +220,7 @@ videowipe detext -v input.mp4 -m mask.png -o result/
 | `-m, --mask` | Mask image path | auto |
 | `-o, --output` | Output directory | `result/` |
 | `-w, --weight` | Model weight path (PyTorch `.pth`/`.pt`, or ONNX prefix) | auto |
-| `-g, --gap` | Segment length per pass | `200` |
+| `-g, --gap` | Frames per inpainting segment; larger values cost more compute and memory | `25` |
 | `-d, --dual` | Side-by-side original in the output | off |
 | `--external-command` | External inpainting command | — |
 

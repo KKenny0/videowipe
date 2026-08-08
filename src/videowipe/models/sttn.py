@@ -1,12 +1,13 @@
 ''' Spatial-Temporal Transformer Networks
 '''
-import numpy as np
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
+
 from videowipe.core.spectral_norm import spectral_norm as _spectral_norm
+
 
 class BaseNetwork(nn.Module):
     def __init__(self):
@@ -141,8 +142,7 @@ class Attention(nn.Module):
         scores = torch.matmul(query, key.transpose(-2, -1)
                               ) / math.sqrt(query.size(-1))
         p_attn = F.softmax(scores, dim=-1)
-        p_val = torch.matmul(p_attn, value)
-        return p_val, p_attn
+        return torch.matmul(p_attn, value)
 
 
 class MultiHeadedAttention(nn.Module):
@@ -188,15 +188,7 @@ class MultiHeadedAttention(nn.Module):
             value = value.view(b, t, d_k, out_h, height, out_w, width)
             value = value.permute(0, 1, 3, 5, 2, 4, 6).contiguous().view(
                 b,  t*out_h*out_w, d_k*height*width)
-            '''
-            # 2) Apply attention on all the projected vectors in batch.
-            tmp1 = []
-            for q,k,v in zip(torch.chunk(query, b, dim=0), torch.chunk(key, b, dim=0), torch.chunk(value, b, dim=0)):
-                y, _ = self.attention(q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0))
-                tmp1.append(y)
-            y = torch.cat(tmp1,1)
-            '''
-            y, _ = self.attention(query, key, value)
+            y = self.attention(query, key, value)
             # 3) "Concat" using a view and apply a final linear.
             y = y.view(b, t, out_h, out_w, d_k, height, width)
             y = y.permute(0, 1, 4, 2, 5, 3, 6).contiguous().view(bt, d_k, h, w)

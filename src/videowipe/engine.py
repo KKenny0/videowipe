@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import platform
 import threading
 import time
 from functools import lru_cache
@@ -12,15 +13,6 @@ from typing import TYPE_CHECKING, Optional
 import cv2
 import numpy as np
 
-from videowipe.tasks.base import (
-    BaseTask,
-    read_frame_info,
-    read_mask,
-    validate_mask_shape,
-)
-from videowipe.tasks.detext import DetextTask
-from videowipe.inpainters import InpaintJob, get_registry
-from videowipe.weights import ensure_onnx_weights, ensure_weight
 from videowipe.api import (
     CancellationToken,
     ProgressCallback,
@@ -35,6 +27,7 @@ from videowipe.errors import (
     ProcessingError,
     WipeError,
 )
+from videowipe.inpainters import InpaintJob, get_registry
 from videowipe.plan import (
     WipePlan,
     build_refined_wipe_plan,
@@ -44,6 +37,14 @@ from videowipe.plan import (
     save_wipe_plan,
     validate_plan,
 )
+from videowipe.tasks.base import (
+    BaseTask,
+    read_frame_info,
+    read_mask,
+    validate_mask_shape,
+)
+from videowipe.tasks.detext import DetextTask
+from videowipe.weights import ensure_onnx_weights, ensure_weight
 
 if TYPE_CHECKING:
     from videowipe.detect import TextDetector
@@ -79,6 +80,10 @@ def _module_available(name: str) -> bool:
     return True
 
 
+def _is_apple_silicon() -> bool:
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
 class _ProgressCallbackError(Exception):
     """Keep consumer callback failures outside VideoWipe error mapping."""
 
@@ -98,7 +103,9 @@ class WipeEngine:
             For STTN, None auto-resolves the default weights. Custom adapters
             receive None in their ``load()`` method when no weight is set.
         device: "auto", "cuda", or "cpu". Only used with .pth weights.
-        gap: Segment length per pass. Higher = better quality, slower.
+        gap: Frames per inpainting segment. The conservative default of 25
+            balances context and performance; larger values provide more
+            context but have superlinear compute and memory cost.
         dual: Show original video side-by-side in output.
         detector: TextDetector for auto mask generation. None to use default.
         external_command: External inpainting command string. When set,
@@ -124,7 +131,7 @@ class WipeEngine:
         task: str = "detext",
         weight: Optional[str] = None,
         device: str = "auto",
-        gap: int = 200,
+        gap: int = 25,
         dual: bool = False,
         detector: Optional[TextDetector] = None,
         external_command: Optional[str] = None,
@@ -352,11 +359,18 @@ class WipeEngine:
         weight_path = self._weight
         if self._model == "sttn":
             if weight_path is None:
-                # Auto-detect: prefer ONNX if available, otherwise PyTorch.
-                if _module_available("onnxruntime"):
+                torch_available = _module_available("torch") and _module_available(
+                    "torchvision"
+                )
+                onnx_available = _module_available("onnxruntime")
+                # ONNX Runtime's CPU provider is slower than Torch on Apple
+                # Silicon; other platforms retain the lightweight ONNX default.
+                if _is_apple_silicon() and torch_available:
+                    weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
+                elif onnx_available:
                     base = ensure_onnx_weights(_DEFAULT_WEIGHTS_ONNX[self.task])
                     weight_path = base + ".onnx"
-                elif _module_available("torch") and _module_available("torchvision"):
+                elif torch_available:
                     weight_path = ensure_weight(_DEFAULT_WEIGHTS_PTH[self.task])
                 else:
                     raise BackendUnavailableError(
@@ -427,6 +441,10 @@ class WipeEngine:
                 exclusive with *mask*; only supported for the ``clean`` task.
         """
         self._check_cancelled()
+        video = os.fspath(video)
+        output = os.fspath(output)
+        if mask is not None:
+            mask = os.fspath(mask)
         if mask is not None and plan is not None:
             raise InvalidInputError("mask and plan are mutually exclusive")
         if plan is not None and self.task != "clean":
@@ -612,7 +630,7 @@ class WipeEngine:
         if ocr_mode == "off":
             return None
         try:
-            from videowipe.ocr import recognize_text, _get_engine
+            from videowipe.ocr import _get_engine, recognize_text
             # Eagerly validate that the OCR backend is usable
             _get_engine()
             return recognize_text
@@ -982,9 +1000,10 @@ class WipeEngine:
         segments contain *global_idx*. When *feather_radius* > 0 it is
         Gaussian-feathered to match the static ``mask_from_candidates`` path
         (so temporal plans do not regress to hard rectangle seams); the
-        interior (>=1) is pinned back to full opacity. Computed on demand so
-        memory stays bounded; cost is O(#remove tracks) plus one blur per
-        active frame. Returns ``None`` when there are no remove tracks.
+        interior (>=1) is pinned back to full opacity. The most recent active
+        track combination is cached because consecutive frames normally share
+        it; a one-entry cache keeps memory bounded. Returns ``None`` when there
+        are no remove tracks.
         """
         remove_tracks = plan.remove_tracks
         if not remove_tracks:
@@ -1000,17 +1019,28 @@ class WipeEngine:
         kernel = max(3, feather_radius * 2 + 1) if feather_radius > 0 else None
         sigma = feather_radius / 2.0
 
-        def frame_mask(global_idx: int) -> np.ndarray:
+        @lru_cache(maxsize=1)
+        def mask_for(active_tracks: tuple[int, ...]) -> np.ndarray:
             mask = np.zeros((height, width), dtype=np.uint8)
-            for arr, segments in prepared:
-                if any(start <= global_idx < end for start, end in segments) and arr is not None:
+            for index in active_tracks:
+                arr = prepared[index][0]
+                if arr is not None:
                     np.maximum(mask, arr, out=mask)
             if kernel is not None and mask.any():
                 flat = mask.astype(np.float32)
                 blurred = cv2.GaussianBlur(flat, (kernel, kernel), sigma)
                 flat = np.where(flat >= 1.0, 1.0, blurred)
-                return np.clip(flat, 0.0, 1.0)
+                mask = np.clip(flat, 0.0, 1.0)
+            mask.setflags(write=False)
             return mask
+
+        def frame_mask(global_idx: int) -> np.ndarray:
+            active_tracks = tuple(
+                index
+                for index, (_arr, segments) in enumerate(prepared)
+                if any(start <= global_idx < end for start, end in segments)
+            )
+            return mask_for(active_tracks)
 
         return frame_mask
 
@@ -1021,7 +1051,7 @@ def remove_text(
     output: str = "result/",
     weight: str | None = None,
     device: str = "auto",
-    gap: int = 200,
+    gap: int = 25,
     dual: bool = False,
     detector: Optional[TextDetector] = None,
 ) -> str:

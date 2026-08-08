@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import pathlib
@@ -5,18 +6,18 @@ import re
 import sys
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
-import cv2
 
 import videowipe
-from videowipe.backends import _detect_backend
-from videowipe import cli
 from videowipe import agent as agent_module
+from videowipe import cli
+from videowipe.backends import ONNXBackend, _detect_backend
 from videowipe.cli import _build_parser
 from videowipe.detect import (
     CleanCandidate,
-    CleanDetectionResult,
+    DBNetDetector,
     TextBox,
     _iou_bbox,
     detect_clean_candidates,
@@ -26,16 +27,16 @@ from videowipe.detect import (
     select_clean_candidates,
 )
 from videowipe.engine import WipeEngine, remove_text
+from videowipe.external import ExternalInpainter, ExternalModelError, run_external
 from videowipe.inpainters import STTNInpainter, get_registry
 from videowipe.inpainters.base import InpaintJob
-from videowipe.external import ExternalInpainter, ExternalModelError, run_external
-from videowipe.tasks.base import read_mask, validate_mask_shape
 from videowipe.plan import (
     JSON_FILENAME,
     build_wipe_plan,
     compute_source,
     save_wipe_plan,
 )
+from videowipe.tasks.base import BaseTask, read_mask, validate_mask_shape
 
 
 def _write_test_video(path, width=96, height=64, frames=4, draw=None):
@@ -51,6 +52,45 @@ def _write_test_video(path, width=96, height=64, frames=4, draw=None):
             draw(frame, i)
         writer.write(frame)
     writer.release()
+
+
+def test_dbnet_latches_manual_only_after_proven_high_level_miss(monkeypatch):
+    detector = object.__new__(DBNetDetector)
+    detector._adaptive = False
+    detector._input_w = detector._input_h = 32
+    high_level_model = object()
+    detector._hl_model = high_level_model
+    detector._manual_only = False
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+    box = TextBox(
+        points=np.array([[1, 1], [2, 1], [2, 2], [1, 2]], dtype=np.float32),
+        confidence=0.9,
+    )
+    calls = {"hl": 0, "manual": 0}
+    hl_results = iter([[box], [], [], []])
+    manual_results = iter([[], [], [box], [box]])
+
+    def high_level(_frame):
+        calls["hl"] += 1
+        return next(hl_results)
+
+    def manual(_frame, **_kwargs):
+        calls["manual"] += 1
+        return next(manual_results)
+
+    monkeypatch.setattr(detector, "_detect_hl", high_level)
+    monkeypatch.setattr(detector, "_detect_manual", manual)
+
+    assert detector.detect(frame) == [box]
+    assert calls == {"hl": 1, "manual": 0}
+    assert detector.detect(frame) == []
+    assert detector.detect(frame) == []
+    assert detector._manual_only is False
+    assert detector.detect(frame) == [box]
+    assert detector._manual_only is True
+    assert detector._hl_model is high_level_model
+    assert detector.detect(frame) == [box]
+    assert calls == {"hl": 4, "manual": 4}
 
 
 def test_cli_exposes_detext_and_clean_commands():
@@ -70,6 +110,45 @@ def test_cli_exposes_detext_and_clean_commands():
     assert region.region == ["top-right"]
     with pytest.raises(SystemExit):
         parser.parse_args(["delogo", "-v", "input.mp4", "-m", "mask.png"])
+
+
+def test_gap_defaults_are_25_and_explicit_cli_value_reaches_engine(monkeypatch):
+    parser = _build_parser()
+    assert parser.parse_args(["detext", "-v", "input.mp4"]).gap == 25
+    assert parser.parse_args(["clean", "input.mp4"]).gap == 25
+    assert parser.parse_args(["clean", "input.mp4", "--gap", "17"]).gap == 17
+
+    default_engine = WipeEngine()
+    explicit_engine = WipeEngine(gap=17)
+    try:
+        assert default_engine._task_impl.gap == 25
+        assert explicit_engine._task_impl.gap == 17
+    finally:
+        default_engine.cleanup()
+        explicit_engine.cleanup()
+
+    assert inspect.signature(remove_text).parameters["gap"].default == 25
+    assert inspect.signature(BaseTask).parameters["gap"].default == 25
+    assert InpaintJob.__dataclass_fields__["gap"].default == 25
+
+    captured = {}
+
+    class RecordingEngine:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def process(self, **kwargs):
+            pass
+
+        def cleanup(self):
+            pass
+
+    monkeypatch.setattr(cli, "WipeEngine", RecordingEngine)
+    monkeypatch.setattr(
+        sys, "argv", ["videowipe", "clean", "input.mp4", "--gap", "17"]
+    )
+    cli.main()
+    assert captured["gap"] == 17
 
 
 # ── Phase B / B1: CLI --plan ─────────────────────────────────────────────────
@@ -233,6 +312,133 @@ def test_backend_extension_detection_is_explicit():
         _detect_backend("model.bin")
 
 
+@pytest.mark.parametrize(
+    ("system", "machine", "available", "expected"),
+    [
+        ("Darwin", "arm64", {"onnxruntime", "torch", "torchvision"}, "model.pth"),
+        ("Darwin", "arm64", {"onnxruntime"}, "model.onnx"),
+        ("Linux", "aarch64", {"onnxruntime", "torch", "torchvision"}, "model.onnx"),
+    ],
+)
+def test_default_backend_selection_matches_platform_benchmark(
+    monkeypatch, system, machine, available, expected,
+):
+    import videowipe.engine as engine_module
+
+    loaded = []
+
+    class FakeInpainter:
+        backend = object()
+
+        def load(self, weight_path, device="auto"):
+            loaded.append(weight_path)
+
+    monkeypatch.setattr(engine_module.platform, "system", lambda: system)
+    monkeypatch.setattr(engine_module.platform, "machine", lambda: machine)
+    monkeypatch.setattr(
+        engine_module, "_module_available", lambda name: name in available,
+    )
+    monkeypatch.setattr(engine_module, "ensure_weight", lambda *args: "model.pth")
+    monkeypatch.setattr(
+        engine_module, "ensure_onnx_weights", lambda *args: "model",
+    )
+    monkeypatch.setattr(
+        engine_module.get_registry(), "create", lambda name: FakeInpainter(),
+    )
+
+    WipeEngine()._ensure_model()
+
+    assert loaded == [expected]
+
+
+@pytest.mark.parametrize(
+    ("weight", "available"),
+    [
+        ("explicit.onnx", {"onnxruntime"}),
+        ("explicit.pth", {"torch", "torchvision"}),
+    ],
+)
+def test_explicit_weight_bypasses_default_backend_selection(
+    monkeypatch, weight, available,
+):
+    import videowipe.engine as engine_module
+
+    loaded = []
+
+    class FakeInpainter:
+        backend = object()
+
+        def load(self, weight_path, device="auto"):
+            loaded.append(weight_path)
+
+    monkeypatch.setattr(
+        engine_module, "_module_available", lambda name: name in available,
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "ensure_weight",
+        lambda *args: pytest.fail("explicit weight must not resolve a default"),
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "ensure_onnx_weights",
+        lambda *args: pytest.fail("explicit weight must not resolve a default"),
+    )
+    monkeypatch.setattr(
+        engine_module.get_registry(), "create", lambda name: FakeInpainter(),
+    )
+
+    WipeEngine(weight=weight)._ensure_model()
+
+    assert loaded == [weight]
+
+
+def test_onnx_backend_filters_unavailable_providers(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeSession:
+        def __init__(self, path, providers):
+            calls.append((path, providers))
+
+        def get_inputs(self):
+            return [SimpleNamespace(name="input")]
+
+    fake_ort = SimpleNamespace(
+        get_available_providers=lambda: [
+            "CoreMLExecutionProvider", "CPUExecutionProvider",
+        ],
+        InferenceSession=FakeSession,
+    )
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+    base = tmp_path / "sttn"
+    for part in ("encoder", "transformer", "decoder"):
+        (tmp_path / f"sttn_{part}.onnx").touch()
+
+    ONNXBackend(str(base) + ".onnx")
+
+    assert [providers for _, providers in calls] == [
+        ["CPUExecutionProvider"],
+        ["CPUExecutionProvider"],
+        ["CPUExecutionProvider"],
+    ]
+
+
+def test_onnx_backend_requires_cpu_provider(tmp_path, monkeypatch):
+    fake_ort = SimpleNamespace(
+        get_available_providers=lambda: ["CoreMLExecutionProvider"],
+        InferenceSession=lambda *args, **kwargs: pytest.fail(
+            "session must not load without the CPU provider"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+    base = tmp_path / "sttn"
+    for part in ("encoder", "transformer", "decoder"):
+        (tmp_path / f"sttn_{part}.onnx").touch()
+
+    with pytest.raises(RuntimeError, match="CPUExecutionProvider is required"):
+        ONNXBackend(str(base) + ".onnx")
+
+
 def test_registry_exposes_sttn():
     """The built-in STTN inpainter is registered under the name 'sttn'."""
     registry = get_registry()
@@ -336,8 +542,12 @@ def test_clean_detection_classifies_text_targets(tmp_path):
     _write_test_video(video, width=320, height=180)
 
     class FakeDetector:
+        def __init__(self):
+            self.calls = 0
+
         def detect(self, frame):
-            return [
+            self.calls += 1
+            boxes = [
                 TextBox(
                     points=np.array([[30, 160], [290, 160], [290, 175], [30, 175]]),
                     confidence=0.9,
@@ -353,12 +563,14 @@ def test_clean_detection_classifies_text_targets(tmp_path):
                     confidence=0.8,
                     text="@brand",
                 ),
-                TextBox(
+            ]
+            if self.calls < 3:
+                boxes.append(TextBox(
                     points=np.array([[120, 75], [200, 75], [200, 95], [120, 95]]),
                     confidence=0.7,
                     text="Main St",
-                ),
-            ]
+                ))
+            return boxes
 
     result = detect_clean_candidates(str(video), detector=FakeDetector(), sample_count=3)
     types = {candidate.type for candidate in result.candidates}
@@ -673,6 +885,86 @@ def test_clean_watermark_target_enables_translucent_watermark_scan(tmp_path, mon
     assert '"possible translucent center watermark"' in data
 
 
+def test_stable_center_overlay_is_default_watermark_and_includes_icon(tmp_path):
+    video = tmp_path / "input.mp4"
+
+    def draw_overlay(frame, _i):
+        cv2.polylines(
+            frame,
+            [np.array([[78, 91], [96, 78], [105, 99], [81, 106]], np.int32)],
+            True,
+            (220, 220, 220),
+            2,
+        )
+        cv2.putText(
+            frame, "AI", (114, 99), cv2.FONT_HERSHEY_SIMPLEX,
+            0.5, (220, 220, 220), 2, cv2.LINE_AA,
+        )
+
+    _write_test_video(video, width=256, height=192, frames=5, draw=draw_overlay)
+
+    class TextOnlyDetector:
+        def detect(self, frame):
+            return [TextBox(
+                points=np.array([[112, 78], [165, 78], [165, 99], [112, 99]]),
+                confidence=0.9,
+            )]
+
+    result = detect_clean_candidates(
+        str(video), detector=TextOnlyDetector(), sample_count=5,
+    )
+    candidate = result.candidates[0]
+
+    assert candidate.type == "watermark"
+    assert candidate.default_remove is True
+    assert select_clean_candidates(result.candidates) == [candidate]
+    # The DBNet polygon starts at x=112 and its normal dilation at x=98;
+    # pixels left of that prove the adjacent non-text icon expanded the mask.
+    assert candidate.mask[76:108, 76:98].sum() > 0
+    mask_ys, mask_xs = np.where(candidate.mask[:, :, 0] > 0)
+    assert candidate.bbox == (
+        int(mask_xs.min()), int(mask_ys.min()),
+        int(mask_xs.max()), int(mask_ys.max()),
+    )
+
+
+def test_persistent_center_title_without_adjacent_graphic_stays_scene_text(tmp_path):
+    video = tmp_path / "input.mp4"
+
+    def draw_title(frame, _i):
+        cv2.putText(
+            frame, "TITLE", (40, 53), cv2.FONT_HERSHEY_SIMPLEX,
+            0.4, (220, 220, 220), 1, cv2.LINE_AA,
+        )
+
+    _write_test_video(
+        video, width=128, height=96, frames=5, draw=draw_title,
+    )
+
+    class PersistentTitleDetector:
+        def detect(self, frame):
+            return [TextBox(
+                points=np.array([[44, 39], [84, 39], [84, 55], [44, 55]]),
+                confidence=0.9,
+            )]
+
+    result = detect_clean_candidates(
+        str(video), detector=PersistentTitleDetector(), sample_count=5,
+    )
+    candidate = result.candidates[0]
+
+    assert candidate.presence_frames == [0, 1, 2, 3, 4]
+    assert candidate.type == "scene_text"
+    assert candidate.default_remove is False
+    assert select_clean_candidates(result.candidates) == []
+
+    targeted = detect_clean_candidates(
+        str(video), detector=PersistentTitleDetector(), sample_count=5,
+        include_translucent_watermark=True,
+    )
+    assert any(item.type == "watermark" for item in targeted.candidates)
+
+
 def test_clean_timestamp_target_warns_when_detector_has_no_text(tmp_path, capsys):
     video = tmp_path / "input.mp4"
     output = tmp_path / "result"
@@ -840,7 +1132,7 @@ def test_engine_writes_benchmark_json_on_manual_mask(tmp_path, monkeypatch):
 
     engine = WipeEngine(task="detext")
     try:
-        engine.process(video=str(video), mask=str(mask), output=str(output))
+        engine.process(video=video, mask=mask, output=output)
     finally:
         engine.cleanup()
 
@@ -853,6 +1145,8 @@ def test_engine_writes_benchmark_json_on_manual_mask(tmp_path, monkeypatch):
     assert "inpainting_s" in bm["timing"]
     assert bm["width"] == 96
     assert bm["height"] == 64
+    assert bm["video_path"] == str(video)
+    assert bm["output_path"] == str(output / "output_detext.mp4")
     assert bm["error"] is None
 
 
@@ -1623,6 +1917,294 @@ def test_build_frame_mask_unions_active_remove_tracks_only():
     assert fm(35)[55, 30] == 0 and fm(35)[55, 60] == 1
     # >=40: inactive
     assert fm(45).sum() == 0
+
+
+def test_build_frame_mask_caches_only_the_latest_active_combination():
+    """Consecutive equal track sets reuse one immutable full-frame mask."""
+    from types import SimpleNamespace
+
+    from videowipe.plan import Segment, Source, Track, WipePlan
+
+    H, W = 64, 96
+    band_a = np.zeros((H, W), dtype=np.uint8)
+    band_a[50:60, 10:50] = 1
+    band_b = np.zeros((H, W), dtype=np.uint8)
+    band_b[50:60, 46:86] = 1
+    plan = WipePlan(
+        kind="wipe_plan", schema_version=1,
+        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
+        request={},
+        temporal_resolution=SimpleNamespace(
+            max_gap_frames=15, max_gap_seconds=3.75,
+            max_boundary_error_frames=7,
+        ),
+        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
+        tracks=[
+            Track(
+                id="c1", type="subtitle", label="a", action="remove",
+                bbox=(10, 50, 50, 60), confidence=0.9,
+                presence_fraction=0.3, decision_reason="x",
+                segments=[Segment(10, 30)], mask_key="c1", mask=band_a,
+            ),
+            Track(
+                id="c2", type="subtitle", label="b", action="remove",
+                bbox=(46, 50, 86, 60), confidence=0.9,
+                presence_fraction=0.3, decision_reason="x",
+                segments=[Segment(20, 40)], mask_key="c2", mask=band_b,
+            ),
+        ],
+    )
+    fm = WipeEngine._build_frame_mask(plan, feather_radius=4)
+
+    empty = fm(0)
+    assert empty is fm(1)
+    assert not empty.flags.writeable
+    with pytest.raises(ValueError):
+        empty[0, 0] = 1
+
+    only_a = fm(15)
+    assert only_a is fm(16)
+    assert not only_a.flags.writeable
+    assert only_a[55, 30] == 1 and only_a[55, 70] == 0
+
+    both = fm(25)
+    assert both is fm(26)
+    assert both is not only_a
+    assert both[55, 30] == 1 and both[55, 70] == 1
+
+    # maxsize=1 evicted the earlier A-only value, but rebuilding is exact.
+    rebuilt_a = fm(15)
+    assert rebuilt_a is not only_a
+    np.testing.assert_array_equal(rebuilt_a, only_a)
+
+
+def test_get_inpaint_mode_uses_an_unprocessed_frontier():
+    from videowipe.inpainters.sttn import get_inpaint_mode
+
+    height, split_h = 1080, 360
+    mask = np.zeros((height, 16), dtype=np.uint8)
+    mask[355:375] = 1
+    mask[715:735] = 1
+
+    modes = get_inpaint_mode(height, split_h, mask)
+
+    assert modes == [(720, 1080), (360, 720), (0, 360)]
+    active_rows = np.flatnonzero(mask.any(axis=1))
+    assert all(any(start <= row < end for start, end in modes) for row in active_rows)
+    assert all(end - start == split_h for start, end in modes)
+    assert all(
+        max(0, min(first_end, second_end) - max(first_start, second_start)) < split_h // 4
+        for first_start, first_end in modes
+        for second_start, second_end in modes
+        if (first_start, first_end) != (second_start, second_end)
+    )
+
+
+def test_get_inpaint_mode_shifts_only_when_top_edge_is_clear():
+    from videowipe.inpainters.sttn import get_inpaint_mode
+
+    mask = np.zeros((1080, 16), dtype=np.uint8)
+    mask[715:735] = 1
+
+    assert get_inpaint_mode(1080, 360, mask) == [(720, 1080), (375, 735)]
+
+
+def test_get_inpaint_mode_clamps_window_when_height_is_less_than_split():
+    from videowipe.inpainters.sttn import get_inpaint_mode
+
+    mask = np.ones((120, 16), dtype=np.uint8)
+
+    modes = get_inpaint_mode(120, 360, mask)
+
+    assert modes == [(0, 120)]
+    assert all(0 <= start < end <= 120 for start, end in modes)
+
+
+def test_blend_frame_regions_matches_whole_frame_float_reference():
+    from videowipe.inpainters.sttn import _blend_frame_regions
+
+    rng = np.random.default_rng(7)
+    frame = rng.integers(0, 256, (24, 32, 3), dtype=np.uint8)
+    original = frame.copy()
+    modes = [(2, 12), (8, 18)]
+    comps = [
+        rng.integers(0, 256, (10, 32, 3), dtype=np.uint8).astype(np.float32),
+        rng.integers(0, 256, (10, 32, 3), dtype=np.uint8).astype(np.float32),
+    ]
+    mask = np.zeros((24, 32, 1), dtype=np.float32)
+    mask[2:12, 5:25] = rng.random((10, 20, 1), dtype=np.float32)
+    mask[8:18, 8:28] = rng.random((10, 20, 1), dtype=np.float32)
+
+    reference = frame.astype(np.float32)
+    for (start, end), comp in zip(modes, comps):
+        alpha = mask[start:end]
+        reference[start:end] = (
+            alpha * comp + (1.0 - alpha) * reference[start:end]
+        )
+    reference = np.clip(reference, 0, 255).astype(np.uint8)
+
+    actual = _blend_frame_regions(frame, comps, modes, mask)
+
+    np.testing.assert_array_equal(actual, reference)
+    np.testing.assert_array_equal(actual[:2], frame[:2])
+    np.testing.assert_array_equal(actual[18:], frame[18:])
+    np.testing.assert_array_equal(frame, original)
+
+
+@pytest.mark.parametrize(
+    "temporal,production,output_count",
+    [
+        (False, False, 3),
+        (False, True, 3),
+        (True, True, 3),
+        (False, True, 2),
+    ],
+)
+def test_sttn_masks_model_input_before_preprocess(
+    tmp_path, monkeypatch, temporal, production, output_count,
+):
+    """Masked inference and the bounded production reader preserve pixels."""
+    from videowipe.inpainters.sttn import STTNInpainter
+
+    height, width = 8, 64  # split_h=12 exercises H < split_h too.
+    frames = [
+        np.full((height, width, 3), (30 + i * 10, 90, 180), np.uint8)
+        for i in range(3)
+    ]
+    mask = np.zeros((height, width, 1), dtype=np.float32)
+    mask[:, 12:52] = 0.5
+    mask[1:7, 18:46] = 1.0
+    captured = []
+    mask_indices = []
+
+    class Reader:
+        def __init__(self, source_frames):
+            self.frames = source_frames
+            self.index = 0
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            if self.index == len(self.frames):
+                return False, None
+            frame = self.frames[self.index]
+            self.index += 1
+            return True, frame.copy()
+
+        def release(self):
+            self.released = True
+
+    class SpyBackend:
+        def preprocess(self, model_frames):
+            captured.extend(frame.copy() for frame in model_frames)
+            return np.zeros((len(model_frames), 1, 1, 1), dtype=np.float32)
+
+        def encode(self, tensor):
+            return tensor
+
+        def transform(self, feats):
+            return feats
+
+        def decode(self, feats):
+            return np.zeros((len(feats), 120, 640, 3), dtype=np.uint8)
+
+        def cleanup(self):
+            pass
+
+    class Sink:
+        def __init__(self):
+            self.data = bytearray()
+
+        def write(self, data):
+            self.data.extend(data)
+            return len(data)
+
+        def close(self):
+            pass
+
+    class Pipe:
+        def __init__(self):
+            self.returncode = 0
+            self.stdin = Sink()
+
+        def wait(self):
+            return 0
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -1
+
+    pipe = Pipe()
+    monkeypatch.setattr(
+        "videowipe.inpainters.sttn.subprocess.Popen",
+        lambda *_args, **_kwargs: pipe,
+    )
+    output_reader = Reader(frames[:output_count])
+    if production:
+        monkeypatch.setattr(
+            "videowipe.inpainters.sttn._VIDEO_CAPTURE_TYPE", Reader,
+        )
+        monkeypatch.setattr(
+            "videowipe.inpainters.sttn.cv2.VideoCapture",
+            lambda _path: output_reader,
+        )
+
+    def frame_mask(global_index):
+        mask_indices.append(global_index)
+        if global_index == 1:
+            return mask[:, :, 0]
+        return np.zeros((height, width), dtype=np.float32)
+
+    inpainter = STTNInpainter()
+    inpainter.backend = SpyBackend()
+    inference_reader = Reader(frames)
+    job = InpaintJob(
+        video_path="input.mp4" if production else "", mask=mask,
+        output_dir=str(tmp_path), fps=4.0, frame_count=len(frames),
+        width=width, height=height, reader=inference_reader, gap=2,
+        frame_mask=frame_mask if temporal else None,
+    )
+    if output_count < len(frames):
+        with pytest.raises(ValueError, match=r"output decoded 2 frames; expected 3"):
+            inpainter.inpaint(job)
+        assert output_reader.released
+        return
+    inpainter.inpaint(job)
+
+    assert len(captured) == len(frames)
+    assert inference_reader.index == len(frames)
+    resized_mask = cv2.resize(
+        mask[:, :, 0], (640, 120), interpolation=cv2.INTER_LINEAR,
+    )
+    for index, (source, model_input) in enumerate(zip(frames, captured)):
+        expected = cv2.resize(
+            source, (640, 120), interpolation=cv2.INTER_LINEAR,
+        ).astype(np.float32)
+        active_mask = resized_mask if not temporal or index == 1 else np.zeros_like(resized_mask)
+        assert np.array_equal(model_input[active_mask == 0], expected[active_mask == 0])
+        assert np.all(model_input[active_mask == 1] == 0.0)
+        soft = (active_mask > 0) & (active_mask < 1)
+        assert np.allclose(
+            model_input[soft],
+            expected[soft] * (1.0 - active_mask[soft])[:, None],
+        )
+    if temporal:
+        assert mask_indices == [0, 1, 0, 1, 2, 2]
+    if production:
+        assert output_reader.index == len(frames)
+        assert output_reader.released
+    output = np.frombuffer(pipe.stdin.data, dtype=np.uint8).reshape(
+        len(frames), height, width, 3,
+    )
+    for index, source in enumerate(frames):
+        active = not temporal or index == 1
+        alpha = mask if active else np.zeros_like(mask)
+        expected = np.clip((1.0 - alpha) * source, 0, 255).astype(np.uint8)
+        assert np.array_equal(output[index], expected)
 
 
 @pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg not on PATH")

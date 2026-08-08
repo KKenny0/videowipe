@@ -19,6 +19,8 @@ import numpy as np
 from videowipe.backends import load_backend
 from videowipe.inpainters.base import InpaintJob, InpaintOutcome
 
+_VIDEO_CAPTURE_TYPE = cv2.VideoCapture
+
 
 def get_ref_index(neighbor_ids, length, ref_length):
     """Select reference frames at regular intervals, excluding neighbors."""
@@ -43,6 +45,49 @@ def blend_frames(comp_frames, pred_img, neighbor_ids, mask):
             mask[idx] = True
         else:
             comp_frames[idx] = 0.5 * comp_frames[idx] + 0.5 * img
+
+
+def _blend_frame_regions(frame_ori, comp_frames, modes, mask):
+    """Blend prepared model crops without converting the whole frame to float."""
+    active = [
+        (mode, comp)
+        for mode, comp in zip(modes, comp_frames)
+        if comp is not None
+    ]
+    frame = frame_ori.copy()
+    if not active:
+        return frame
+
+    work_from = min(mode[0] for mode, _comp in active)
+    work_to = max(mode[1] for mode, _comp in active)
+    work = frame_ori[work_from:work_to].astype(np.float32)
+    for (from_h, to_h), comp in active:
+        mask_area = mask[from_h:to_h].astype(np.float32)
+        relative = slice(from_h - work_from, to_h - work_from)
+        work[relative] = (
+            mask_area * comp
+            + (1.0 - mask_area) * work[relative]
+        )
+    frame[work_from:work_to] = np.clip(work, 0, 255).astype(np.uint8)
+    return frame
+
+
+def _masked_model_crop(image, mask, mode, output_size):
+    """Resize a crop and hide its removal mask before model inference."""
+    from_h, to_h = mode
+    image_crop = image[from_h:to_h]
+    image_resize = cv2.resize(
+        image_crop, output_size, interpolation=cv2.INTER_LINEAR,
+    ).astype(np.float32)
+    mask_crop = np.asarray(mask)[from_h:to_h]
+    if mask_crop.ndim == 3:
+        mask_crop = mask_crop[:, :, 0]
+    mask_resize = cv2.resize(
+        mask_crop.astype(np.float32), output_size,
+        interpolation=cv2.INTER_LINEAR,
+    )
+    mask_resize = np.clip(mask_resize, 0.0, 1.0)
+    return image_resize * (1.0 - mask_resize[:, :, None])
 
 
 def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
@@ -81,23 +126,29 @@ def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
 def get_inpaint_mode(H, h, mask):
     """Determine inpainting segments based on mask position."""
     mode = []
-    to_H = from_H = H
-    while from_H != 0:
-        if to_H - h < 0:
-            from_H = 0
-            to_H = h
-        else:
-            from_H = to_H - h
-        if not np.all(mask[from_H:to_H, :] == 0) and np.sum(mask[from_H:to_H, :]) > 10:
-            if to_H != H:
+    frontier = H
+    while frontier > 0:
+        base_start = max(0, frontier - h)
+        unprocessed = mask[base_start:frontier, :]
+        if not np.all(unprocessed == 0) and np.sum(unprocessed) > 10:
+            from_H, to_H = base_start, frontier
+            if frontier != H and base_start != 0:
                 move = 0
-                while to_H + move < H and not np.all(mask[to_H + move, :] == 0):
+                while frontier + move < H and not np.all(
+                    mask[frontier + move, :] == 0
+                ):
                     move += 1
-                if to_H + move < H and move < h:
+                # Shift only when it neither runs off the frame nor drops mask
+                # pixels from the still-unprocessed top edge.
+                if (
+                    0 < move < h
+                    and frontier + move < H
+                    and np.all(mask[base_start:base_start + move, :] == 0)
+                ):
                     to_H += move
                     from_H += move
             mode.append((from_H, to_H))
-        to_H -= h
+        frontier = base_start
     return mode
 
 
@@ -161,6 +212,8 @@ class STTNInpainter:
                 "failed to find subtitles. Try providing a mask manually with -m."
             )
 
+        output_reader = None
+
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-loglevel", "error", "-nostats",
@@ -194,6 +247,12 @@ class STTNInpainter:
         stdin_closed = False
         processing_failed = False
         try:
+            if job.video_path and isinstance(reader, _VIDEO_CAPTURE_TYPE):
+                candidate_reader = cv2.VideoCapture(job.video_path)
+                if candidate_reader.isOpened():
+                    output_reader = candidate_reader
+                else:
+                    candidate_reader.release()
             rec_time = (
                 video_length // gap
                 if video_length % gap == 0
@@ -203,27 +262,35 @@ class STTNInpainter:
             # Backend instances are shared runtime objects; keep inference
             # serialized until the backend declares a thread-safety contract.
             t_inpaint_start = time.monotonic()
+            output_decoded = 0
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 for i in range(rec_time):
                     start_f = i * gap
                     end_f = min((i + 1) * gap, video_length)
                     print(f"Processing frames {start_f + 1}-{end_f}/{video_length}")
 
-                    frames_hr = []
+                    frames_hr = [] if output_reader is None else None
                     frames = {k: [] for k in range(len(mode))}
 
-                    for j in range(start_f, end_f):
+                    for local_index in range(end_f - start_f):
                         success, image = reader.read()
                         if not success:
-                            break
-                        frames_hr.append(image)
+                            raise ValueError(
+                                f"STTN inference decoded {start_f + local_index} "
+                                f"frames; expected {video_length}"
+                            )
+                        if frames_hr is not None:
+                            frames_hr.append(image)
+                        global_index = start_f + local_index
+                        model_mask = (
+                            np.asarray(job.frame_mask(global_index))
+                            if job.frame_mask is not None
+                            else job.mask
+                        )
                         for k in range(len(mode)):
-                            image_crop = image[mode[k][0]:mode[k][1], :, :]
-                            image_resize = cv2.resize(image_crop, (w, h))
-                            frames[k].append(image_resize)
-
-                    if not frames_hr:
-                        break
+                            frames[k].append(_masked_model_crop(
+                                image, model_mask, mode[k], (w, h),
+                            ))
 
                     futures = {
                         k: executor.submit(
@@ -236,33 +303,42 @@ class STTNInpainter:
                     }
                     comps = {k: futures[k].result() for k in futures}
 
-                    for j in range(len(frames_hr)):
-                        frame_ori = frames_hr[j].copy()
-                        frame = frames_hr[j].astype(np.float32)
+                    for j in range(end_f - start_f):
+                        if output_reader is not None:
+                            success, frame_ori = output_reader.read()
+                            if not success:
+                                raise ValueError(
+                                    f"STTN output decoded {output_decoded} frames; "
+                                    f"expected {video_length}"
+                                )
+                            output_decoded += 1
+                        else:
+                            frame_ori = frames_hr[j]
                         # Per-frame temporal mask (global index start_f + j) when a
                         # WipePlan supplies one; else the static whole-video mask.
                         if job.frame_mask is not None:
                             per_frame = np.asarray(job.frame_mask(start_f + j))
                             if per_frame.ndim == 2:
                                 per_frame = per_frame[:, :, None]
+                        frame_comps = []
                         for k in range(len(mode)):
                             if comps.get(k) and j < len(comps[k]):
-                                comp = cv2.resize(comps[k][j], (ori_w, split_h))
+                                mode_height = mode[k][1] - mode[k][0]
+                                comp = cv2.resize(
+                                    comps[k][j], (ori_w, mode_height),
+                                )
                                 comp = cv2.cvtColor(
                                     np.array(comp).astype(np.uint8), cv2.COLOR_BGR2RGB
                                 ).astype(np.float32)
-                                # Soft alpha blend: mask is float32 in [0,1]
-                                # when feather_radius > 0, else uint8 in {0,1}.
-                                if job.frame_mask is not None:
-                                    mask_area = per_frame[mode[k][0]:mode[k][1], :].astype(np.float32)
-                                else:
-                                    mask_area = job.mask[mode[k][0]:mode[k][1], :].astype(np.float32)
-                                blended = (
-                                    mask_area * comp
-                                    + (1.0 - mask_area) * frame[mode[k][0]:mode[k][1], :, :]
-                                )
-                                frame[mode[k][0]:mode[k][1], :, :] = blended
-                        frame = np.clip(frame, 0, 255).astype(np.uint8)
+                                frame_comps.append(comp)
+                            else:
+                                frame_comps.append(None)
+                        # Soft alpha blend: mask is float32 in [0,1] when
+                        # feather_radius > 0, else uint8 in {0,1}.
+                        blend_mask = per_frame if job.frame_mask is not None else job.mask
+                        frame = _blend_frame_regions(
+                            frame_ori, frame_comps, mode, blend_mask,
+                        )
                         if job.dual:
                             frame = np.vstack([frame_ori, frame])
                         pipe.stdin.write(frame.tobytes())
@@ -282,6 +358,8 @@ class STTNInpainter:
             processing_failed = True
             raise
         finally:
+            if output_reader is not None:
+                output_reader.release()
             if not stdin_closed and pipe.stdin is not None:
                 pipe.stdin.close()
             if pipe.poll() is None:

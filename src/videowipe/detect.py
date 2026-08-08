@@ -33,7 +33,8 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, List, Literal, Protocol, runtime_checkable
+from itertools import chain
+from typing import Iterable, Iterator, List, Literal, Protocol, runtime_checkable
 
 import cv2
 import numpy as np
@@ -113,6 +114,9 @@ class CleanDetectionResult:
     sample_indices: list[int] = field(default_factory=list)
     preview_frame: np.ndarray | None = field(default=None, repr=False)
     detector: TextDetector | None = field(default=None, repr=False)
+    sampled_frame_boxes: dict[int, list[TextBox]] = field(
+        default_factory=dict, repr=False,
+    )
 
 
 # ── Detector protocol ────────────────────────────────────────────────────────
@@ -212,6 +216,7 @@ class DBNetDetector:
 
         # Try high-level OpenCV API (>= 4.5.4)
         self._hl_model = None
+        self._manual_only = False
         try:
             model = cv2.dnn.TextDetectionModel_DB(self._net)
             model.setInputParams(
@@ -258,7 +263,8 @@ class DBNetDetector:
         else:
             input_w, input_h = self._input_w, self._input_h
 
-        if self._hl_model is not None:
+        tried_hl = self._hl_model is not None and not self._manual_only
+        if tried_hl:
             # Reconfigure input size when adaptive or first call
             if self._adaptive:
                 self._hl_model.setInputParams(
@@ -270,7 +276,10 @@ class DBNetDetector:
                 return boxes
             # High-level API returned nothing — fall back to manual post-processing
             logger.debug("High-level DB API returned 0 boxes; falling back to manual path")
-        return self._detect_manual(frame, input_w=input_w, input_h=input_h)
+        boxes = self._detect_manual(frame, input_w=input_w, input_h=input_h)
+        if tried_hl and boxes:
+            self._manual_only = True
+        return boxes
 
     def _detect_hl(self, frame: np.ndarray) -> List[TextBox]:
         detections, confidences = self._hl_model.detect(frame)
@@ -349,14 +358,14 @@ class DBNetDetector:
 
 # ── Mask generation pipeline ─────────────────────────────────────────────────
 
-def _sample_frames_with_indices(
+def _iter_sample_frames_with_indices(
     video_path: str, count: int = 30
-) -> list[tuple[int, np.ndarray]]:
-    """Uniformly sample *count* frames, returning ``(frame_index, frame)`` pairs.
+) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield uniformly sampled ``(frame_index, frame)`` pairs.
 
     The frame indices are the real positions in the source video, preserved so
     callers can derive temporal evidence (which frames a candidate was present
-    on). Only successfully read frames are returned, in ascending index order.
+    on). Only successfully read frames are yielded, in ascending index order.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -370,14 +379,21 @@ def _sample_frames_with_indices(
     count = min(count, total)
     indices = sorted(set(np.linspace(0, total - 1, count, dtype=int)))
 
-    indexed: list[tuple[int, np.ndarray]] = []
-    for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ok, frame = cap.read()
-        if ok:
-            indexed.append((int(idx), frame))
-    cap.release()
-    return indexed
+    try:
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame = cap.read()
+            if ok:
+                yield int(idx), frame
+    finally:
+        cap.release()
+
+
+def _sample_frames_with_indices(
+    video_path: str, count: int = 30
+) -> list[tuple[int, np.ndarray]]:
+    """Return uniformly sampled frames as a list for legacy callers."""
+    return list(_iter_sample_frames_with_indices(video_path, count))
 
 
 def _sample_frames(video_path: str, count: int = 30) -> List[np.ndarray]:
@@ -781,10 +797,11 @@ def _box_overlaps_bbox(
 
 
 def _band_fallback_detect(
-    frames: list[np.ndarray],
+    frames: Iterable[np.ndarray],
     detector: TextDetector,
     mode: str = "light",
     consistency: float = 0.4,
+    frame_shape: tuple[int, int] | None = None,
 ) -> list[CleanCandidate]:
     """Detect text in subtitle bands missed by the main frequency-map pass.
 
@@ -792,10 +809,15 @@ def _band_fallback_detect(
     and runs the detector.  Builds a per-pixel frequency map from fallback
     detections, then extracts connected-component candidates.
     """
-    if not frames:
-        return []
-
-    h, w = frames[0].shape[:2]
+    frame_iter = iter(frames)
+    if frame_shape is None:
+        try:
+            first = next(frame_iter)
+        except StopIteration:
+            return []
+        frame_shape = first.shape[:2]
+        frame_iter = chain((first,), frame_iter)
+    h, w = frame_shape
 
     bands: list[tuple[str, int, int, int, int]] = []
     bands.append(("bottom", 0, int(h * 0.6), w - 1, h - 1))
@@ -810,7 +832,7 @@ def _band_fallback_detect(
     freq = np.zeros((h, w), dtype=np.float32)
     n_valid = 0
 
-    for frame in frames:
+    for frame in frame_iter:
         frame_mask = np.zeros((h, w), dtype=np.uint8)
         for _band_name, bx1, by1, bx2, by2 in bands:
             crop = frame[by1:by2 + 1, bx1:bx2 + 1]
@@ -936,6 +958,7 @@ def _detect_fixed_logo_candidates(
 def _detect_translucent_watermark_candidates(
     frames: list[np.ndarray],
     start_index: int = 1,
+    anchors: Iterable[CleanCandidate] | None = None,
 ) -> list[CleanCandidate]:
     if not frames:
         return []
@@ -944,21 +967,39 @@ def _detect_translucent_watermark_candidates(
     blur = cv2.GaussianBlur(gray, (0, 0), 7)
     contrast = cv2.absdiff(gray, blur)
     soft = ((contrast > 5) & (contrast < 45)).astype(np.uint8)
-    x1, y1, x2, y2 = _region_bbox("center", w, h)
-    mask = np.zeros((h, w), dtype=np.uint8)
-    mask[y1:y2 + 1, x1:x2 + 1] = soft[y1:y2 + 1, x1:x2 + 1]
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3)))
+    candidates: list[CleanCandidate] = []
+    anchor_list = list(anchors or [])
+    regions = [(None, _region_bbox("center", w, h))]
+    if anchor_list:
+        regions = []
+        for anchor in anchor_list:
+            x1, y1, x2, y2 = anchor.bbox
+            pad_x = max(12, (x2 - x1 + 1) // 6)
+            pad_y = max(8, (y2 - y1 + 1) // 2)
+            regions.append((anchor, (
+                max(0, x1 - pad_x), max(0, y1 - pad_y),
+                min(w - 1, x2 + pad_x), min(h - 1, y2 + pad_y),
+            )))
 
-    candidate = _largest_overlay_candidate(
-        mask,
-        "center",
-        "watermark",
-        "possible translucent center watermark",
-        (h, w),
-        f"w{start_index}",
-        confidence=0.45,
-    )
-    return [candidate] if candidate is not None else []
+    for anchor, (x1, y1, x2, y2) in regions:
+        mask = np.zeros((h, w), dtype=np.uint8)
+        mask[y1:y2 + 1, x1:x2 + 1] = soft[y1:y2 + 1, x1:x2 + 1]
+        mask = cv2.morphologyEx(
+            mask, cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3)),
+        )
+        candidate = _largest_overlay_candidate(
+            mask,
+            "center",
+            "watermark",
+            "possible translucent center watermark",
+            (h, w),
+            anchor.id if anchor is not None else f"w{start_index}",
+            confidence=0.45,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
 
 
 def _classify_region(
@@ -1068,45 +1109,59 @@ def detect_clean_candidates(
     if detect_text and detector is None:
         detector = _default_detector()
 
-    indexed = _sample_frames_with_indices(video_path, sample_count)
-    if not indexed:
-        raise ValueError(f"No frames could be read from: {video_path}")
-
-    all_sample_indices = [idx for idx, _ in indexed]
-    frames = [frame for _, frame in indexed]
-    h, w = frames[0].shape[:2]
     candidates: list[CleanCandidate] = []
     n_valid = 0
     valid_sample_indices: list[int] = []
+    sampled_frame_boxes: dict[int, list[TextBox]] = {}
+    all_frame_boxes: list[tuple[int, list[TextBox]]] = []
+    first_frame = None
+    best_preview = None
+    best_preview_score = -1
+    logo_frames: list[np.ndarray] = []
+    freq = None
+
+    for sample_index, frame in _iter_sample_frames_with_indices(
+        video_path, sample_count,
+    ):
+        if first_frame is None:
+            first_frame = frame
+            h, w = frame.shape[:2]
+            if detect_text and detector is not None:
+                freq = np.zeros((h, w), dtype=np.float32)
+        if include_logo and len(logo_frames) < 6:
+            logo_frames.append(frame)
+
+        if not detect_text or detector is None:
+            continue
+        try:
+            boxes = detector.detect(frame)
+        except Exception as exc:
+            logger.warning("Clean detection failed on sampled frame: %s", exc)
+            continue
+        n_valid += 1
+        valid_sample_indices.append(sample_index)
+        sampled_frame_boxes[sample_index] = boxes
+        all_frame_boxes.append((sample_index, boxes))
+        frame_mask = np.zeros((h, w), dtype=np.uint8)
+        for box in boxes:
+            cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
+        freq += frame_mask
+
+        score = int(frame_mask.sum())
+        if score > best_preview_score:
+            best_preview_score = score
+            best_preview = frame
+
+    if first_frame is None:
+        raise ValueError(f"No frames could be read from: {video_path}")
+    frame = None
+    h, w = first_frame.shape[:2]
 
     if detect_text and detector is not None:
-        freq = np.zeros((h, w), dtype=np.float32)
-        all_frame_boxes: list[list[TextBox]] = []
-        best_preview_idx = 0
-        best_preview_score = -1
-
-        for i, frame in enumerate(frames):
-            try:
-                boxes = detector.detect(frame)
-            except Exception as exc:
-                logger.warning("Clean detection failed on sampled frame: %s", exc)
-                continue
-            n_valid += 1
-            all_frame_boxes.append(boxes)
-            valid_sample_indices.append(all_sample_indices[i])
-            frame_mask = np.zeros((h, w), dtype=np.uint8)
-            for box in boxes:
-                cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
-            freq += frame_mask
-
-            score = int(frame_mask.sum())
-            if score > best_preview_score:
-                best_preview_score = score
-                best_preview_idx = i
-
         if n_valid == 0:
             raise RuntimeError("Target detection failed on all sampled frames.")
 
+        assert freq is not None
         freq /= n_valid
 
         text_mask = (freq >= consistency).astype(np.uint8)
@@ -1130,7 +1185,7 @@ def detect_clean_candidates(
             text_samples: list[str] = []
             ocr_crops: list[np.ndarray] = []
             presence_frames: list[int] = []
-            for sample_pos, boxes in enumerate(all_frame_boxes):
+            for sample_index, boxes in all_frame_boxes:
                 overlapped = False
                 for box in boxes:
                     if _box_overlaps_bbox(box, (x1, y1, x2, y2), w, h):
@@ -1139,11 +1194,11 @@ def detect_clean_candidates(
                         if box.text:
                             text_samples.append(box.text)
                         elif recognizer is not None:
-                            crop = frames[0][by1:by2 + 1, bx1:bx2 + 1]
+                            crop = first_frame[by1:by2 + 1, bx1:bx2 + 1]
                             if crop.size > 0:
                                 ocr_crops.append(crop)
                 if overlapped:
-                    presence_frames.append(valid_sample_indices[sample_pos])
+                    presence_frames.append(sample_index)
 
             if not text_samples and ocr_crops and recognizer is not None:
                 for crop in ocr_crops[:3]:
@@ -1187,7 +1242,16 @@ def detect_clean_candidates(
 
     if subtitle_fallback != "off" and detect_text and detector is not None:
         fallback_raw = _band_fallback_detect(
-            frames, detector, mode=subtitle_fallback, consistency=consistency,
+            (
+                frame
+                for _, frame in _iter_sample_frames_with_indices(
+                    video_path, sample_count,
+                )
+            ),
+            detector,
+            mode=subtitle_fallback,
+            consistency=consistency,
+            frame_shape=(h, w),
         )
         main_bboxes = [c.bbox for c in candidates]
         surviving = [
@@ -1198,24 +1262,84 @@ def detect_clean_candidates(
             fc.id = f"b{idx}"
             candidates.append(fc)
 
+    stable_overlays = []
+    if n_valid:
+        for candidate in candidates:
+            x1, y1, x2, y2 = candidate.bbox
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            if (
+                candidate.detector_backed
+                and candidate.type == "scene_text"
+                and len(candidate.presence_frames) / n_valid >= 0.80
+                and w * 0.25 <= cx <= w * 0.75
+                and h * 0.30 <= cy <= h * 0.82
+                and (x2 - x1 + 1) / w <= 0.45
+                and (y2 - y1 + 1) / h <= 0.18
+            ):
+                stable_overlays.append(candidate)
+
+    details = (
+        _detect_translucent_watermark_candidates(
+            [first_frame], anchors=stable_overlays,
+        )
+        if stable_overlays else []
+    )
+    details_by_id = {candidate.id: candidate for candidate in details}
+    promoted_overlay_ids: set[str] = set()
+    for candidate in stable_overlays:
+        detail = details_by_id.get(candidate.id)
+        if detail is None:
+            continue
+        anchor_width = candidate.bbox[2] - candidate.bbox[0] + 1
+        horizontal_extension = max(
+            candidate.bbox[0] - detail.bbox[0],
+            detail.bbox[2] - candidate.bbox[2],
+        )
+        if horizontal_extension < max(4, int(round(anchor_width * 0.08))):
+            continue
+        detail_mask = cv2.dilate(
+            detail.mask[:, :, 0],
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+            iterations=1,
+        )[:, :, None]
+        candidate.mask = np.maximum(candidate.mask, detail_mask)
+        mask_ys, mask_xs = np.where(candidate.mask[:, :, 0] > 0)
+        candidate.bbox = (
+            int(mask_xs.min()), int(mask_ys.min()),
+            int(mask_xs.max()), int(mask_ys.max()),
+        )
+        candidate.type = "watermark"
+        candidate.label = _candidate_label("watermark", _zone(candidate.bbox, w, h))
+        candidate.reason = "stable compact center overlay"
+        candidate.default_remove = True
+        promoted_overlay_ids.add(candidate.id)
+
     next_index = len(candidates) + 1
     if regions:
         candidates.extend(_region_candidates(regions, (h, w), start_index=next_index))
         next_index = len(candidates) + 1
     if include_logo:
-        candidates.extend(_detect_fixed_logo_candidates(frames, start_index=next_index))
-        next_index = len(candidates) + 1
-    if include_translucent_watermark:
         candidates.extend(
-            _detect_translucent_watermark_candidates(frames, start_index=next_index)
+            _detect_fixed_logo_candidates(logo_frames, start_index=next_index)
+        )
+        next_index = len(candidates) + 1
+    if include_translucent_watermark and not promoted_overlay_ids:
+        candidates.extend(
+            _detect_translucent_watermark_candidates(
+                [first_frame], start_index=next_index,
+            )
         )
 
     return CleanDetectionResult(
         candidates=candidates,
         frame_shape=(h, w),
         sample_indices=valid_sample_indices,
-        preview_frame=frames[best_preview_idx].copy() if detect_text and detector is not None else frames[0].copy(),
+        preview_frame=(
+            best_preview if best_preview is not None else first_frame
+        ).copy(),
         detector=detector,
+        sampled_frame_boxes=sampled_frame_boxes,
     )
 
 
@@ -1280,19 +1404,26 @@ def refine_temporal_presence(
                     candidate.presence_frames = [
                         index for index in candidate.presence_frames if index != frame_index
                     ]
-                try:
-                    boxes = detector.detect(frame)
-                except Exception as exc:  # safety boundary: failed frame remains keep.
-                    warnings.append(
-                        f"temporal refinement failed at frame {frame_index}; keeping frame: {exc}"
-                    )
+                if frame_index in result.sampled_frame_boxes:
+                    boxes = result.sampled_frame_boxes[frame_index]
                 else:
-                    for candidate in active:
-                        if any(
-                            _box_overlaps_bbox(box, candidate.bbox, frame.shape[1], frame.shape[0])
-                            for box in boxes
-                        ):
-                            candidate.presence_frames.append(frame_index)
+                    try:
+                        boxes = detector.detect(frame)
+                    except Exception as exc:  # safety boundary: failed frame remains keep.
+                        warnings.append(
+                            f"temporal refinement failed at frame {frame_index}; "
+                            f"keeping frame: {exc}"
+                        )
+                        boxes = []
+                for candidate in active:
+                    if any(
+                        _box_overlaps_bbox(
+                            box, candidate.bbox,
+                            frame.shape[1], frame.shape[0],
+                        )
+                        for box in boxes
+                    ):
+                        candidate.presence_frames.append(frame_index)
             frame_index += 1
             if progress is not None:
                 progress(frame_index, expected_frame_count)

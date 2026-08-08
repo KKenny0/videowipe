@@ -46,7 +46,7 @@ class BaseTask:
 
     def __init__(
         self,
-        gap: int = 200,
+        gap: int = 25,
         ref_length: int = 5,
         neighbor_stride: int = 5,
         dual: bool = False,

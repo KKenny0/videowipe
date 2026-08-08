@@ -200,7 +200,7 @@ videowipe clean input.mp4 -m mask.png -o result/
 | `--ocr` | OCR：`auto`、`off`、`rapidocr` | `auto` |
 | `--agent` | 本地 LLM CLI，用于意图选择（如 `claude`、`codex`） | — |
 | `--external-command` | 外部修复命令（绕过内置 STTN） | — |
-| `-g, --gap` | 每段处理长度；越大通常越好、越慢 | `200` |
+| `-g, --gap` | 每个修复分段的帧数；`25` 平衡性能和质量，值越大上下文越多，但计算和内存成本超线性增长 | `25` |
 | `-d, --dual` | 输出中并排显示原片 | 关 |
 | `-m, --mask` | mask 图片路径 | 自动 |
 
@@ -220,7 +220,7 @@ videowipe detext -v input.mp4 -m mask.png -o result/
 | `-m, --mask` | mask 路径 | 自动 |
 | `-o, --output` | 输出目录 | `result/` |
 | `-w, --weight` | 模型权重（PyTorch `.pth`/`.pt`，或 ONNX 前缀） | 自动 |
-| `-g, --gap` | 每段处理长度 | `200` |
+| `-g, --gap` | 每个修复分段的帧数；值越大计算和内存成本越高 | `25` |
 | `-d, --dual` | 并排原片 | 关 |
 | `--external-command` | 外部修复命令 | — |
 
