@@ -65,6 +65,7 @@ def test_file_input_repeat_isolated_and_median_aggregated(tmp_path, monkeypatch)
 
     output = tmp_path / "benchmark"
     monkeypatch.setattr(script, "WipeEngine", StubEngine)
+    monkeypatch.setattr(script, "_process_peak_rss_so_far_mib", lambda: 123.0)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -112,7 +113,7 @@ def test_file_input_repeat_isolated_and_median_aggregated(tmp_path, monkeypatch)
         "repeat": 3,
     }
     assert all(
-        run["process_peak_rss_so_far_mib"] > 0 for run in result["runs"]
+        run["process_peak_rss_so_far_mib"] == 123.0 for run in result["runs"]
     )
     assert "peak_rss_mib" not in result["runs"][0]
     assert report["metric_notes"] == {
