@@ -380,11 +380,44 @@ def test_decision_baseline_attributes_cross_type_candidate_as_mixed(tmp_path):
         "candidate_id": "mixed",
         "candidate_type": "subtitle",
         "matched_object_ids": [1, 2],
+        "matched_object_coverage": {"1": 1.0, "2": 1.0},
         "matched_annotation_types": ["logo", "subtitle"],
         "semantic_type_match": True,
         "mixed_object": True,
         "mixed_semantic": True,
     }
+
+
+def test_candidate_purity_ignores_incidental_cross_type_overlap(tmp_path):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[0:3, 0:6] = 1
+    indexed[3:7, 6:11] = 2
+    objects = [
+        {"id": 1, "type": "watermark", "action": "keep", "description": "text"},
+        {"id": 2, "type": "logo", "action": "keep", "description": "logo"},
+    ]
+    _write_manifest(tmp_path, indexed, objects=objects)
+    mask = indexed == 2
+    mask[2, 5] = True
+    logo = _candidate(mask, candidate_id="logo", target_type="logo")
+    _fake_detector(module, mask, candidates=[logo])
+    manifest = _write_decision_manifest(tmp_path, [{
+        "id": "default",
+        "file": "sample.mp4",
+        "request": {},
+        "expected_actions": {"1": "keep", "2": "keep"},
+    }])
+
+    report = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "decision-report.json")
+    )
+
+    evidence = report["videos"][0]["candidates"][0]
+    assert evidence["matched_object_ids"] == [2]
+    assert evidence["mixed_semantic"] is False
+    assert report["macro_average"]["mixed_semantic_candidate_rate"] == 0.0
 
 
 def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path, monkeypatch):

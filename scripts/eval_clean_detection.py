@@ -46,6 +46,7 @@ FACT_BASELINE_REPORT_SCHEMA_VERSION = 2
 FACT_BASELINE_MANIFEST_SCHEMA_VERSION = 1
 DECISION_BASELINE_REPORT_SCHEMA_VERSION = 2
 DECISION_BASELINE_MANIFEST_SCHEMA_VERSION = 1
+MIN_ANNOTATED_OBJECT_COVERAGE = 0.10
 
 
 def _compute_mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
@@ -1210,17 +1211,32 @@ def evaluate_decision_baseline(
             candidate_masks_by_video[video_name] = candidate_masks
             evidence = []
             for candidate, mask in candidate_masks:
-                matched_ids = sorted({
-                    int(object_id)
-                    for _frame_index, indexed in indexed_frames[video_name]
-                    for object_id in np.unique(indexed[mask])
-                    if object_id != 0
-                })
+                object_coverages = {}
+                for object_id in objects:
+                    visible_pixels = sum(
+                        int((indexed == object_id).sum())
+                        for _frame_index, indexed in indexed_frames[video_name]
+                    )
+                    overlap_pixels = sum(
+                        int((mask & (indexed == object_id)).sum())
+                        for _frame_index, indexed in indexed_frames[video_name]
+                    )
+                    if visible_pixels:
+                        object_coverages[object_id] = overlap_pixels / visible_pixels
+                matched_ids = sorted(
+                    object_id
+                    for object_id, coverage in object_coverages.items()
+                    if coverage >= MIN_ANNOTATED_OBJECT_COVERAGE
+                )
                 matched_types = sorted({objects[object_id]["type"] for object_id in matched_ids})
                 evidence.append({
                     "candidate_id": candidate.id,
                     "candidate_type": candidate.type,
                     "matched_object_ids": matched_ids,
+                    "matched_object_coverage": {
+                        str(object_id): round(object_coverages[object_id], 6)
+                        for object_id in matched_ids
+                    },
                     "matched_annotation_types": matched_types,
                     "semantic_type_match": candidate.type in matched_types,
                     "mixed_object": len(matched_ids) > 1,
