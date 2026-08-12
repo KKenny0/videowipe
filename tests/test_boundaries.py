@@ -19,6 +19,7 @@ from videowipe.detect import (
     CleanCandidate,
     DBNetDetector,
     TextBox,
+    _classify_region,
     _iou_bbox,
     detect_clean_candidates,
     mask_from_candidates,
@@ -597,6 +598,24 @@ def test_clean_timestamp_requires_recognized_text_content(tmp_path):
 
     assert all(candidate.type != "timestamp" for candidate in result.candidates)
     assert select_clean_candidates(result.candidates, targets=["timestamp"]) == []
+
+
+@pytest.mark.parametrize(
+    ("bbox", "zone", "presence", "expected"),
+    [
+        ((5, 5, 150, 20), "top-left", 1.0, ("watermark", False)),
+        ((170, 5, 315, 20), "top-right", 1.0, ("logo", False)),
+        ((5, 5, 150, 20), "top-left", 0.5, ("subtitle", True)),
+    ],
+)
+def test_top_text_semantics_use_persistence_and_side(
+    bbox, zone, presence, expected
+):
+    target_type, _reason, default_remove = _classify_region(
+        bbox, zone, [], 320, 180, presence_fraction=presence
+    )
+
+    assert (target_type, default_remove) == expected
 
 
 def test_clean_candidate_selection_and_mask_merge():

@@ -40,6 +40,7 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+_PERSISTENT_OVERLAY_FRACTION = 0.80
 
 
 # ── Data types ───────────────────────────────────────────────────────────────
@@ -885,15 +886,15 @@ def _band_fallback_detect(
             continue
         x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
-        zone = _zone((x1, y1, x2, y2), w, h)
-        target_type, reason, default_remove = _classify_region(
-            (x1, y1, x2, y2), zone, [], w, h,
-        )
-
         region_freq = freq[y1:y2 + 1, x1:x2 + 1]
         pos_freq = region_freq[region_freq > 0]
         confidence = float(pos_freq.mean()) if len(pos_freq) > 0 else 0.0
         frame_fraction = float(region_freq.mean())
+        zone = _zone((x1, y1, x2, y2), w, h)
+        target_type, reason, default_remove = _classify_region(
+            (x1, y1, x2, y2), zone, [], w, h,
+            presence_fraction=confidence,
+        )
 
         component_mask = (labels[y1:y2 + 1, x1:x2 + 1] == label_id).astype(np.uint8)
         full_mask = np.zeros((h, w, 1), dtype=np.uint8)
@@ -1021,6 +1022,7 @@ def _classify_region(
     text_samples: list[str],
     w: int,
     h: int,
+    presence_fraction: float | None = None,
 ) -> tuple[str, str, bool]:
     """Classify a detected region by position and content patterns."""
     x1, y1, x2, y2 = bbox
@@ -1041,7 +1043,14 @@ def _classify_region(
     if cy > h * 0.50 and width_ratio > 0.15:
         return "subtitle", f"wide bottom text in {zone}", True
     if cy < h * 0.30 and width_ratio > 0.15:
-        return "subtitle", f"wide top text in {zone}", True
+        if (
+            presence_fraction is not None
+            and presence_fraction >= _PERSISTENT_OVERLAY_FRACTION
+        ):
+            if zone.startswith("top-right"):
+                return "logo", f"persistent top-right overlay in {zone}", False
+            return "watermark", f"persistent top text overlay in {zone}", False
+        return "subtitle", f"transient wide top text in {zone}", True
 
     # Wide thin text strip below top 25% → likely subtitle regardless of vertical position
     if width_ratio > 0.40 and height_ratio < 0.08 and cy > h * 0.25:
@@ -1225,6 +1234,7 @@ def detect_clean_candidates(
             zone = _zone((x1, y1, x2, y2), w, h)
             target_type, reason, default_remove = _classify_region(
                 (x1, y1, x2, y2), zone, text_samples, w, h,
+                presence_fraction=len(presence_frames) / n_valid,
             )
 
             region_freq = freq[y1:y2 + 1, x1:x2 + 1]
@@ -1284,7 +1294,8 @@ def detect_clean_candidates(
             if (
                 candidate.detector_backed
                 and candidate.type == "scene_text"
-                and len(candidate.presence_frames) / n_valid >= 0.80
+                and len(candidate.presence_frames) / n_valid
+                >= _PERSISTENT_OVERLAY_FRACTION
                 and w * 0.25 <= cx <= w * 0.75
                 and h * 0.30 <= cy <= h * 0.82
                 and (x2 - x1 + 1) / w <= 0.45
