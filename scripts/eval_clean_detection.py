@@ -1,9 +1,11 @@
-"""Detection regression snapshots and remove/keep fact-baseline evaluation.
+"""Detection regression snapshots and remove/keep baseline evaluation.
 
 The default invocation preserves the historic candidate snapshot workflow.  It
 is deliberately named a *regression snapshot*: it is not a quality benchmark.
 Pass ``--manifest`` to evaluate fixed, indexed annotations with remove/keep
 semantics and to write a structured fact-baseline report plus visual previews.
+Pass ``--decision-manifest`` to reuse those annotations across multiple
+selection requests without rerunning detection for every case.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import numpy as np
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 import videowipe
+from videowipe.engine import WipeEngine
 from videowipe.detect import (
     detect_clean_candidates,
     mask_from_candidates,
@@ -40,6 +43,8 @@ from videowipe.plan import (
 
 FACT_BASELINE_REPORT_SCHEMA_VERSION = 2
 FACT_BASELINE_MANIFEST_SCHEMA_VERSION = 1
+DECISION_BASELINE_REPORT_SCHEMA_VERSION = 1
+DECISION_BASELINE_MANIFEST_SCHEMA_VERSION = 1
 
 
 def _compute_mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
@@ -195,7 +200,7 @@ def _require_clean_git_worktree(relevant_paths: list[Path]) -> None:
     provenance = _git_provenance()
     if provenance["tracked_worktree_is_clean"] is not True:
         raise RuntimeError(
-            "A formal fact baseline requires a clean tracked git worktree; commit "
+            "A formal baseline requires a clean tracked git worktree; commit "
             "the evaluator and tracked inputs before rerunning."
         )
     root = _project_root().resolve()
@@ -205,7 +210,7 @@ def _require_clean_git_worktree(relevant_paths: list[Path]) -> None:
             relative = resolved.relative_to(root)
         except ValueError:
             raise RuntimeError(
-                f"A formal fact-baseline input is outside the project repository: {resolved}"
+                f"A formal baseline input is outside the project repository: {resolved}"
             ) from None
         try:
             subprocess.check_output(
@@ -216,7 +221,7 @@ def _require_clean_git_worktree(relevant_paths: list[Path]) -> None:
             )
         except (OSError, subprocess.CalledProcessError):
             raise RuntimeError(
-                f"A formal fact-baseline input is not tracked by git: {relative}"
+                f"A formal baseline input is not tracked by git: {relative}"
             ) from None
 
 
@@ -224,6 +229,7 @@ def _evaluator_source_hash() -> str:
     return _sha256_named_files([
         ("scripts/eval_clean_detection.py", Path(__file__).resolve()),
         ("src/videowipe/detect.py", Path(sys.modules["videowipe.detect"].__file__).resolve()),
+        ("src/videowipe/engine.py", Path(sys.modules["videowipe.engine"].__file__).resolve()),
         ("src/videowipe/plan.py", Path(sys.modules["videowipe.plan"].__file__).resolve()),
         ("src/videowipe/weights.py", Path(videowipe.__file__).resolve().parent / "weights.py"),
     ])
@@ -473,6 +479,81 @@ def _load_fact_manifest(manifest_path: str, input_dir: str) -> dict[str, Any]:
     return manifest
 
 
+def _load_decision_manifest(
+    manifest_path: str, input_dir: str
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    path = Path(manifest_path).resolve()
+    with path.open(encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    if manifest.get("schema_version") != DECISION_BASELINE_MANIFEST_SCHEMA_VERSION:
+        raise ValueError("Unsupported or missing decision-baseline manifest schema_version")
+    if manifest.get("set_kind") != "decision_calibration_set":
+        raise ValueError("Decision-baseline manifest set_kind must be decision_calibration_set")
+    fact_name = manifest.get("fact_manifest")
+    if not isinstance(fact_name, str) or not fact_name:
+        raise ValueError("Decision-baseline manifest requires fact_manifest")
+    fact_path = _resolve_within(path.parent, fact_name, "Fact manifest")
+    if not fact_path.is_file():
+        raise ValueError(f"Decision-baseline fact manifest is missing: {fact_name}")
+    fact_manifest = _load_fact_manifest(str(fact_path), input_dir)
+    videos = {video["file"]: video for video in fact_manifest["videos"]}
+    cases = manifest.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("Decision-baseline manifest requires a non-empty cases list")
+
+    seen: set[str] = set()
+    normalized_cases: list[dict[str, Any]] = []
+    for case in cases:
+        case_id = case.get("id")
+        if not isinstance(case_id, str) or not case_id or case_id in seen:
+            raise ValueError(f"Every decision case requires a unique id: {case_id}")
+        seen.add(case_id)
+        video_name = case.get("file")
+        if video_name not in videos:
+            raise ValueError(f"Decision case {case_id} references unknown video: {video_name}")
+        request = case.get("request", {})
+        if not isinstance(request, dict) or set(request) - {"targets", "intent"}:
+            raise ValueError(
+                f"Decision case {case_id} request only supports targets and intent"
+            )
+        targets = request.get("targets", [])
+        intent = request.get("intent")
+        if not isinstance(targets, list) or any(
+            not isinstance(target, str) or not target for target in targets
+        ):
+            raise ValueError(f"Decision case {case_id} targets must be non-empty strings")
+        if intent is not None and (not isinstance(intent, str) or not intent):
+            raise ValueError(f"Decision case {case_id} intent must be null or a non-empty string")
+        expected = case.get("expected_actions")
+        if not isinstance(expected, dict):
+            raise ValueError(f"Decision case {case_id} requires expected_actions")
+        object_ids = {obj["id"] for obj in videos[video_name]["objects"]}
+        try:
+            expected_ids = {int(object_id) for object_id in expected}
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Decision case {case_id} expected_actions keys must be object IDs"
+            ) from None
+        if expected_ids != object_ids or len(expected_ids) != len(expected):
+            raise ValueError(
+                f"Decision case {case_id} must define every object action exactly once"
+            )
+        normalized_actions = {int(key): value for key, value in expected.items()}
+        if any(action not in {"remove", "keep"} for action in normalized_actions.values()):
+            raise ValueError(
+                f"Decision case {case_id} expected actions must be remove or keep"
+            )
+        normalized_cases.append(
+            {
+                "id": case_id,
+                "file": video_name,
+                "request": {"targets": targets, "intent": intent},
+                "expected_actions": normalized_actions,
+            }
+        )
+    return {**manifest, "cases": normalized_cases}, fact_manifest, fact_path
+
+
 def _read_indexed_mask(mask_path: Path, shape: tuple[int, int], allowed_ids: set[int]) -> np.ndarray:
     mask = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
     if mask is None:
@@ -588,15 +669,15 @@ def _write_json_report(
     destination = destination.absolute()
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
-        raise ValueError(f"Fact-baseline report must not be a symlink: {destination}")
+        raise ValueError(f"Baseline report must not be a symlink: {destination}")
     resolved_destination = destination.resolve()
     if resolved_destination in {path.resolve() for path in protected_paths}:
         raise ValueError(
-            f"Fact-baseline report must not overwrite an input: {resolved_destination}"
+            f"Baseline report must not overwrite an input: {resolved_destination}"
         )
     if resolved_destination.exists() and not resolved_destination.is_file():
         raise ValueError(
-            f"Fact-baseline report must be a regular file: {resolved_destination}"
+            f"Baseline report must be a regular file: {resolved_destination}"
         )
     temporary_path: Path | None = None
     try:
@@ -914,10 +995,224 @@ def evaluate_fact_baseline(
     return report
 
 
+def evaluate_decision_baseline(
+    input_dir: str,
+    manifest_path: str,
+    output_path: str,
+    detect_mode: str = "balanced",
+    ocr_mode: str = "off",
+    require_clean_git: bool = False,
+) -> dict[str, Any]:
+    """Evaluate request-to-track decisions while reusing detection per video."""
+    manifest, fact_manifest, fact_manifest_path = _load_decision_manifest(
+        manifest_path, input_dir
+    )
+    manifest_path_obj = Path(manifest_path).resolve()
+    manifest_root = fact_manifest_path.parent
+    input_root = Path(input_dir).resolve()
+    video_specs = {video["file"]: video for video in fact_manifest["videos"]}
+    used_videos = sorted({case["file"] for case in manifest["cases"]})
+    input_paths = [
+        (name, _resolve_within(input_root, name, "Manifest video"))
+        for name in used_videos
+    ]
+    annotation_paths: list[tuple[str, Path]] = [
+        (f"manifest/{manifest_path_obj.name}", manifest_path_obj),
+        (f"manifest/{fact_manifest_path.name}", fact_manifest_path),
+    ]
+    for name in used_videos:
+        for frame_spec in video_specs[name]["frames"]:
+            annotation_paths.append(
+                (
+                    frame_spec["mask"],
+                    _resolve_within(
+                        manifest_root, frame_spec["mask"], "Annotation mask"
+                    ),
+                )
+            )
+    protected_paths = [path for _, path in input_paths + annotation_paths]
+    if require_clean_git:
+        _require_clean_git_worktree(protected_paths)
+
+    detections: dict[str, Any] = {}
+    sources: dict[str, Any] = {}
+    indexed_frames: dict[str, list[tuple[int, np.ndarray]]] = {}
+    case_reports: list[dict[str, Any]] = []
+    remove_available: list[bool] = []
+    remove_selected_when_available: list[bool] = []
+    keep_false_selected: list[bool] = []
+    action_matches: list[bool] = []
+    exact_cases: list[bool] = []
+
+    for case in manifest["cases"]:
+        video_name = case["file"]
+        video_path = _resolve_within(input_root, video_name, "Manifest video")
+        video_spec = video_specs[video_name]
+        if video_name not in detections:
+            result, _selected, _static, execution_path = _detect_video(
+                str(video_path), detect_mode, ocr_mode
+            )
+            detections[video_name] = (result, execution_path)
+            sources[video_name] = compute_source(str(video_path))
+            objects = {obj["id"]: obj for obj in video_spec["objects"]}
+            shape = tuple(result.frame_shape)
+            indexed_frames[video_name] = [
+                (
+                    frame_spec["frame"],
+                    _read_indexed_mask(
+                        _resolve_within(
+                            manifest_root, frame_spec["mask"], "Annotation mask"
+                        ),
+                        shape,
+                        set(objects),
+                    ),
+                )
+                for frame_spec in video_spec["frames"]
+            ]
+        result, execution_path = detections[video_name]
+        request = case["request"]
+        selected = select_clean_candidates(
+            result.candidates,
+            targets=request["targets"],
+            intent=request["intent"],
+        )
+        selected_ids = {candidate.id for candidate in selected}
+        user_directed = bool(request["targets"] or request["intent"])
+        selection = WipeEngine._explicit_selection_kwargs(
+            result.candidates, selected_ids, user_directed
+        )
+        plan = build_refined_wipe_plan(
+            str(video_path),
+            result,
+            sources[video_name],
+            refine=False,
+            request=request,
+            **selection,
+        )
+        final_remove_ids = {track.id for track in plan.remove_tracks}
+        candidate_masks = _candidate_masks(result.candidates, tuple(result.frame_shape))
+        objects = {
+            obj["id"]: {**obj, "action": case["expected_actions"][obj["id"]]}
+            for obj in video_spec["objects"]
+        }
+        frame_reports = []
+        case_matches: list[bool] = []
+        for frame_index, indexed in indexed_frames[video_name]:
+            object_reports = []
+            for object_id, obj in objects.items():
+                actual = indexed == object_id
+                if not actual.any():
+                    continue
+                hit_ids = sorted(
+                    candidate.id
+                    for candidate, mask in candidate_masks
+                    if np.any(mask & actual)
+                )
+                selected_hit_ids = [
+                    candidate_id
+                    for candidate_id in hit_ids
+                    if candidate_id in final_remove_ids
+                ]
+                candidate_available = bool(hit_ids)
+                selected_for_removal = bool(selected_hit_ids)
+                expected_action = obj["action"]
+                action_match = (
+                    selected_for_removal
+                    if expected_action == "remove"
+                    else not selected_for_removal
+                )
+                failure_kind = None
+                if not action_match:
+                    failure_kind = (
+                        "candidate_missing"
+                        if expected_action == "remove" and not candidate_available
+                        else "selection_miss"
+                    )
+                if expected_action == "remove":
+                    remove_available.append(candidate_available)
+                    if candidate_available:
+                        remove_selected_when_available.append(selected_for_removal)
+                else:
+                    keep_false_selected.append(selected_for_removal)
+                action_matches.append(action_match)
+                case_matches.append(action_match)
+                object_reports.append(
+                    {
+                        "object_id": object_id,
+                        "annotation_type": obj["type"],
+                        "expected_action": expected_action,
+                        "candidate_ids": hit_ids,
+                        "selected_candidate_ids": selected_hit_ids,
+                        "candidate_available": candidate_available,
+                        "action_match": action_match,
+                        "failure_kind": failure_kind,
+                    }
+                )
+            frame_reports.append({"frame": frame_index, "objects": object_reports})
+        exact = bool(case_matches) and all(case_matches)
+        exact_cases.append(exact)
+        case_reports.append(
+            {
+                "id": case["id"],
+                "video": video_name,
+                "request": request,
+                "detector_execution_path": execution_path,
+                "candidate_count": len(result.candidates),
+                "selected_candidate_ids": sorted(final_remove_ids),
+                "case_exact_action_match": exact,
+                "frames": frame_reports,
+            }
+        )
+
+    report = {
+        "schema_version": DECISION_BASELINE_REPORT_SCHEMA_VERSION,
+        "report_kind": "decision_selection_baseline",
+        "set_kind": manifest["set_kind"],
+        "provenance": {
+            "git": _git_provenance(),
+            "videowipe_version": videowipe.__version__,
+            "python_version": sys.version.split()[0],
+            "opencv_version": cv2.__version__,
+            "detect_mode": detect_mode,
+            "ocr_mode": ocr_mode,
+            "evaluator_source_sha256": _evaluator_source_hash(),
+            "input_sha256": _sha256_named_files(input_paths),
+            "annotation_sha256": _sha256_named_files(annotation_paths),
+        },
+        "aggregation": {
+            "unit": "Visible annotated object instance on a fixed frame.",
+            "candidate_availability": "Whether any detected candidate overlaps an expected remove object.",
+            "selection_given_candidate": "Whether an available expected remove object is selected by the final plan decision.",
+        },
+        "macro_average": {
+            "visible_remove_candidate_availability_rate": _mean(
+                [float(value) for value in remove_available]
+            ),
+            "visible_remove_selection_recall_given_candidate": _mean(
+                [float(value) for value in remove_selected_when_available]
+            ),
+            "visible_keep_false_selection_rate": _mean(
+                [float(value) for value in keep_false_selected]
+            ),
+            "visible_annotation_action_match_rate": _mean(
+                [float(value) for value in action_matches]
+            ),
+            "case_exact_action_match_rate": _mean(
+                [float(value) for value in exact_cases]
+            ),
+        },
+        "cases": case_reports,
+    }
+    _write_json_report(Path(output_path), report, protected_paths)
+    return report
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="VideoWipe detection regression and fact-baseline evaluator")
+    parser = argparse.ArgumentParser(description="VideoWipe detection regression and baseline evaluator")
     parser.add_argument("input_dir", help="Directory containing calibration videos")
-    parser.add_argument("--manifest", help="Fact-baseline indexed annotation manifest")
+    manifests = parser.add_mutually_exclusive_group()
+    manifests.add_argument("--manifest", help="Fact-baseline indexed annotation manifest")
+    manifests.add_argument("--decision-manifest", help="Decision-baseline request manifest")
     parser.add_argument("--output", default="result/fact-baseline/report.json", help="Fact-baseline JSON output")
     parser.add_argument("--artifact-dir", default="result/fact-baseline/previews", help="Fact-baseline preview directory")
     parser.add_argument("--require-clean-git", action="store_true", help="Refuse a formal fact baseline from a dirty worktree")
@@ -932,6 +1227,18 @@ def main() -> None:
     if not os.path.isdir(args.input_dir):
         parser.error(f"Not a directory: {args.input_dir}")
     try:
+        if args.decision_manifest:
+            report = evaluate_decision_baseline(
+                args.input_dir,
+                args.decision_manifest,
+                args.output,
+                detect_mode=args.detect_mode,
+                ocr_mode=args.ocr,
+                require_clean_git=args.require_clean_git,
+            )
+            print(f"Decision baseline report: {args.output}")
+            print(json.dumps(report["macro_average"], ensure_ascii=False))
+            return
         if args.manifest:
             report = evaluate_fact_baseline(
                 args.input_dir, args.manifest, args.output, args.artifact_dir,

@@ -72,6 +72,20 @@ def _write_manifest(root, mask, objects=None, frame=1):
     return manifest
 
 
+def _write_decision_manifest(root, cases):
+    manifest = root / "decision_baseline.json"
+    manifest.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "set_kind": "decision_calibration_set",
+            "fact_manifest": "fact_baseline.json",
+            "cases": cases,
+        }),
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def _fake_detector(module, predicted, candidates=None, selected=None):
     candidates = candidates or [_candidate(predicted)]
     selected = candidates if selected is None else selected
@@ -188,6 +202,150 @@ def test_object_metrics_do_not_penalize_other_valid_remove_objects(tmp_path):
     metrics = report["videos"][0]["frames"][0]["object_metrics"]
     assert [metric["region_jaccard"] for metric in metrics] == [1.0, 1.0]
     assert report["macro_average"]["visible_remove_object_region_jaccard"] == 1.0
+
+
+@pytest.mark.parametrize("kind", ["duplicate_case", "unknown_video", "missing_action", "invalid_action"])
+def test_decision_manifest_validation(tmp_path, kind):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    _write_manifest(tmp_path, indexed)
+    case = {
+        "id": "default",
+        "file": "sample.mp4",
+        "request": {},
+        "expected_actions": {"1": "remove", "2": "keep"},
+    }
+    cases = [case]
+    if kind == "duplicate_case":
+        cases.append(dict(case))
+    elif kind == "unknown_video":
+        case["file"] = "unknown.mp4"
+    elif kind == "missing_action":
+        case["expected_actions"].pop("2")
+    else:
+        case["expected_actions"]["2"] = "ignore"
+    manifest = _write_decision_manifest(tmp_path, cases)
+
+    with pytest.raises(ValueError, match="unique id|unknown video|every object action|remove or keep"):
+        module._load_decision_manifest(str(manifest), str(tmp_path))
+
+
+def test_decision_baseline_scores_default_and_targeted_selection(tmp_path):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[4:7, 2:8] = 1
+    indexed[0:2, 0:3] = 2
+    _write_manifest(tmp_path, indexed)
+    subtitle = _candidate(indexed == 1, candidate_id="subtitle", target_type="subtitle")
+    watermark = _candidate(
+        indexed == 2,
+        candidate_id="watermark",
+        target_type="watermark",
+        default_remove=False,
+    )
+    _fake_detector(module, indexed > 0, candidates=[subtitle, watermark])
+    manifest = _write_decision_manifest(tmp_path, [
+        {
+            "id": "default",
+            "file": "sample.mp4",
+            "request": {},
+            "expected_actions": {"1": "remove", "2": "keep"},
+        },
+        {
+            "id": "watermark-only",
+            "file": "sample.mp4",
+            "request": {"targets": ["watermark"]},
+            "expected_actions": {"1": "keep", "2": "remove"},
+        },
+    ])
+
+    report = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "decision-report.json")
+    )
+
+    assert [case["selected_candidate_ids"] for case in report["cases"]] == [
+        ["subtitle"], ["watermark"],
+    ]
+    assert report["macro_average"] == {
+        "visible_remove_candidate_availability_rate": 1.0,
+        "visible_remove_selection_recall_given_candidate": 1.0,
+        "visible_keep_false_selection_rate": 0.0,
+        "visible_annotation_action_match_rate": 1.0,
+        "case_exact_action_match_rate": 1.0,
+    }
+
+
+def test_decision_baseline_separates_missing_candidate_from_selection_miss(tmp_path):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[2:4, 1:4] = 1
+    indexed[5:7, 8:11] = 2
+    objects = [
+        {"id": 1, "type": "subtitle", "action": "remove", "description": "detected"},
+        {"id": 2, "type": "logo", "action": "keep", "description": "missing"},
+    ]
+    _write_manifest(tmp_path, indexed, objects=objects)
+    subtitle = _candidate(indexed == 1, candidate_id="subtitle", target_type="subtitle")
+    _fake_detector(module, indexed == 1, candidates=[subtitle])
+    manifest = _write_decision_manifest(tmp_path, [{
+        "id": "remove-both",
+        "file": "sample.mp4",
+        "request": {"targets": ["logo"]},
+        "expected_actions": {"1": "remove", "2": "remove"},
+    }])
+
+    report = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "decision-report.json")
+    )
+    objects_report = report["cases"][0]["frames"][0]["objects"]
+
+    assert [obj["failure_kind"] for obj in objects_report] == [
+        "selection_miss", "candidate_missing",
+    ]
+    assert report["macro_average"]["visible_remove_candidate_availability_rate"] == 0.5
+    assert report["macro_average"]["visible_remove_selection_recall_given_candidate"] == 0.0
+
+
+def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[3:6, 3:7] = 1
+    _write_manifest(tmp_path, indexed)
+    candidate = _candidate(indexed == 1)
+    result = CleanDetectionResult([candidate], indexed.shape)
+    calls = 0
+
+    def detect_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return result, [candidate], indexed == 1, "fake_detector"
+
+    monkeypatch.setattr(module, "_detect_video", detect_once)
+    cases = [
+        {
+            "id": case_id,
+            "file": "sample.mp4",
+            "request": {},
+            "expected_actions": {"1": "remove", "2": "keep"},
+        }
+        for case_id in ("first", "second")
+    ]
+    manifest = _write_decision_manifest(tmp_path, cases)
+    first = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "first.json")
+    )
+    assert calls == 1
+    calls = 0
+    second = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "second.json")
+    )
+
+    assert calls == 1
+    assert first == second
 
 
 def test_keep_injury_and_no_target_false_removal(tmp_path):

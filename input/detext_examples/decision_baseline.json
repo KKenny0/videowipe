@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "set_kind": "decision_calibration_set",
+  "scope_note": "These cases reuse the local fact-baseline annotations to calibrate selection decisions. They are not a public benchmark or hold-out set.",
+  "fact_manifest": "fact_baseline.json",
+  "cases": [
+    {
+      "id": "chinese-default",
+      "file": "chinese1.mp4",
+      "request": {},
+      "expected_actions": {"1": "remove", "2": "keep"}
+    },
+    {
+      "id": "chinese-watermark-only",
+      "file": "chinese1.mp4",
+      "request": {"targets": ["watermark"]},
+      "expected_actions": {"1": "keep", "2": "remove"}
+    },
+    {
+      "id": "english-default",
+      "file": "english1.mp4",
+      "request": {},
+      "expected_actions": {"1": "remove"}
+    },
+    {
+      "id": "others-default",
+      "file": "others.mp4",
+      "request": {},
+      "expected_actions": {"1": "remove", "2": "remove", "3": "keep", "4": "keep", "5": "keep"}
+    },
+    {
+      "id": "others-subtitle-only",
+      "file": "others.mp4",
+      "request": {"targets": ["subtitle"]},
+      "expected_actions": {"1": "remove", "2": "remove", "3": "keep", "4": "keep", "5": "keep"}
+    },
+    {
+      "id": "others-watermark-only",
+      "file": "others.mp4",
+      "request": {"targets": ["watermark"]},
+      "expected_actions": {"1": "keep", "2": "keep", "3": "remove", "4": "remove", "5": "keep"}
+    }
+  ]
+}
