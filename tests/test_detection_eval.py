@@ -309,6 +309,10 @@ def test_decision_baseline_scores_default_and_targeted_selection(tmp_path):
         "visible_remove_selection_recall_given_candidate": 1.0,
         "visible_keep_false_selection_rate": 0.0,
         "visible_annotation_action_match_rate": 1.0,
+        "visible_annotation_candidate_type_match_rate": 1.0,
+        "annotated_candidate_semantic_match_rate": 1.0,
+        "mixed_object_candidate_rate": 0.0,
+        "mixed_semantic_candidate_rate": 0.0,
         "case_exact_action_match_rate": 1.0,
     }
 
@@ -343,6 +347,44 @@ def test_decision_baseline_separates_missing_candidate_from_selection_miss(tmp_p
     ]
     assert report["macro_average"]["visible_remove_candidate_availability_rate"] == 0.5
     assert report["macro_average"]["visible_remove_selection_recall_given_candidate"] == 0.0
+
+
+def test_decision_baseline_attributes_cross_type_candidate_as_mixed(tmp_path):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[2:4, 1:4] = 1
+    indexed[2:4, 4:7] = 2
+    objects = [
+        {"id": 1, "type": "subtitle", "action": "remove", "description": "text"},
+        {"id": 2, "type": "logo", "action": "keep", "description": "logo"},
+    ]
+    _write_manifest(tmp_path, indexed, objects=objects)
+    mixed = _candidate(indexed > 0, candidate_id="mixed", target_type="subtitle")
+    _fake_detector(module, indexed > 0, candidates=[mixed])
+    manifest = _write_decision_manifest(tmp_path, [{
+        "id": "subtitle-only",
+        "file": "sample.mp4",
+        "request": {"targets": ["subtitle"]},
+        "expected_actions": {"1": "remove", "2": "keep"},
+    }])
+
+    report = module.evaluate_decision_baseline(
+        str(tmp_path), str(manifest), str(tmp_path / "decision-report.json")
+    )
+
+    assert report["cases"][0]["frames"][0]["objects"][1]["failure_kind"] == "candidate_mixed"
+    assert report["macro_average"]["mixed_object_candidate_rate"] == 1.0
+    assert report["macro_average"]["mixed_semantic_candidate_rate"] == 1.0
+    assert report["videos"][0]["candidates"][0] == {
+        "candidate_id": "mixed",
+        "candidate_type": "subtitle",
+        "matched_object_ids": [1, 2],
+        "matched_annotation_types": ["logo", "subtitle"],
+        "semantic_type_match": True,
+        "mixed_object": True,
+        "mixed_semantic": True,
+    }
 
 
 def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path, monkeypatch):

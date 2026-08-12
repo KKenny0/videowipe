@@ -44,7 +44,7 @@ from videowipe.plan import (
 
 FACT_BASELINE_REPORT_SCHEMA_VERSION = 2
 FACT_BASELINE_MANIFEST_SCHEMA_VERSION = 1
-DECISION_BASELINE_REPORT_SCHEMA_VERSION = 1
+DECISION_BASELINE_REPORT_SCHEMA_VERSION = 2
 DECISION_BASELINE_MANIFEST_SCHEMA_VERSION = 1
 
 
@@ -1158,12 +1158,15 @@ def evaluate_decision_baseline(
     detections: dict[str, Any] = {}
     sources: dict[str, Any] = {}
     indexed_frames: dict[str, list[tuple[int, np.ndarray]]] = {}
+    candidate_masks_by_video: dict[str, list[tuple[Any, np.ndarray]]] = {}
+    candidate_evidence_by_video: dict[str, list[dict[str, Any]]] = {}
     case_reports: list[dict[str, Any]] = []
     remove_available: list[bool] = []
     remove_selected_when_available: list[bool] = []
     keep_false_selected: list[bool] = []
     action_matches: list[bool] = []
     exact_cases: list[bool] = []
+    visible_candidate_type_matches: list[bool] = []
 
     for case in manifest["cases"]:
         video_name = case["file"]
@@ -1203,6 +1206,27 @@ def evaluate_decision_baseline(
                     f"Decision baseline video {video_name} has declared object(s) "
                     f"missing from every annotation frame: {missing_ids}"
                 )
+            candidate_masks = _candidate_masks(result.candidates, shape)
+            candidate_masks_by_video[video_name] = candidate_masks
+            evidence = []
+            for candidate, mask in candidate_masks:
+                matched_ids = sorted({
+                    int(object_id)
+                    for _frame_index, indexed in indexed_frames[video_name]
+                    for object_id in np.unique(indexed[mask])
+                    if object_id != 0
+                })
+                matched_types = sorted({objects[object_id]["type"] for object_id in matched_ids})
+                evidence.append({
+                    "candidate_id": candidate.id,
+                    "candidate_type": candidate.type,
+                    "matched_object_ids": matched_ids,
+                    "matched_annotation_types": matched_types,
+                    "semantic_type_match": candidate.type in matched_types,
+                    "mixed_object": len(matched_ids) > 1,
+                    "mixed_semantic": len(matched_types) > 1,
+                })
+            candidate_evidence_by_video[video_name] = evidence
         result, execution_path = detections[video_name]
         request = case["request"]
         selected = select_clean_candidates(
@@ -1224,7 +1248,11 @@ def evaluate_decision_baseline(
             **selection,
         )
         final_remove_ids = {track.id for track in plan.remove_tracks}
-        candidate_masks = _candidate_masks(result.candidates, tuple(result.frame_shape))
+        candidate_masks = candidate_masks_by_video[video_name]
+        candidate_evidence = {
+            item["candidate_id"]: item
+            for item in candidate_evidence_by_video[video_name]
+        }
         objects = {
             obj["id"]: {**obj, "action": case["expected_actions"][obj["id"]]}
             for obj in video_spec["objects"]
@@ -1248,6 +1276,10 @@ def evaluate_decision_baseline(
                     if candidate_id in final_remove_ids
                 ]
                 candidate_available = bool(hit_ids)
+                semantic_candidate_available = any(
+                    candidate_evidence[candidate_id]["candidate_type"] == obj["type"]
+                    for candidate_id in hit_ids
+                )
                 selected_for_removal = bool(selected_hit_ids)
                 expected_action = obj["action"]
                 action_match = (
@@ -1257,11 +1289,20 @@ def evaluate_decision_baseline(
                 )
                 failure_kind = None
                 if not action_match:
-                    failure_kind = (
-                        "candidate_missing"
-                        if expected_action == "remove" and not candidate_available
-                        else "selection_miss"
+                    relevant_ids = (
+                        selected_hit_ids if expected_action == "keep" else hit_ids
                     )
+                    if expected_action == "remove" and not candidate_available:
+                        failure_kind = "candidate_missing"
+                    elif any(
+                        candidate_evidence[candidate_id]["mixed_semantic"]
+                        for candidate_id in relevant_ids
+                    ):
+                        failure_kind = "candidate_mixed"
+                    elif not semantic_candidate_available:
+                        failure_kind = "semantic_mismatch"
+                    else:
+                        failure_kind = "selection_miss"
                 if expected_action == "remove":
                     remove_available.append(candidate_available)
                     if candidate_available:
@@ -1270,6 +1311,7 @@ def evaluate_decision_baseline(
                     keep_false_selected.append(selected_for_removal)
                 action_matches.append(action_match)
                 case_matches.append(action_match)
+                visible_candidate_type_matches.append(semantic_candidate_available)
                 object_reports.append(
                     {
                         "object_id": object_id,
@@ -1278,6 +1320,7 @@ def evaluate_decision_baseline(
                         "candidate_ids": hit_ids,
                         "selected_candidate_ids": selected_hit_ids,
                         "candidate_available": candidate_available,
+                        "semantic_candidate_available": semantic_candidate_available,
                         "action_match": action_match,
                         "failure_kind": failure_kind,
                     }
@@ -1314,6 +1357,12 @@ def evaluate_decision_baseline(
             key=lambda item: (item["filename"], item["sha256"]),
         ),
     }
+    annotated_candidate_evidence = [
+        item
+        for video_name in used_videos
+        for item in candidate_evidence_by_video[video_name]
+        if item["matched_object_ids"]
+    ]
     report = {
         "schema_version": DECISION_BASELINE_REPORT_SCHEMA_VERSION,
         "report_kind": "decision_selection_baseline",
@@ -1323,6 +1372,7 @@ def evaluate_decision_baseline(
             "unit": "Visible annotated object instance on a fixed frame.",
             "candidate_availability": "Whether any detected candidate overlaps an expected remove object.",
             "selection_given_candidate": "Whether an available expected remove object is selected by the final plan decision.",
+            "candidate_semantics": "Candidate purity and type agreement are measured against all fixed-frame annotations for each video.",
         },
         "macro_average": {
             "visible_remove_candidate_availability_rate": _mean(
@@ -1337,10 +1387,32 @@ def evaluate_decision_baseline(
             "visible_annotation_action_match_rate": _mean(
                 [float(value) for value in action_matches]
             ),
+            "visible_annotation_candidate_type_match_rate": _mean(
+                [float(value) for value in visible_candidate_type_matches]
+            ),
+            "annotated_candidate_semantic_match_rate": _mean([
+                float(item["semantic_type_match"])
+                for item in annotated_candidate_evidence
+            ]),
+            "mixed_object_candidate_rate": _mean([
+                float(item["mixed_object"])
+                for item in annotated_candidate_evidence
+            ]),
+            "mixed_semantic_candidate_rate": _mean([
+                float(item["mixed_semantic"])
+                for item in annotated_candidate_evidence
+            ]),
             "case_exact_action_match_rate": _mean(
                 [float(value) for value in exact_cases]
             ),
         },
+        "videos": [
+            {
+                "video": video_name,
+                "candidates": candidate_evidence_by_video[video_name],
+            }
+            for video_name in used_videos
+        ],
         "cases": case_reports,
     }
     _write_json_report(Path(output_path), report, protected_paths)
