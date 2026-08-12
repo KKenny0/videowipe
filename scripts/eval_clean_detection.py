@@ -27,13 +27,14 @@ import numpy as np
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 import videowipe
-from videowipe.engine import WipeEngine
 from videowipe.detect import (
     detect_clean_candidates,
     mask_from_candidates,
     resolve_detect_params,
+    resolve_requested_targets,
     select_clean_candidates,
 )
+from videowipe.engine import WipeEngine
 from videowipe.plan import (
     build_refined_wipe_plan,
     compute_source,
@@ -223,6 +224,82 @@ def _require_clean_git_worktree(relevant_paths: list[Path]) -> None:
             raise RuntimeError(
                 f"A formal baseline input is not tracked by git: {relative}"
             ) from None
+
+
+def _baseline_provenance(
+    input_paths: list[tuple[str, Path]],
+    annotation_paths: list[tuple[str, Path]],
+    detect_mode: str,
+    ocr_mode: str,
+    legacy_paths: list[tuple[str, Path]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "git": _git_provenance(),
+        "videowipe_version": videowipe.__version__,
+        "python_version": sys.version.split()[0],
+        "opencv_version": cv2.__version__,
+        "detect_mode": detect_mode,
+        "ocr_mode": ocr_mode,
+        "evaluator_source_sha256": _evaluator_source_hash(),
+        "input_sha256": _sha256_named_files(input_paths),
+        "annotation_sha256": _sha256_named_files(annotation_paths),
+        "legacy_calibration_sha256": (
+            _sha256_named_files(legacy_paths) if legacy_paths else None
+        ),
+    }
+
+
+def _assert_formal_state_unchanged(
+    initial: dict[str, Any],
+    capture: Any,
+    relevant_paths: list[Path],
+) -> None:
+    _require_clean_git_worktree(relevant_paths)
+    current = capture()
+    if current != initial:
+        raise RuntimeError(
+            "Formal baseline source, inputs, or git state changed during evaluation; "
+            "discard the report and rerun from a stable worktree."
+        )
+
+
+def _weight_provenance(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise RuntimeError(f"Detector weight is missing after detection: {path.name}")
+    return {
+        "filename": path.name,
+        "sha256": _sha256_named_files([(path.name, path)]),
+    }
+
+
+def _detector_weight_state(result: Any) -> tuple[Path, dict[str, str]] | None:
+    supplied = getattr(result.detector, "_weight_path", None)
+    if not supplied:
+        return None
+    path = Path(supplied).resolve()
+    return path, _weight_provenance(path)
+
+
+def _record_detector_weight(
+    states: dict[Path, dict[str, str]], result: Any
+) -> None:
+    state = _detector_weight_state(result)
+    if state is None:
+        return
+    path, provenance = state
+    if path in states and states[path] != provenance:
+        raise RuntimeError(f"Detector weight changed during evaluation: {path.name}")
+    states[path] = provenance
+
+
+def _assert_detector_weights_unchanged(
+    states: dict[Path, dict[str, str]],
+) -> None:
+    for path, expected in states.items():
+        if _weight_provenance(path) != expected:
+            raise RuntimeError(
+                f"Detector weight changed during formal evaluation: {path.name}"
+            )
 
 
 def _evaluator_source_hash() -> str:
@@ -435,6 +512,8 @@ def _load_fact_manifest(manifest_path: str, input_dir: str) -> dict[str, Any]:
     path = Path(manifest_path).resolve()
     with path.open(encoding="utf-8") as fh:
         manifest = json.load(fh)
+    if not isinstance(manifest, dict):
+        raise TypeError("Fact-baseline manifest root must be an object")
     if manifest.get("schema_version") != FACT_BASELINE_MANIFEST_SCHEMA_VERSION:
         raise ValueError("Unsupported or missing fact-baseline manifest schema_version")
     videos = manifest.get("videos")
@@ -443,6 +522,8 @@ def _load_fact_manifest(manifest_path: str, input_dir: str) -> dict[str, Any]:
     seen_videos: set[str] = set()
     root = Path(input_dir).resolve()
     for video in videos:
+        if not isinstance(video, dict):
+            raise TypeError("Every fact-baseline video must be an object")
         name = video.get("file")
         if not isinstance(name, str) or not name or name in seen_videos:
             raise ValueError("Every manifest video requires a unique file")
@@ -456,6 +537,8 @@ def _load_fact_manifest(manifest_path: str, input_dir: str) -> dict[str, Any]:
             raise ValueError(f"Video {name} needs non-empty objects and frames")
         ids: set[int] = set()
         for obj in objects:
+            if not isinstance(obj, dict):
+                raise TypeError(f"Video {name} objects must be objects")
             object_id = obj.get("id")
             if not isinstance(object_id, int) or object_id < 1 or object_id in ids:
                 raise ValueError(f"Video {name} has duplicate or invalid object ID: {object_id}")
@@ -466,6 +549,8 @@ def _load_fact_manifest(manifest_path: str, input_dir: str) -> dict[str, Any]:
                 raise ValueError(f"Video {name} object {object_id} needs a type")
         frame_numbers: set[int] = set()
         for frame in frames:
+            if not isinstance(frame, dict):
+                raise TypeError(f"Video {name} frames must be objects")
             index = frame.get("frame")
             mask = frame.get("mask")
             if not isinstance(index, int) or index < 0 or index in frame_numbers:
@@ -485,6 +570,8 @@ def _load_decision_manifest(
     path = Path(manifest_path).resolve()
     with path.open(encoding="utf-8") as fh:
         manifest = json.load(fh)
+    if not isinstance(manifest, dict):
+        raise TypeError("Decision-baseline manifest root must be an object")
     if manifest.get("schema_version") != DECISION_BASELINE_MANIFEST_SCHEMA_VERSION:
         raise ValueError("Unsupported or missing decision-baseline manifest schema_version")
     if manifest.get("set_kind") != "decision_calibration_set":
@@ -504,6 +591,8 @@ def _load_decision_manifest(
     seen: set[str] = set()
     normalized_cases: list[dict[str, Any]] = []
     for case in cases:
+        if not isinstance(case, dict):
+            raise TypeError("Every decision case must be an object")
         case_id = case.get("id")
         if not isinstance(case_id, str) or not case_id or case_id in seen:
             raise ValueError(f"Every decision case requires a unique id: {case_id}")
@@ -519,14 +608,27 @@ def _load_decision_manifest(
         targets = request.get("targets", [])
         intent = request.get("intent")
         if not isinstance(targets, list) or any(
-            not isinstance(target, str) or not target for target in targets
+            not isinstance(target, str) or not target.strip() for target in targets
         ):
             raise ValueError(f"Decision case {case_id} targets must be non-empty strings")
-        if intent is not None and (not isinstance(intent, str) or not intent):
+        targets = [target.strip() for target in targets]
+        unsupported = [
+            target for target in targets
+            if not resolve_requested_targets([target])
+        ]
+        if unsupported:
+            raise ValueError(
+                f"Decision case {case_id} has unsupported target(s): {unsupported}"
+            )
+        targets = resolve_requested_targets(targets)
+        if intent is not None and (
+            not isinstance(intent, str) or not intent.strip()
+        ):
             raise ValueError(f"Decision case {case_id} intent must be null or a non-empty string")
+        intent = intent.strip() if intent is not None else None
         expected = case.get("expected_actions")
         if not isinstance(expected, dict):
-            raise ValueError(f"Decision case {case_id} requires expected_actions")
+            raise TypeError(f"Decision case {case_id} requires expected_actions")
         object_ids = {obj["id"] for obj in videos[video_name]["objects"]}
         try:
             expected_ids = {int(object_id) for object_id in expected}
@@ -853,6 +955,14 @@ def evaluate_fact_baseline(
     ]
     if require_clean_git:
         _require_clean_git_worktree(protected_paths)
+    initial_provenance = _baseline_provenance(
+        input_paths,
+        annotation_paths,
+        detect_mode,
+        ocr_mode,
+        legacy_calibration_paths,
+    )
+    detector_weights: dict[Path, dict[str, str]] = {}
 
     for video_spec in manifest["videos"]:
         video_name = video_spec["file"]
@@ -860,6 +970,7 @@ def evaluate_fact_baseline(
         result, _default_selected, _static, execution_path = _detect_video(
             str(video_path), detect_mode, ocr_mode
         )
+        _record_detector_weight(detector_weights, result)
         shape = tuple(result.frame_shape)
         # Build a WipePlan (default flow, no user direction) so the fact
         # baseline reflects the safety rule + temporal segments — the same
@@ -956,24 +1067,30 @@ def evaluate_fact_baseline(
                 "frames": frame_reports,
             }
         )
+    if require_clean_git:
+        _assert_formal_state_unchanged(
+            initial_provenance,
+            lambda: _baseline_provenance(
+                input_paths,
+                annotation_paths,
+                detect_mode,
+                ocr_mode,
+                legacy_calibration_paths,
+            ),
+            protected_paths,
+        )
+        _assert_detector_weights_unchanged(detector_weights)
+    provenance = {
+        **initial_provenance,
+        "detector_weights": sorted(
+            detector_weights.values(),
+            key=lambda item: (item["filename"], item["sha256"]),
+        ),
+    }
     report = {
         "schema_version": FACT_BASELINE_REPORT_SCHEMA_VERSION,
         "report_kind": "detection_fact_baseline",
-        "provenance": {
-            "git": _git_provenance(),
-            "videowipe_version": videowipe.__version__,
-            "python_version": sys.version.split()[0],
-            "opencv_version": cv2.__version__,
-            "detect_mode": detect_mode,
-            "ocr_mode": ocr_mode,
-            "evaluator_source_sha256": _evaluator_source_hash(),
-            "input_sha256": _sha256_named_files(input_paths),
-            "annotation_sha256": _sha256_named_files(annotation_paths),
-            "legacy_calibration_sha256": (
-                _sha256_named_files(legacy_calibration_paths)
-                if legacy_calibration_paths else None
-            ),
-        },
+        "provenance": provenance,
         "aggregation": {
             "frame_remove_union": "Mean across annotated frames with a visible remove target; compares the selected union with the remove union.",
             "visible_object": "Mean across visible annotation instances only; each object uses only selected candidates that overlap that object.",
@@ -1033,6 +1150,10 @@ def evaluate_decision_baseline(
     protected_paths = [path for _, path in input_paths + annotation_paths]
     if require_clean_git:
         _require_clean_git_worktree(protected_paths)
+    initial_provenance = _baseline_provenance(
+        input_paths, annotation_paths, detect_mode, ocr_mode
+    )
+    detector_weights: dict[Path, dict[str, str]] = {}
 
     detections: dict[str, Any] = {}
     sources: dict[str, Any] = {}
@@ -1052,6 +1173,7 @@ def evaluate_decision_baseline(
             result, _selected, _static, execution_path = _detect_video(
                 str(video_path), detect_mode, ocr_mode
             )
+            _record_detector_weight(detector_weights, result)
             detections[video_name] = (result, execution_path)
             sources[video_name] = compute_source(str(video_path))
             objects = {obj["id"]: obj for obj in video_spec["objects"]}
@@ -1069,6 +1191,18 @@ def evaluate_decision_baseline(
                 )
                 for frame_spec in video_spec["frames"]
             ]
+            annotated_ids = {
+                int(object_id)
+                for _frame_index, indexed in indexed_frames[video_name]
+                for object_id in np.unique(indexed)
+                if object_id != 0
+            }
+            missing_ids = sorted(set(objects) - annotated_ids)
+            if missing_ids:
+                raise ValueError(
+                    f"Decision baseline video {video_name} has declared object(s) "
+                    f"missing from every annotation frame: {missing_ids}"
+                )
         result, execution_path = detections[video_name]
         request = case["request"]
         selected = select_clean_candidates(
@@ -1164,21 +1298,27 @@ def evaluate_decision_baseline(
             }
         )
 
+    if require_clean_git:
+        _assert_formal_state_unchanged(
+            initial_provenance,
+            lambda: _baseline_provenance(
+                input_paths, annotation_paths, detect_mode, ocr_mode
+            ),
+            protected_paths,
+        )
+        _assert_detector_weights_unchanged(detector_weights)
+    provenance = {
+        **initial_provenance,
+        "detector_weights": sorted(
+            detector_weights.values(),
+            key=lambda item: (item["filename"], item["sha256"]),
+        ),
+    }
     report = {
         "schema_version": DECISION_BASELINE_REPORT_SCHEMA_VERSION,
         "report_kind": "decision_selection_baseline",
         "set_kind": manifest["set_kind"],
-        "provenance": {
-            "git": _git_provenance(),
-            "videowipe_version": videowipe.__version__,
-            "python_version": sys.version.split()[0],
-            "opencv_version": cv2.__version__,
-            "detect_mode": detect_mode,
-            "ocr_mode": ocr_mode,
-            "evaluator_source_sha256": _evaluator_source_hash(),
-            "input_sha256": _sha256_named_files(input_paths),
-            "annotation_sha256": _sha256_named_files(annotation_paths),
-        },
+        "provenance": provenance,
         "aggregation": {
             "unit": "Visible annotated object instance on a fixed frame.",
             "candidate_availability": "Whether any detected candidate overlaps an expected remove object.",
@@ -1213,9 +1353,9 @@ def main() -> None:
     manifests = parser.add_mutually_exclusive_group()
     manifests.add_argument("--manifest", help="Fact-baseline indexed annotation manifest")
     manifests.add_argument("--decision-manifest", help="Decision-baseline request manifest")
-    parser.add_argument("--output", default="result/fact-baseline/report.json", help="Fact-baseline JSON output")
+    parser.add_argument("--output", help="Baseline JSON output (mode-specific default)")
     parser.add_argument("--artifact-dir", default="result/fact-baseline/previews", help="Fact-baseline preview directory")
-    parser.add_argument("--require-clean-git", action="store_true", help="Refuse a formal fact baseline from a dirty worktree")
+    parser.add_argument("--require-clean-git", action="store_true", help="Refuse a formal baseline from a dirty worktree")
     parser.add_argument("--write-regression-snapshot", dest="write_snapshot", action="store_true", help="Write detection_regression_snapshot.json")
     parser.add_argument("--write-baseline", dest="write_legacy_snapshot", action="store_true", help="Compatibility mode: write detection_baseline.json")
     parser.add_argument("--compare-regression-snapshot", action="store_true", help="Compare detection_regression_snapshot.json")
@@ -1228,24 +1368,26 @@ def main() -> None:
         parser.error(f"Not a directory: {args.input_dir}")
     try:
         if args.decision_manifest:
+            output = args.output or "result/decision-baseline/report.json"
             report = evaluate_decision_baseline(
                 args.input_dir,
                 args.decision_manifest,
-                args.output,
+                output,
                 detect_mode=args.detect_mode,
                 ocr_mode=args.ocr,
                 require_clean_git=args.require_clean_git,
             )
-            print(f"Decision baseline report: {args.output}")
+            print(f"Decision baseline report: {output}")
             print(json.dumps(report["macro_average"], ensure_ascii=False))
             return
         if args.manifest:
+            output = args.output or "result/fact-baseline/report.json"
             report = evaluate_fact_baseline(
-                args.input_dir, args.manifest, args.output, args.artifact_dir,
+                args.input_dir, args.manifest, output, args.artifact_dir,
                 mask_dir=args.mask_dir, detect_mode=args.detect_mode, ocr_mode=args.ocr,
                 require_clean_git=args.require_clean_git,
             )
-            print(f"Fact baseline report: {args.output}")
+            print(f"Fact baseline report: {output}")
             print(json.dumps(report["macro_average"], ensure_ascii=False))
             return
         videos = sorted(

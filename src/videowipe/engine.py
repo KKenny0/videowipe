@@ -859,6 +859,7 @@ class WipeEngine:
             infer_targets_from_text,
             normalize_target,
             resolve_detect_params,
+            resolve_requested_targets,
             select_clean_candidates,
             write_clean_artifacts,
         )
@@ -869,14 +870,8 @@ class WipeEngine:
         requested_regions.extend(infer_regions_from_text(intent_text))
         requested_regions = list(dict.fromkeys(requested_regions))
 
-        inferred_targets = infer_targets_from_text(target_text)
         intent_targets = infer_targets_from_text(intent or "")
-        effective_targets = list(targets or [])
-        effective_targets.extend(inferred_targets)
-        effective_targets = [
-            target for target in dict.fromkeys(effective_targets)
-            if normalize_target(target) != target or target in inferred_targets
-        ]
+        effective_targets = resolve_requested_targets(targets)
         normalized_targets = {normalize_target(target) for target in effective_targets}
         if requested_regions:
             effective_targets.append("region")

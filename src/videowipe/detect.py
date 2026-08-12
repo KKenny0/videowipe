@@ -200,6 +200,7 @@ class DBNetDetector:
         scale: float = 1.0 / 255.0,
         adaptive: bool = True,
     ):
+        self._weight_path = os.path.abspath(weight_path)
         self._input_w, self._input_h = input_size
         self._bin_thresh = bin_thresh
         self._box_thresh = box_thresh
@@ -208,7 +209,7 @@ class DBNetDetector:
         self._scale = scale
         self._adaptive = adaptive
 
-        self._net = cv2.dnn.readNetFromONNX(weight_path)
+        self._net = cv2.dnn.readNetFromONNX(self._weight_path)
 
         # Cache for adaptive input-size computation
         self._cached_frame_dims: tuple[int, int] | None = None
@@ -558,6 +559,18 @@ def infer_regions_from_text(text: str) -> list[str]:
 def infer_targets_from_text(text: str) -> list[str]:
     """Infer target types mentioned in free-form text."""
     return sorted(_mentioned_targets(text))
+
+
+def resolve_requested_targets(targets: Iterable[str] | None) -> list[str]:
+    """Return target arguments accepted by the production clean request path."""
+    target_list = list(targets or [])
+    inferred = infer_targets_from_text(" ".join(target_list))
+    target_list.extend(inferred)
+    return [
+        target
+        for target in dict.fromkeys(target_list)
+        if normalize_target(target) != target or target in inferred
+    ]
 
 
 def _mentions_any(text: str, terms: Iterable[str]) -> bool:

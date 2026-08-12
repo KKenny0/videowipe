@@ -204,7 +204,19 @@ def test_object_metrics_do_not_penalize_other_valid_remove_objects(tmp_path):
     assert report["macro_average"]["visible_remove_object_region_jaccard"] == 1.0
 
 
-@pytest.mark.parametrize("kind", ["duplicate_case", "unknown_video", "missing_action", "invalid_action"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "duplicate_case",
+        "unknown_video",
+        "missing_action",
+        "invalid_action",
+        "unknown_target",
+        "blank_target",
+        "blank_intent",
+        "non_object_case",
+    ],
+)
 def test_decision_manifest_validation(tmp_path, kind):
     module = _load_eval_module()
     _write_video(tmp_path / "sample.mp4")
@@ -223,11 +235,35 @@ def test_decision_manifest_validation(tmp_path, kind):
         case["file"] = "unknown.mp4"
     elif kind == "missing_action":
         case["expected_actions"].pop("2")
-    else:
+    elif kind == "invalid_action":
         case["expected_actions"]["2"] = "ignore"
+    elif kind == "unknown_target":
+        case["request"] = {"targets": ["watermak"]}
+    elif kind == "blank_target":
+        case["request"] = {"targets": [" "]}
+    elif kind == "blank_intent":
+        case["request"] = {"intent": " "}
+    else:
+        cases = [None]
     manifest = _write_decision_manifest(tmp_path, cases)
 
-    with pytest.raises(ValueError, match="unique id|unknown video|every object action|remove or keep"):
+    expected_error = TypeError if kind == "non_object_case" else ValueError
+    with pytest.raises(
+        expected_error,
+        match=(
+            "unique id|unknown video|every object action|remove or keep|"
+            "unsupported target|non-empty string|must be an object"
+        ),
+    ):
+        module._load_decision_manifest(str(manifest), str(tmp_path))
+
+
+def test_decision_manifest_root_must_be_an_object(tmp_path):
+    module = _load_eval_module()
+    manifest = tmp_path / "decision_baseline.json"
+    manifest.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="root must be an object"):
         module._load_decision_manifest(str(manifest), str(tmp_path))
 
 
@@ -314,6 +350,7 @@ def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path
     _write_video(tmp_path / "sample.mp4")
     indexed = np.zeros((8, 12), dtype=np.uint8)
     indexed[3:6, 3:7] = 1
+    indexed[0, 0] = 2
     _write_manifest(tmp_path, indexed)
     candidate = _candidate(indexed == 1)
     result = CleanDetectionResult([candidate], indexed.shape)
@@ -346,6 +383,26 @@ def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path
 
     assert calls == 1
     assert first == second
+
+
+def test_decision_baseline_rejects_declared_object_missing_from_annotations(tmp_path):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[3:6, 3:7] = 1
+    _write_manifest(tmp_path, indexed)
+    _fake_detector(module, indexed == 1)
+    manifest = _write_decision_manifest(tmp_path, [{
+        "id": "default",
+        "file": "sample.mp4",
+        "request": {},
+        "expected_actions": {"1": "remove", "2": "keep"},
+    }])
+
+    with pytest.raises(ValueError, match="missing from every annotation frame: \\[2\\]"):
+        module.evaluate_decision_baseline(
+            str(tmp_path), str(manifest), str(tmp_path / "report.json")
+        )
 
 
 def test_keep_injury_and_no_target_false_removal(tmp_path):
@@ -641,6 +698,43 @@ def test_formal_baseline_rejects_untracked_relevant_input(tmp_path, monkeypatch)
         module._require_clean_git_worktree([relevant])
 
 
+def test_formal_baseline_rejects_state_changed_during_evaluation(monkeypatch):
+    module = _load_eval_module()
+    events = []
+    monkeypatch.setattr(
+        module, "_require_clean_git_worktree", lambda paths: events.append("validate")
+    )
+
+    def capture():
+        events.append("capture")
+        return {"git": {"git_head": "after"}}
+
+    with pytest.raises(RuntimeError, match="changed during evaluation"):
+        module._assert_formal_state_unchanged(
+            {"git": {"git_head": "before"}},
+            capture,
+            [],
+        )
+    assert events == ["validate", "capture"]
+
+
+def test_detector_weight_provenance_detects_replacement(tmp_path):
+    module = _load_eval_module()
+    weight = tmp_path / "detector.onnx"
+    weight.write_bytes(b"first")
+    detector = type("Detector", (), {"_weight_path": str(weight)})()
+    result = type("Result", (), {"detector": detector})()
+    path, provenance = module._detector_weight_state(result)
+
+    assert provenance["filename"] == "detector.onnx"
+    assert len(provenance["sha256"]) == 64
+    weight.write_bytes(b"second")
+    with pytest.raises(RuntimeError, match="Detector weight changed"):
+        module._record_detector_weight({path: provenance}, result)
+    with pytest.raises(RuntimeError, match="Detector weight changed"):
+        module._assert_detector_weights_unchanged({path: provenance})
+
+
 def test_regression_compare_detects_removed_video_in_legacy_snapshot(tmp_path):
     module = _load_eval_module()
     report_a = {"video": "a.mp4", "candidate_count": 1, "empty_detection": False, "candidates": [{"type": "subtitle"}]}
@@ -669,6 +763,38 @@ def test_legacy_regression_cli_reads_and_writes_legacy_artifact(tmp_path, monkey
     )
     monkeypatch.setattr(module.sys, "argv", ["eval_clean_detection.py", str(tmp_path), "--compare-baseline"])
     module.main()
+
+
+@pytest.mark.parametrize(
+    ("mode_flag", "evaluator_name", "expected_output"),
+    [
+        ("--manifest", "evaluate_fact_baseline", "result/fact-baseline/report.json"),
+        (
+            "--decision-manifest",
+            "evaluate_decision_baseline",
+            "result/decision-baseline/report.json",
+        ),
+    ],
+)
+def test_baseline_cli_uses_mode_specific_default_output(
+    tmp_path, monkeypatch, mode_flag, evaluator_name, expected_output
+):
+    module = _load_eval_module()
+    captured = {}
+
+    def evaluate(input_dir, manifest, output, *args, **kwargs):
+        captured["output"] = output
+        return {"macro_average": {}}
+
+    monkeypatch.setattr(module, evaluator_name, evaluate)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        ["eval_clean_detection.py", str(tmp_path), mode_flag, "manifest.json"],
+    )
+    module.main()
+
+    assert captured["output"] == expected_output
 
 
 def test_regression_cli_continues_after_one_video_error(tmp_path, monkeypatch):
