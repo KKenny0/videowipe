@@ -5,9 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "videowipe"
 version = "0.8.0"
-description = "Open-source local tool to remove hardcoded subtitles, watermarks, logos, and timestamps from video"
+description = "Local hardcoded-subtitle and watermark remover: preview first, then wipe. CLI, Docker, web UI."
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = [
+    "video",
+    "hardcoded-subtitles",
+    "subtitle-removal",
+    "watermark-removal",
+    "logo-removal",
+    "delogo",
+    "video-inpainting",
+    "sttn",
+    "ocr",
+    "self-hosted",
+]
 dependencies = [
     "opencv-python-headless>=4.5,<5",
     "numpy",
@@ -16,7 +28,21 @@ dependencies = [
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Environment :: Console",
+    "Environment :: Web Environment",
 ]
+
+[project.urls]
+Homepage = "https://kkenny0.github.io/videowipe/"
+Repository = "https://github.com/KKenny0/videowipe"
+Issues = "https://github.com/KKenny0/videowipe/issues"
+Changelog = "https://github.com/KKenny0/videowipe/releases"
 
 [project.optional-dependencies]
 torch = [
