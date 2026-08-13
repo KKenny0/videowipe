@@ -444,3 +444,13 @@ Built on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto
 GNU General Public License v3.0 — see [LICENSE](LICENSE).
 
 This repository derives from GPL-3.0-licensed Video-Auto-Wipe. If you distribute VideoWipe or a combined work, review the GPL-3.0 obligations for your distribution model.
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=KKenny0%2Fvideowipe&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&theme=dark&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+ </picture>
+</a>

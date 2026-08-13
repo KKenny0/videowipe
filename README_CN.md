@@ -444,3 +444,13 @@ VSR 是带 Windows 安装包的桌面软件。VideoWipe 强调先预览再擦，
 GNU General Public License v3.0，详见 [LICENSE](LICENSE)。
 
 本仓库衍生自 GPL-3.0 许可的 Video-Auto-Wipe。若分发 VideoWipe 或衍生合并作品，请自行核对 GPL-3.0 对你分发方式的要求。
+
+## Star 趋势
+
+<a href="https://www.star-history.com/?repos=KKenny0%2Fvideowipe&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&theme=dark&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+ </picture>
+</a>
