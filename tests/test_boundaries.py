@@ -618,6 +618,21 @@ def test_top_text_semantics_use_persistence_and_side(
     assert (target_type, default_remove) == expected
 
 
+def test_dbnet_rejects_weight_replaced_during_load(tmp_path, monkeypatch):
+    weight = tmp_path / "detector.onnx"
+    weight.write_bytes(b"first")
+
+    def load(path):
+        assert isinstance(path, np.ndarray)
+        weight.write_bytes(b"second")
+        return object()
+
+    monkeypatch.setattr(cv2.dnn, "readNetFromONNX", load)
+
+    with pytest.raises(RuntimeError, match="changed while it was being loaded"):
+        DBNetDetector(str(weight))
+
+
 def test_clean_candidate_selection_and_mask_merge():
     subtitle_mask = np.zeros((20, 30, 1), dtype=np.uint8)
     subtitle_mask[15:18, 2:28] = 1

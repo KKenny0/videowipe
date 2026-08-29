@@ -28,12 +28,14 @@ Custom detector::
 """
 from __future__ import annotations
 
-import logging
+import hashlib
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from itertools import chain
+from pathlib import Path
 from typing import Iterable, Iterator, List, Literal, Protocol, runtime_checkable
 
 import cv2
@@ -210,7 +212,15 @@ class DBNetDetector:
         self._scale = scale
         self._adaptive = adaptive
 
-        self._net = cv2.dnn.readNetFromONNX(self._weight_path)
+        weight_bytes = Path(self._weight_path).read_bytes()
+        self._weight_sha256 = hashlib.sha256(weight_bytes).hexdigest()
+        self._net = cv2.dnn.readNetFromONNX(
+            np.frombuffer(weight_bytes, dtype=np.uint8)
+        )
+        if hashlib.sha256(Path(self._weight_path).read_bytes()).hexdigest() != self._weight_sha256:
+            raise RuntimeError(
+                f"Detector weight changed while it was being loaded: {self._weight_path}"
+            )
 
         # Cache for adaptive input-size computation
         self._cached_frame_dims: tuple[int, int] | None = None

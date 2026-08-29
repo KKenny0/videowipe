@@ -267,9 +267,13 @@ def _assert_formal_state_unchanged(
 def _weight_provenance(path: Path) -> dict[str, str]:
     if not path.is_file():
         raise RuntimeError(f"Detector weight is missing after detection: {path.name}")
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
     return {
         "filename": path.name,
-        "sha256": _sha256_named_files([(path.name, path)]),
+        "sha256": digest.hexdigest(),
     }
 
 
@@ -278,7 +282,13 @@ def _detector_weight_state(result: Any) -> tuple[Path, dict[str, str]] | None:
     if not supplied:
         return None
     path = Path(supplied).resolve()
-    return path, _weight_provenance(path)
+    loaded_sha256 = getattr(result.detector, "_weight_sha256", None)
+    provenance = _weight_provenance(path)
+    if loaded_sha256 is not None and provenance["sha256"] != loaded_sha256:
+        raise RuntimeError(f"Detector weight changed during evaluation: {path.name}")
+    if loaded_sha256 is not None:
+        provenance["sha256"] = loaded_sha256
+    return path, provenance
 
 
 def _record_detector_weight(
@@ -303,14 +313,18 @@ def _assert_detector_weights_unchanged(
             )
 
 
-def _evaluator_source_hash() -> str:
-    return _sha256_named_files([
+def _evaluator_source_files() -> list[tuple[str, Path]]:
+    return [
         ("scripts/eval_clean_detection.py", Path(__file__).resolve()),
         ("src/videowipe/detect.py", Path(sys.modules["videowipe.detect"].__file__).resolve()),
         ("src/videowipe/engine.py", Path(sys.modules["videowipe.engine"].__file__).resolve()),
         ("src/videowipe/plan.py", Path(sys.modules["videowipe.plan"].__file__).resolve()),
         ("src/videowipe/weights.py", Path(videowipe.__file__).resolve().parent / "weights.py"),
-    ])
+    ]
+
+
+def _evaluator_source_hash() -> str:
+    return _sha256_named_files(_evaluator_source_files())
 
 
 def _build_recognizer(ocr_mode: str):
@@ -953,7 +967,7 @@ def evaluate_fact_baseline(
                 )
     protected_paths = [
         path for _, path in input_paths + annotation_paths + legacy_calibration_paths
-    ]
+    ] + [path for _, path in _evaluator_source_files()]
     if require_clean_git:
         _require_clean_git_worktree(protected_paths)
     initial_provenance = _baseline_provenance(
@@ -1148,7 +1162,9 @@ def evaluate_decision_baseline(
                     ),
                 )
             )
-    protected_paths = [path for _, path in input_paths + annotation_paths]
+    protected_paths = [
+        path for _, path in input_paths + annotation_paths
+    ] + [path for _, path in _evaluator_source_files()]
     if require_clean_git:
         _require_clean_git_worktree(protected_paths)
     initial_provenance = _baseline_provenance(

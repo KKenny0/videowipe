@@ -810,6 +810,22 @@ def test_detector_weight_provenance_detects_replacement(tmp_path):
         module._assert_detector_weights_unchanged({path: provenance})
 
 
+def test_detector_weight_provenance_uses_load_time_digest(tmp_path):
+    module = _load_eval_module()
+    weight = tmp_path / "detector.onnx"
+    weight.write_bytes(b"loaded")
+    loaded = module._weight_provenance(weight)
+    detector = type("Detector", (), {
+        "_weight_path": str(weight),
+        "_weight_sha256": loaded["sha256"],
+    })()
+    result = type("Result", (), {"detector": detector})()
+    weight.write_bytes(b"replacement")
+
+    with pytest.raises(RuntimeError, match="Detector weight changed"):
+        module._record_detector_weight({}, result)
+
+
 def test_regression_compare_detects_removed_video_in_legacy_snapshot(tmp_path):
     module = _load_eval_module()
     report_a = {"video": "a.mp4", "candidate_count": 1, "empty_detection": False, "candidates": [{"type": "subtitle"}]}
