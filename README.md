@@ -5,15 +5,17 @@
 <h1 align="center">VideoWipe</h1>
 
 <p align="center">
-  <strong>Open-source tool to remove hardcoded subtitles, watermarks, logos, and timestamps from video — locally.</strong>
+  <strong>Remove hardcoded (burned-in) subtitles, watermarks, and logos from video locally.<br>Preview the detection first, then wipe. CLI, Docker, or a local web UI.</strong>
 </p>
 
 <p align="center">
-  Detect burn-in text · preview what will be removed · clean the background · keep the original audio.<br>
-  No cloud upload. Works from CLI, a local web UI, Docker, or Python.
+  Auto-detect burn-in text · review each track · inpaint the background · keep the original audio.<br>
+  Files stay on your machine. No cloud account.
 </p>
 
 <p align="center">
+  <a href="https://github.com/KKenny0/videowipe/stargazers"><img src="https://img.shields.io/github/stars/KKenny0/videowipe?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/KKenny0/videowipe/releases"><img src="https://img.shields.io/github/v/release/KKenny0/videowipe" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/Runs-locally-success.svg" alt="Runs locally">
@@ -22,6 +24,8 @@
 
 <p align="center">
   <a href="README_CN.md">中文</a>
+  ·
+  <a href="https://kkenny0.github.io/videowipe/">Site</a>
   ·
   <a href="#quick-start">Quick start</a>
   ·
@@ -32,18 +36,20 @@
 
 ---
 
-## What is VideoWipe?
+## Remove hardcoded subtitles, watermarks, and logos locally
 
-**VideoWipe** is an open-source, self-hosted video cleanup tool. It finds **hardcoded (burn-in) subtitles**, **watermarks**, **logos**, and **timestamps**, lets you **review** what to remove, then **inpaints** the covered pixels so the background looks continuous again.
+**VideoWipe** is a self-hosted **hardcoded subtitle remover** and **video delogo** tool. It finds **burned-in / burn-in text**, **watermarks**, **logos**, and **on-screen timestamps**, lets you **review** each track, then **inpaints** only the pixels you chose to erase.
 
-Typical searches it answers:
+People usually land here looking for:
 
-- remove hardcoded subtitles from video
-- remove watermark / logo from video (delogo)
-- offline / local video text removal
-- open-source alternative to online subtitle removers
+- remove hardcoded subtitles from video / remove burned-in subtitles
+- remove watermark from video / remove logo from video (delogo)
+- local, offline, self-hosted video text removal (no upload)
+- a scriptable alternative to online removers and one-click desktop apps
 
-Files stay on your machine. The cleaned MP4 keeps the **original audio track**.
+The cleaned MP4 keeps the **original audio track**.
+
+If you want a Windows one-click desktop app, [video-subtitle-remover (VSR)](https://github.com/YaoFANGUK/video-subtitle-remover) is the established option. Use VideoWipe when you need to **see the detection before it erases**, run it **headless** (CLI, Docker, worker), or keep source files **off the cloud**.
 
 > Not soft subtitles: VideoWipe does **not** strip `.srt` / `.ass` tracks. It removes text that is **burned into the picture**.
 
@@ -124,15 +130,18 @@ Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show regio
 
 ## Who is it for?
 
-- **Creators & editors** cleaning archive footage before re-cut
-- **Researchers & archivists** removing platform watermarks from reference clips (respect copyright and terms)
-- **Anyone** who does not want to upload private video to a cloud “one-click remover”
-- **Developers** who need a local pipeline: detect → review → inpaint, not a black-box website
+VideoWipe is built for people who already know they want the burn-in gone, and do not want a black box to decide where.
+
+- **Editors and archivists** cleaning private or archive footage before a recut (respect copyright and platform terms)
+- **Self-hosters** who will not upload source video to an online remover
+- **Developers** who need detect → review → inpaint as a local CLI, Docker job, or Python worker
+
+It is a weaker fit if you want a Windows `.exe` with no install steps. That is VSR's job.
 
 ### Common use cases
 
-- Remove **burned-in bottom subtitles** from drama or lecture clips
-- Clean a **corner logo / watermark** before reuse
+- Remove **burned-in bottom subtitles** from drama, lecture, or language-study clips
+- Clean a **corner logo / watermark** (delogo) before reuse
 - Strip **on-screen timestamps** or platform chrome
 - On multilingual videos, **preview first**, then remove only the tracks you care about
 - Run **batch jobs** on a worker without a desktop display
@@ -149,13 +158,14 @@ You can stop after detection (`--preview`), edit the plan JSON, then run cleanup
 
 ## VideoWipe vs alternatives
 
-| | Online removers | Hand masks (AE / Resolve) | **VideoWipe** |
-|--|-----------------|---------------------------|---------------|
-| Privacy | Upload required | Local | **Local** |
-| Auto-detect burn-in text | Sometimes | Manual | **Yes** |
-| Review before erase | Rare | Manual | **Yes (plan / web UI)** |
-| Cost | Subscription / credits | Labor | **Open source, self-hosted** |
-| Embed in your pipeline | Hard | Hard | **Python SDK + CLI** |
+| | Online removers | [VSR](https://github.com/YaoFANGUK/video-subtitle-remover) | Hand masks (AE / Resolve) | **VideoWipe** |
+|--|-----------------|------------------------------------------------------------|---------------------------|---------------|
+| Privacy | Upload required | Local | Local | **Local** |
+| Auto-detect burn-in text | Sometimes | Yes | Manual | **Yes** |
+| Review before erase | Rare | Limited | Manual | **Yes (WipePlan / web UI)** |
+| Headless / Docker / worker | No | Desktop GUI | Desktop | **CLI, Docker, Python** |
+| Windows one-click `.exe` | Sometimes | **Yes** | N/A | No (source or Docker) |
+| Embed in your pipeline | Hard | Hard | Hard | **Python SDK + CLI** |
 
 ### What VideoWipe is not
 
@@ -403,6 +413,9 @@ No tool can guarantee that. Fast motion, thin textures, and semi-transparent mar
 **Can I plug this into my own product or worker?**  
 Yes. Treat VideoWipe as an embeddable engine: one `WipeEngine`, stable request/result types, optional custom inpainters. Product boundary is detect → plan → inpaint — not a full NLE or cloud studio.
 
+**How is this different from video-subtitle-remover (VSR)?**  
+VSR is a desktop GUI with a Windows package. VideoWipe is preview-first and built to run from CLI, Docker, a local web UI, or your own worker. Same job (hardcoded subtitle / watermark removal), different way to operate it.
+
 ## Support
 
 If VideoWipe saves you time on subtitle, watermark, or overlay cleanup:
@@ -410,6 +423,17 @@ If VideoWipe saves you time on subtitle, watermark, or overlay cleanup:
 <https://kkenny0.github.io/support/>
 
 Support helps maintain model packaging, Docker images, detection tuning, and docs.
+
+## Related projects
+
+| Project | Relationship |
+|---------|--------------|
+| [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) | Ancestor this repo derives from |
+| [video-subtitle-remover (VSR)](https://github.com/YaoFANGUK/video-subtitle-remover) | Popular desktop GUI for the same job |
+| [STTN](https://github.com/researchmm/STTN) | Default inpainting model |
+| [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR) | Built-in text detection |
+| [ProPainter](https://github.com/sczhou/ProPainter) | Optional higher-quality inpainter (not bundled) |
+| [InpaintDelogo](https://github.com/Purfview/InpaintDelogo) | AviSynth+ delogo plugin, different stack |
 
 ## Credits
 
@@ -420,3 +444,13 @@ Built on [STTN](https://github.com/researchmm/STTN) and the original [Video-Auto
 GNU General Public License v3.0 — see [LICENSE](LICENSE).
 
 This repository derives from GPL-3.0-licensed Video-Auto-Wipe. If you distribute VideoWipe or a combined work, review the GPL-3.0 obligations for your distribution model.
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=KKenny0%2Fvideowipe&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&theme=dark&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+ </picture>
+</a>

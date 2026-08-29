@@ -5,15 +5,17 @@
 <h1 align="center">VideoWipe</h1>
 
 <p align="center">
-  <strong>本地开源的视频文字清理工具：擦硬字幕、水印、Logo、时间戳。</strong>
+  <strong>本地硬字幕去除、视频去水印、去 Logo。<br>先预览检测结果，再擦烧录字幕和时间戳。命令行、Docker、或本地网页。</strong>
 </p>
 
 <p align="center">
-  自动检测烧录文字 · 先预览再擦除 · 修复背景 · 保留原音轨。<br>
-  不上传云端。支持命令行、本地网页、Docker、Python。
+  自动检测烧录文字 · 按轨道审阅 · 修复背景 · 保留原音轨。<br>
+  视频留在本机，不上传云端。
 </p>
 
 <p align="center">
+  <a href="https://github.com/KKenny0/videowipe/stargazers"><img src="https://img.shields.io/github/stars/KKenny0/videowipe?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/KKenny0/videowipe/releases"><img src="https://img.shields.io/github/v/release/KKenny0/videowipe" alt="最新版本"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="许可证: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/本地运行-success.svg" alt="本地运行">
@@ -22,6 +24,8 @@
 
 <p align="center">
   <a href="README.md">English</a>
+  ·
+  <a href="https://kkenny0.github.io/videowipe/">网站</a>
   ·
   <a href="#快速开始">快速开始</a>
   ·
@@ -32,18 +36,20 @@
 
 ---
 
-## VideoWipe 是什么？
+## 本地硬字幕去除、视频去水印
 
-**VideoWipe** 是一个开源、可自托管的视频清理工具。它能找到视频里的 **硬字幕（烧录字幕）**、**水印**、**Logo** 和 **时间戳**，让你 **先审阅** 再决定擦哪些，然后用画面修复把被遮住的区域补回去。
+**VideoWipe** 是一个可自托管的 **硬字幕去除** / **烧录字幕擦除** / **视频去水印** 工具。它找出画面里的 **硬字幕（烧录字幕）**、**水印**、**Logo** 和 **时间戳**，让你 **先审阅每条轨道**，再只擦你勾过的区域。
 
-它直接对应这些常见需求：
+它对应这些常见需求：
 
-- 怎么去掉视频里的硬字幕 / 烧录字幕  
-- 本地去水印、去 Logo  
-- 不想上传到在线「一键去字幕」网站  
-- 开源、可离线的视频文字擦除方案  
+- 怎么去掉视频里的硬字幕 / 烧录字幕 / 硬字幕去除
+- 本地去水印、去 Logo、视频 delogo
+- 不想上传到在线「一键去字幕」网站
+- 能用命令行、Docker、自己的 Worker 跑的开源方案
 
-视频默认留在本机。清理后的 MP4 **保留原始音轨**。
+清理后的 MP4 **保留原始音轨**。
+
+如果你要的是 Windows 下一键安装的桌面软件，更成熟的选择是 [video-subtitle-remover (VSR)](https://github.com/YaoFANGUK/video-subtitle-remover)。VideoWipe 适合另一种用法：擦之前先看检测框，能在无界面环境跑，或者把检测 → 审阅 → 修复嵌进自己的流程。
 
 > 注意：VideoWipe **不处理** 软字幕（`.srt` / `.ass` 轨道）。它只擦 **烧进画面** 的文字。
 
@@ -124,17 +130,20 @@ videowipe serve
 
 ## 适合谁用？
 
-- **创作者 / 剪辑**：二次剪辑前清理归档素材  
-- **研究与资料整理**：去掉参考片上的平台水印（请自行遵守版权与平台条款）  
-- **重视隐私的人**：不想把视频传到在线去字幕网站  
-- **开发者**：需要本机流水线「检测 → 审阅 → 修复」，而不是黑盒网页  
+VideoWipe 面向已经确定要擦烧录字、但不想把决定权交给黑盒的人。
+
+- **剪辑和资料整理**：二次剪辑前清理私有或归档素材（请自行遵守版权与平台条款）
+- **自己托管的人**：不愿意把原片传到在线去字幕站
+- **开发者**：需要「检测 → 审阅 → 修复」作为本机命令行、Docker 任务或 Python Worker
+
+如果你要的是免安装的 Windows `.exe`，那是 VSR 的主场。
 
 ### 常见场景
 
-- 擦掉剧集、课程里的 **底部硬字幕**  
-- 清理 **角落 Logo / 水印** 再复用  
-- 去掉 **时间戳** 或平台角标  
-- 多语种视频 **先看检测框**，只擦需要的那几条  
+- 擦掉剧集、课程、语言学习片里的 **底部硬字幕**
+- 清理 **角落 Logo / 水印** 再复用
+- 去掉 **时间戳** 或平台角标
+- 多语种视频 **先看检测框**，只擦需要的那几条
 - 在无桌面环境的 **Worker 上批量跑**
 
 ## 工作原理
@@ -149,13 +158,14 @@ videowipe serve
 
 ## 和其他做法对比
 
-| | 在线去字幕站 | 手动画 mask（AE / 达芬奇） | **VideoWipe** |
-|--|--------------|---------------------------|---------------|
-| 隐私 | 需上传 | 本地 | **本地** |
-| 自动找烧录字 | 有时有 | 全靠手 | **有** |
-| 擦之前能审阅 | 少见 | 靠人工 | **有（计划 / 网页）** |
-| 成本 | 订阅 / 次数 | 人力 | **开源自托管** |
-| 接入自己的流程 | 难 | 难 | **Python SDK + CLI** |
+| | 在线去字幕站 | [VSR](https://github.com/YaoFANGUK/video-subtitle-remover) | 手动画 mask（AE / 达芬奇） | **VideoWipe** |
+|--|--------------|------------------------------------------------------------|---------------------------|---------------|
+| 隐私 | 需上传 | 本地 | 本地 | **本地** |
+| 自动找烧录字 | 有时有 | 有 | 全靠手 | **有** |
+| 擦之前能审阅 | 少见 | 有限 | 靠人工 | **有（WipePlan / 网页）** |
+| 无界面 / Docker / Worker | 否 | 桌面软件 | 桌面软件 | **命令行、Docker、Python** |
+| Windows 一键 `.exe` | 有时有 | **有** | 不适用 | 无（源码或 Docker） |
+| 接入自己的流程 | 难 | 难 | 难 | **Python SDK + CLI** |
 
 ### VideoWipe 不做什么
 
@@ -403,6 +413,9 @@ STTN 是默认（更轻、CPU 友好）。ProPainter 在难修区域往往更好
 **能嵌进自己的产品或 Worker 吗？**  
 可以。把 VideoWipe 当可嵌入引擎：一个 `WipeEngine`、稳定的请求/结果类型、可换修复后端。产品边界是检测 → 计划 → 修复，不是完整剪辑台或云工作室。
 
+**和 video-subtitle-remover（VSR）有什么区别？**  
+VSR 是带 Windows 安装包的桌面软件。VideoWipe 强调先预览再擦，并且能用命令行、Docker、本地网页或自己的 Worker 跑。要解决的是同一件事（硬字幕去除 / 视频去水印），用法不一样。
+
 ## 支持项目
 
 如果 VideoWipe 帮你省下了去字幕、去水印的时间：
@@ -410,6 +423,17 @@ STTN 是默认（更轻、CPU 友好）。ProPainter 在难修区域往往更好
 <https://kkenny0.github.io/support/>
 
 支持会用于模型打包、Docker 镜像、检测调参和文档维护。
+
+## 相关项目
+
+| 项目 | 关系 |
+|------|------|
+| [Video-Auto-Wipe](https://github.com/a312863063/Video-Auto-Wipe) | 本仓库的上游来源 |
+| [video-subtitle-remover (VSR)](https://github.com/YaoFANGUK/video-subtitle-remover) | 同一需求上最常见的桌面软件 |
+| [STTN](https://github.com/researchmm/STTN) | 默认画面修复模型 |
+| [OnnxOCR](https://github.com/jingsongliujing/OnnxOCR) | 内置文字检测 |
+| [ProPainter](https://github.com/sczhou/ProPainter) | 可选的更高画质修复（不随包装） |
+| [InpaintDelogo](https://github.com/Purfview/InpaintDelogo) | AviSynth+ 去 Logo 插件，另一套栈 |
 
 ## 致谢
 
@@ -420,3 +444,13 @@ STTN 是默认（更轻、CPU 友好）。ProPainter 在难修区域往往更好
 GNU General Public License v3.0，详见 [LICENSE](LICENSE)。
 
 本仓库衍生自 GPL-3.0 许可的 Video-Auto-Wipe。若分发 VideoWipe 或衍生合并作品，请自行核对 GPL-3.0 对你分发方式的要求。
+
+## Star 趋势
+
+<a href="https://www.star-history.com/?repos=KKenny0%2Fvideowipe&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&theme=dark&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=KKenny0/videowipe&type=date&legend=top-left&sealed_token=Ocoofe793tAMlarurXhegI2A9NIEC5YIpP2Cz-YgNw1B89AGk08cXRlJw2HNRGjszo-EFjTFczzN4B7nCZmpl313BQKr4pMFCZTxOUMjKUEhUC9M78uQn2Uc04M2uH07nmaDAtJlldSHdnz4TXHJOW5ZjXWzGvZZUfdeCwp-3mrtL92xORJTNgaRZvFQ" />
+ </picture>
+</a>
