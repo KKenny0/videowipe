@@ -8,6 +8,7 @@ import platform
 import threading
 import time
 from functools import lru_cache
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Optional
 
 import cv2
@@ -30,12 +31,16 @@ from videowipe.errors import (
 from videowipe.inpainters import InpaintJob, get_registry
 from videowipe.plan import (
     WipePlan,
-    build_refined_wipe_plan,
     compute_source,
     is_temporal,
     load_wipe_plan,
     save_wipe_plan,
     validate_plan,
+)
+from videowipe.planning import (
+    build_recognizer,
+    finalize as finalize_clean_plan,
+    prepare as prepare_clean_plan,
 )
 from videowipe.tasks.base import (
     BaseTask,
@@ -622,27 +627,8 @@ class WipeEngine:
 
     @staticmethod
     def _build_recognizer(ocr_mode: str):
-        """Build a text recognizer callable based on the OCR mode setting.
-
-        Returns ``None`` when OCR is disabled or unavailable, or a
-        ``callable(image_crop) -> str | None`` when OCR is active.
-        """
-        if ocr_mode == "off":
-            return None
-        try:
-            from videowipe.ocr import _get_engine, recognize_text
-            # Eagerly validate that the OCR backend is usable
-            _get_engine()
-            return recognize_text
-        except Exception:
-            if ocr_mode == "rapidocr":
-                raise RuntimeError(
-                    "OCR mode 'rapidocr' requested but rapidocr-onnxruntime "
-                    "is not installed. Install it with: "
-                    "pip install videowipe[ocr]"
-                ) from None
-            # auto mode: silently degrade
-            return None
+        """Compatibility hook; Clean Planning owns OCR construction."""
+        return build_recognizer(ocr_mode)
 
     @staticmethod
     def _confirm_candidates(candidates, selected):
@@ -668,29 +654,14 @@ class WipeEngine:
 
     @staticmethod
     def _select_candidates_with_agent(agent, candidates, intent):
+        """Compatibility hook for custom agent-selection adapters."""
         from videowipe.agent import select_with_agent
 
         selected_ids = select_with_agent(agent, candidates, intent)
         if selected_ids is None:
-            print("Agent selection unavailable; using local rules.")
             return None
         id_set = set(selected_ids)
         return [candidate for candidate in candidates if candidate.id in id_set]
-
-    @staticmethod
-    def _warn_if_timestamp_unresolved(targets, candidates):
-        from videowipe.detect import normalize_target
-
-        requested = {normalize_target(target) for target in (targets or [])}
-        if "timestamp" not in requested:
-            return
-        if any(candidate.type == "timestamp" for candidate in candidates):
-            return
-        print(
-            "No timestamp target was confirmed. Timestamp detection requires "
-            "recognized text content; use --region top-left/top-right if the "
-            "current detector only finds text boxes."
-        )
 
     # ── WipePlan: detection, construction, execution glue ────────────────────
 
@@ -747,18 +718,18 @@ class WipeEngine:
         try:
             self._emit_progress(ProgressEvent("prepare", 0, 1))
             os.makedirs(output_dir, exist_ok=True)
-            det = request.detector or self._detector
-            result, selected_ids, request_snapshot, user_directed = self._detect_clean(
-                video_path, det, targets, request.intent, request.agent, regions,
-                request.detect_mode, request.ocr, output_dir, request.confirm,
+            draft = self._prepare_clean_draft(
+                video_path, request.detector or self._detector, targets,
+                request.intent, request.agent, regions, request.detect_mode,
+                request.ocr, output_dir, request.confirm,
             )
-            wipe_plan = self._build_fresh_clean_plan(
-                video_path, result, selected_ids, request_snapshot, user_directed,
-            )
+            wipe_plan = self._finalize_clean_draft(draft)
             self._emit_progress(ProgressEvent("persist", 0, 1))
-            self._write_final_clean_artifacts(result, wipe_plan, output_dir)
+            self._write_clean_artifacts(
+                draft, {track.id for track in wipe_plan.remove_tracks}, output_dir,
+            )
             save_wipe_plan(wipe_plan, output_dir)
-            mask_arr = self._union_mask_from_plan(wipe_plan, result.frame_shape)
+            mask_arr = self._union_mask_from_plan(wipe_plan, draft.frame_shape)
             auto_mask_path = os.path.join(output_dir, "auto_mask.png")
             if not cv2.imwrite(
                 auto_mask_path, (mask_arr * 255).astype(np.uint8),
@@ -778,171 +749,77 @@ class WipeEngine:
         self, plan, video, detector, targets, intent, agent, regions,
         detect_mode, ocr, output, confirm,
     ) -> WipePlan:
-        """Return the WipePlan for a clean run: explicit, or built fresh.
-
-        An explicit plan (object or path) is validated against the video. A
-        fresh plan runs detection, applies the decision priority + safety rule
-        via :func:`build_wipe_plan`, and is persisted alongside the other clean
-        artifacts.
-        """
+        """Return an explicit plan or adapt Clean Planning for a fresh run."""
         if plan is not None:
             return self._resolve_plan_argument(plan, video)
-        result, selected_ids, request_snapshot, user_directed = self._detect_clean(
+        draft = self._prepare_clean_draft(
             video, detector, targets, intent, agent, regions,
             detect_mode, ocr, output, confirm,
         )
-        wipe_plan = self._build_fresh_clean_plan(
-            video, result, selected_ids, request_snapshot, user_directed,
-        )
+        wipe_plan = self._finalize_clean_draft(draft)
         self._emit_progress(ProgressEvent("persist", 0, 1))
-        self._write_final_clean_artifacts(result, wipe_plan, output)
+        self._write_clean_artifacts(
+            draft, {track.id for track in wipe_plan.remove_tracks}, output,
+        )
         save_wipe_plan(wipe_plan, output)
         return wipe_plan
 
-    def _build_fresh_clean_plan(
-        self, video, result, selected_ids, request_snapshot, user_directed,
-    ) -> WipePlan:
-        """Build the single provisional -> refine -> final clean-plan path."""
-        source = compute_source(video)
-        selection = self._explicit_selection_kwargs(
-            result.candidates, selected_ids, user_directed,
+    def _prepare_clean_draft(
+        self, video, detector, targets, intent, agent, regions,
+        detect_mode, ocr, output, confirm,
+    ):
+        """Adapt progress, confirmation, and preview artifacts around prepare()."""
+        effective_mode = detect_mode or self._detect_mode
+        effective_ocr = ocr or self._ocr
+        self._emit_progress(ProgressEvent("detect", 0, 0))
+        draft = prepare_clean_plan(
+            video,
+            detector=detector,
+            targets=targets or (),
+            intent=intent,
+            agent=agent,
+            regions=regions or (),
+            detect_mode=effective_mode,
+            ocr=effective_ocr,
+            recognizer_builder=self._build_recognizer,
+            agent_selector=self._select_candidates_with_agent,
         )
-        return build_refined_wipe_plan(
-            video, result, source,
-            refine=request_snapshot["detect_mode"] != "fast",
-            request=request_snapshot,
+        self._write_clean_artifacts(draft, draft.proposed_remove_ids, output)
+        if confirm:
+            selected = self._confirm_candidates(
+                draft.candidates,
+                [
+                    candidate for candidate in draft.candidates
+                    if candidate.id in draft.proposed_remove_ids
+                ],
+            )
+            draft = draft.with_remove_ids(candidate.id for candidate in selected)
+            self._write_clean_artifacts(draft, draft.proposed_remove_ids, output)
+        self._emit_progress(ProgressEvent("detect", 1, 1))
+        return draft
+
+    def _finalize_clean_draft(self, draft) -> WipePlan:
+        return finalize_clean_plan(
+            draft,
             progress=lambda done, total: self._emit_progress(
                 ProgressEvent("refine", done, total)
             ),
             check_cancelled=self._check_cancelled,
-            **selection,
         )
 
     @staticmethod
-    def _write_final_clean_artifacts(result, wipe_plan, output):
+    def _write_clean_artifacts(draft, selected_ids, output):
         from videowipe.detect import write_clean_artifacts
 
-        remove_ids = {track.id for track in wipe_plan.remove_tracks}
+        candidates = list(draft.candidates)
         write_clean_artifacts(
-            result, [candidate for candidate in result.candidates if candidate.id in remove_ids], output,
+            SimpleNamespace(
+                candidates=candidates,
+                preview_frame=draft.preview_frame,
+            ),
+            [candidate for candidate in candidates if candidate.id in selected_ids],
+            output,
         )
-
-    @staticmethod
-    def _explicit_selection_kwargs(candidates, selected_ids, user_directed):
-        """Build ``explicit_remove_ids`` / ``explicit_keep_ids`` for build_wipe_plan.
-
-        When the user made a genuine decision, the selection is the complete,
-        final remove set: chosen ids → remove, every other candidate → keep
-        (so deselecting or ``confirm none`` actually keeps objects). Otherwise
-        both sets are empty and the safety rule + detector default decide.
-        """
-        if not user_directed:
-            return {"explicit_remove_ids": set(), "explicit_keep_ids": set()}
-        selected = set(selected_ids)
-        keep = {c.id for c in candidates} - selected
-        return {"explicit_remove_ids": selected, "explicit_keep_ids": keep}
-
-    def _detect_clean(
-        self, video, detector, targets, intent, agent, regions,
-        detect_mode, ocr, output, confirm,
-    ):
-        """Run clean detection + selection and persist the candidate artifacts.
-
-        Returns ``(result, selected_ids, request_snapshot)`` where
-        ``selected_ids`` are the candidate ids chosen for removal (by default
-        rules, intent, agent, or interactive confirm) and ``request_snapshot``
-        captures the resolved request parameters for the plan record.
-        """
-        from videowipe.detect import (
-            detect_clean_candidates,
-            infer_regions_from_text,
-            infer_targets_from_text,
-            normalize_target,
-            resolve_detect_params,
-            resolve_requested_targets,
-            select_clean_candidates,
-            write_clean_artifacts,
-        )
-
-        target_text = " ".join(targets or [])
-        intent_text = " ".join(part for part in [target_text, intent or ""] if part)
-        requested_regions = list(regions or [])
-        requested_regions.extend(infer_regions_from_text(intent_text))
-        requested_regions = list(dict.fromkeys(requested_regions))
-
-        intent_targets = infer_targets_from_text(intent or "")
-        effective_targets = resolve_requested_targets(targets)
-        normalized_targets = {normalize_target(target) for target in effective_targets}
-        if requested_regions:
-            effective_targets.append("region")
-            normalized_targets.add("region")
-        mentioned_targets = normalized_targets | set(intent_targets)
-        include_logo = "logo" in mentioned_targets
-        include_translucent = "watermark" in mentioned_targets
-        text_targets = {
-            "subtitle", "timestamp", "watermark",
-            "scene_text", "unknown_text",
-        }
-        detect_text = (
-            bool(mentioned_targets & text_targets)
-            or (not requested_regions and not mentioned_targets)
-            or bool(intent and not mentioned_targets)
-        )
-
-        effective_mode = detect_mode or self._detect_mode
-        has_subtitle_target = "subtitle" in normalized_targets
-        mode_params = resolve_detect_params(
-            effective_mode, has_subtitle_target=has_subtitle_target,
-        )
-
-        effective_ocr = ocr or self._ocr
-        recognizer = self._build_recognizer(effective_ocr)
-
-        self._emit_progress(ProgressEvent("detect", 0, 0))
-        result = detect_clean_candidates(
-            video,
-            detector=detector,
-            regions=requested_regions,
-            detect_text=detect_text,
-            include_logo=include_logo,
-            include_translucent_watermark=include_translucent,
-            sample_count=mode_params["sample_count"],
-            consistency=mode_params["consistency"],
-            subtitle_fallback=mode_params["subtitle_fallback"],
-            recognizer=recognizer,
-        )
-        selected = select_clean_candidates(
-            result.candidates,
-            targets=effective_targets,
-            intent=intent,
-        )
-        self._warn_if_timestamp_unresolved(effective_targets, result.candidates)
-        if agent and intent:
-            agent_selected = self._select_candidates_with_agent(
-                agent, result.candidates, intent
-            )
-            if agent_selected is not None:
-                selected = agent_selected
-        write_clean_artifacts(result, selected, output)
-        if confirm:
-            selected = self._confirm_candidates(result.candidates, selected)
-            write_clean_artifacts(result, selected, output)
-
-        request_snapshot = {
-            "intent": intent,
-            "targets": list(effective_targets),
-            "regions": list(requested_regions),
-            "detect_mode": effective_mode,
-            "ocr": effective_ocr,
-        }
-        # A "genuine user decision" makes the selection the complete, final
-        # remove set: targets/intent/regions/confirm all qualify. An agent
-        # argument alone (no intent) never runs agent selection, so it must
-        # NOT count as user direction by itself — hence `agent` is absent from
-        # the OR (agent-with-intent is already covered by `intent`).
-        user_directed = bool(targets or intent or regions or confirm)
-        self._emit_progress(ProgressEvent("detect", 1, 1))
-        return result, {c.id for c in selected}, request_snapshot, user_directed
 
     @staticmethod
     def _resolve_plan_argument(plan, video) -> WipePlan:

@@ -18,7 +18,6 @@ from videowipe.plan import (
     Segment,
     Source,
     build_wipe_plan,
-    build_refined_wipe_plan,
     compute_source,
     is_temporal,
     load_wipe_plan,
@@ -26,6 +25,7 @@ from videowipe.plan import (
     segments_from_presence,
     validate_plan,
 )
+from videowipe.planning import CleanPlanDraft, finalize
 
 # ── fixtures / helpers ───────────────────────────────────────────────────────
 
@@ -317,12 +317,35 @@ def test_fast_plan_bypasses_dense_refinement():
     result = CleanDetectionResult(
         [candidate], (100, 100), sample_indices=[0, 2], detector=detector,
     )
-    plan = build_refined_wipe_plan(
-        "unused.mp4", result, _source(3), refine=False,
+    plan = finalize(
+        CleanPlanDraft("unused.mp4", result, _source(3), [candidate.id], {}, False),
+        refine=False,
     )
 
     assert detector.calls == 0
     assert plan.remove_tracks[0].segments == [Segment(0, 3)]
+
+
+def test_clean_plan_draft_review_finalizes_complete_selection():
+    subtitle = _candidate(cid="subtitle", type_="subtitle")
+    watermark = _candidate(cid="watermark", type_="watermark")
+    result = CleanDetectionResult(
+        [subtitle, watermark], (100, 100), sample_indices=[0],
+    )
+
+    draft = CleanPlanDraft(
+        "unused.mp4", result, _source(3), [subtitle.id], {}, False,
+    ).for_request(targets=["watermark"])
+    plan = finalize(draft, refine=False)
+
+    assert draft.proposed_remove_ids == {"watermark"}
+    assert not hasattr(draft.candidates[0], "temporal_sample_indices")
+    with pytest.raises(ValueError, match="read-only"):
+        draft.candidates[0].mask[0, 0, 0] = 0
+    assert {track.id: track.action for track in plan.tracks} == {
+        "subtitle": "keep",
+        "watermark": "remove",
+    }
 
 
 # ── decision priority + safety rule ──────────────────────────────────────────

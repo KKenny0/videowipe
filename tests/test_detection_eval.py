@@ -17,7 +17,8 @@ from videowipe.detect import (
     detect_clean_candidates,
     refine_temporal_presence,
 )
-from videowipe.plan import Segment, build_refined_wipe_plan, compute_source
+from videowipe.plan import Segment, compute_source
+from videowipe.planning import CleanPlanDraft, finalize
 
 
 def _load_eval_module():
@@ -89,9 +90,20 @@ def _write_decision_manifest(root, cases):
 def _fake_detector(module, predicted, candidates=None, selected=None):
     candidates = candidates or [_candidate(predicted)]
     selected = candidates if selected is None else selected
-    module._detect_video = lambda *args, **kwargs: (
-        CleanDetectionResult(candidates, predicted.shape), selected, predicted.astype(bool), "fake_detector"
-    )
+
+    def detect(video_path, *_args, **_kwargs):
+        result = CleanDetectionResult(candidates, predicted.shape)
+        draft = CleanPlanDraft(
+            video_path,
+            result,
+            compute_source(video_path),
+            [candidate.id for candidate in selected],
+            {},
+            False,
+        )
+        return draft, selected, predicted.astype(bool), "fake_detector"
+
+    module._detect_video = detect
 
 
 def test_jaccard_and_davis_boundary_reference_vectors():
@@ -119,6 +131,37 @@ def test_evaluator_rejects_unsupported_opencv5(monkeypatch):
     monkeypatch.setattr(module.cv2, "__version__", "5.0.0")
     with pytest.raises(RuntimeError, match="OpenCV 5 is not currently supported"):
         module._validate_supported_opencv()
+
+
+def test_evaluator_detection_enters_clean_planning(monkeypatch):
+    module = _load_eval_module()
+    mask = np.ones((8, 12), dtype=np.uint8)
+    candidate = _candidate(mask)
+    draft = type(
+        "Draft",
+        (),
+        {
+            "candidates": (candidate,),
+            "proposed_remove_ids": frozenset({candidate.id}),
+            "frame_shape": mask.shape,
+        },
+    )()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "prepare",
+        lambda video, **kwargs: calls.append((video, kwargs)) or draft,
+    )
+
+    detected, selected, generated, path = module._detect_video(
+        "input.mp4", "sensitive", "off",
+    )
+
+    assert detected is draft
+    assert selected == [candidate]
+    assert generated.all()
+    assert path == "dbnet_default"
+    assert calls == [("input.mp4", {"detect_mode": "sensitive", "ocr": "off"})]
 
 
 def test_default_opencv_dependency_excludes_unsupported_major_version():
@@ -434,7 +477,10 @@ def test_decision_baseline_detects_each_video_once_and_is_deterministic(tmp_path
     def detect_once(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return result, [candidate], indexed == 1, "fake_detector"
+        draft = CleanPlanDraft(
+            args[0], result, compute_source(args[0]), [candidate.id], {}, False,
+        )
+        return draft, [candidate], indexed == 1, "fake_detector"
 
     monkeypatch.setattr(module, "_detect_video", detect_once)
     cases = [
@@ -519,9 +565,19 @@ def test_fact_baseline_uses_temporal_refinement_for_a_single_frame_gap(tmp_path,
     result = CleanDetectionResult(
         [candidate], (8, 12), sample_indices=[0, 2], detector=Detector(),
     )
+    draft = CleanPlanDraft(
+        str(tmp_path / "sample.mp4"),
+        result,
+        compute_source(str(tmp_path / "sample.mp4")),
+        [candidate.id],
+        {"detect_mode": "balanced"},
+        False,
+    )
     monkeypatch.setattr(
         module, "_detect_video",
-        lambda *args, **kwargs: (result, [candidate], candidate.mask.squeeze().astype(bool), "fake_detector"),
+        lambda *args, **kwargs: (
+            draft, [candidate], candidate.mask.squeeze().astype(bool), "fake_detector",
+        ),
     )
     report = module.evaluate_fact_baseline(
         str(tmp_path), str(manifest), str(tmp_path / "report.json"), str(tmp_path / "previews"),
@@ -552,8 +608,11 @@ def test_band_fallback_candidate_keeps_coarse_semantics(tmp_path):
     )
     candidate = result.candidates[0]
     calls_before_plan = result.detector.calls
-    plan = build_refined_wipe_plan(
-        str(video), result, compute_source(str(video)), refine=True,
+    plan = finalize(
+        CleanPlanDraft(
+            str(video), result, compute_source(str(video)), [candidate.id], {}, False,
+        ),
+        refine=True,
     )
 
     assert not candidate.detector_backed
@@ -797,15 +856,14 @@ def test_detector_weight_provenance_detects_replacement(tmp_path):
     module = _load_eval_module()
     weight = tmp_path / "detector.onnx"
     weight.write_bytes(b"first")
-    detector = type("Detector", (), {"_weight_path": str(weight)})()
-    result = type("Result", (), {"detector": detector})()
-    path, provenance = module._detector_weight_state(result)
+    draft = type("Draft", (), {"detector_weight": (str(weight), None)})()
+    path, provenance = module._detector_weight_state(draft)
 
     assert provenance["filename"] == "detector.onnx"
     assert len(provenance["sha256"]) == 64
     weight.write_bytes(b"second")
     with pytest.raises(RuntimeError, match="Detector weight changed"):
-        module._record_detector_weight({path: provenance}, result)
+        module._record_detector_weight({path: provenance}, draft)
     with pytest.raises(RuntimeError, match="Detector weight changed"):
         module._assert_detector_weights_unchanged({path: provenance})
 
@@ -815,15 +873,13 @@ def test_detector_weight_provenance_uses_load_time_digest(tmp_path):
     weight = tmp_path / "detector.onnx"
     weight.write_bytes(b"loaded")
     loaded = module._weight_provenance(weight)
-    detector = type("Detector", (), {
-        "_weight_path": str(weight),
-        "_weight_sha256": loaded["sha256"],
-    })()
-    result = type("Result", (), {"detector": detector})()
+    draft = type(
+        "Draft", (), {"detector_weight": (str(weight), loaded["sha256"])}
+    )()
     weight.write_bytes(b"replacement")
 
     with pytest.raises(RuntimeError, match="Detector weight changed"):
-        module._record_detector_weight({}, result)
+        module._record_detector_weight({}, draft)
 
 
 def test_regression_compare_detects_removed_video_in_legacy_snapshot(tmp_path):

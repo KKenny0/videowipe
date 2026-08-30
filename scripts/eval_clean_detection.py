@@ -28,19 +28,14 @@ os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 import videowipe
 from videowipe.detect import (
-    detect_clean_candidates,
     mask_from_candidates,
-    resolve_detect_params,
     resolve_requested_targets,
-    select_clean_candidates,
 )
-from videowipe.engine import WipeEngine
 from videowipe.plan import (
-    build_refined_wipe_plan,
-    compute_source,
     predicted_mask_at,
     remove_union_mask,
 )
+from videowipe.planning import finalize, prepare
 
 FACT_BASELINE_REPORT_SCHEMA_VERSION = 2
 FACT_BASELINE_MANIFEST_SCHEMA_VERSION = 1
@@ -277,12 +272,12 @@ def _weight_provenance(path: Path) -> dict[str, str]:
     }
 
 
-def _detector_weight_state(result: Any) -> tuple[Path, dict[str, str]] | None:
-    supplied = getattr(result.detector, "_weight_path", None)
-    if not supplied:
+def _detector_weight_state(draft: Any) -> tuple[Path, dict[str, str]] | None:
+    weight = draft.detector_weight
+    if weight is None:
         return None
+    supplied, loaded_sha256 = weight
     path = Path(supplied).resolve()
-    loaded_sha256 = getattr(result.detector, "_weight_sha256", None)
     provenance = _weight_provenance(path)
     if loaded_sha256 is not None and provenance["sha256"] != loaded_sha256:
         raise RuntimeError(f"Detector weight changed during evaluation: {path.name}")
@@ -292,9 +287,9 @@ def _detector_weight_state(result: Any) -> tuple[Path, dict[str, str]] | None:
 
 
 def _record_detector_weight(
-    states: dict[Path, dict[str, str]], result: Any
+    states: dict[Path, dict[str, str]], draft: Any
 ) -> None:
-    state = _detector_weight_state(result)
+    state = _detector_weight_state(draft)
     if state is None:
         return
     path, provenance = state
@@ -319,30 +314,13 @@ def _evaluator_source_files() -> list[tuple[str, Path]]:
         ("src/videowipe/detect.py", Path(sys.modules["videowipe.detect"].__file__).resolve()),
         ("src/videowipe/engine.py", Path(sys.modules["videowipe.engine"].__file__).resolve()),
         ("src/videowipe/plan.py", Path(sys.modules["videowipe.plan"].__file__).resolve()),
+        ("src/videowipe/planning.py", Path(sys.modules["videowipe.planning"].__file__).resolve()),
         ("src/videowipe/weights.py", Path(videowipe.__file__).resolve().parent / "weights.py"),
     ]
 
 
 def _evaluator_source_hash() -> str:
     return _sha256_named_files(_evaluator_source_files())
-
-
-def _build_recognizer(ocr_mode: str):
-    """Build an OCR recognizer callable, mirroring engine logic."""
-    if ocr_mode == "off":
-        return None
-    try:
-        from videowipe.ocr import _get_engine, recognize_text
-
-        _get_engine()
-        return recognize_text
-    except Exception:  # noqa: BLE001 - optional OCR auto mode intentionally falls back.
-        if ocr_mode == "rapidocr":
-            raise RuntimeError(
-                "OCR mode 'rapidocr' requested but rapidocr-onnxruntime "
-                "is not installed. Install it with: pip install videowipe[ocr]"
-            ) from None
-        return None
 
 
 def _validate_supported_opencv() -> None:
@@ -362,17 +340,15 @@ def _detect_video(
     video_path: str, detect_mode: str, ocr_mode: str
 ) -> tuple[Any, list[Any], np.ndarray, str]:
     _validate_supported_opencv()
-    mode_params = resolve_detect_params(detect_mode)
-    result = detect_clean_candidates(
-        video_path,
-        sample_count=mode_params["sample_count"],
-        consistency=mode_params["consistency"],
-        subtitle_fallback=mode_params["subtitle_fallback"],
-        recognizer=_build_recognizer(ocr_mode),
+    draft = prepare(
+        video_path, detect_mode=detect_mode, ocr=ocr_mode,
     )
-    selected = select_clean_candidates(result.candidates)
-    return result, selected, np.asarray(
-        mask_from_candidates(selected, result.frame_shape)
+    selected = [
+        candidate for candidate in draft.candidates
+        if candidate.id in draft.proposed_remove_ids
+    ]
+    return draft, selected, np.asarray(
+        mask_from_candidates(selected, draft.frame_shape)
     ).squeeze() > 0, "dbnet_default"
 
 
@@ -982,26 +958,23 @@ def evaluate_fact_baseline(
     for video_spec in manifest["videos"]:
         video_name = video_spec["file"]
         video_path = _resolve_within(input_root, video_name, "Manifest video")
-        result, _default_selected, _static, execution_path = _detect_video(
+        draft, _default_selected, _static, execution_path = _detect_video(
             str(video_path), detect_mode, ocr_mode
         )
-        _record_detector_weight(detector_weights, result)
-        shape = tuple(result.frame_shape)
+        _record_detector_weight(detector_weights, draft)
+        shape = tuple(draft.frame_shape)
         # Build a WipePlan (default flow, no user direction) so the fact
         # baseline reflects the safety rule + temporal segments — the same
         # decision the engine makes on a default clean run. Per-frame metrics
         # use the plan's temporal prediction rather than one static mask.
-        plan = build_refined_wipe_plan(
-            str(video_path), result, compute_source(str(video_path)),
-            refine=detect_mode != "fast", explicit_remove_ids=set(),
-        )
-        selected = [c for c in result.candidates if c.id in {t.id for t in plan.remove_tracks}]
+        plan = finalize(draft, refine=detect_mode != "fast")
+        selected = [c for c in draft.candidates if c.id in {t.id for t in plan.remove_tracks}]
         generated = remove_union_mask(plan)
         if generated.shape != shape:
             raise ValueError(f"Generated mask shape mismatch for {video_path}: {generated.shape} vs {shape}")
         objects = {obj["id"]: obj for obj in video_spec["objects"]}
         fixed_frames = _read_fixed_frames(video_path, {entry["frame"] for entry in video_spec["frames"]})
-        candidate_masks = _candidate_masks(result.candidates, shape)
+        candidate_masks = _candidate_masks(draft.candidates, shape)
         selected_ids = {candidate.id for candidate in selected}
         frame_reports = []
         legacy = _legacy_calibration_metric(generated, str(video_path), mask_dir)
@@ -1075,9 +1048,9 @@ def evaluate_fact_baseline(
                 "detect_mode": detect_mode,
                 "ocr_mode": ocr_mode,
                 "detector_execution_path": execution_path,
-                "candidate_count": len(result.candidates),
+                "candidate_count": len(draft.candidates),
                 "selected_count": len(selected),
-                "candidates": _candidate_report(result, selected),
+                "candidates": _candidate_report(draft, selected),
                 "legacy_calibration_metric": legacy,
                 "frames": frame_reports,
             }
@@ -1173,7 +1146,6 @@ def evaluate_decision_baseline(
     detector_weights: dict[Path, dict[str, str]] = {}
 
     detections: dict[str, Any] = {}
-    sources: dict[str, Any] = {}
     indexed_frames: dict[str, list[tuple[int, np.ndarray]]] = {}
     candidate_masks_by_video: dict[str, list[tuple[Any, np.ndarray]]] = {}
     candidate_evidence_by_video: dict[str, list[dict[str, Any]]] = {}
@@ -1190,14 +1162,13 @@ def evaluate_decision_baseline(
         video_path = _resolve_within(input_root, video_name, "Manifest video")
         video_spec = video_specs[video_name]
         if video_name not in detections:
-            result, _selected, _static, execution_path = _detect_video(
+            draft, _selected, _static, execution_path = _detect_video(
                 str(video_path), detect_mode, ocr_mode
             )
-            _record_detector_weight(detector_weights, result)
-            detections[video_name] = (result, execution_path)
-            sources[video_name] = compute_source(str(video_path))
+            _record_detector_weight(detector_weights, draft)
+            detections[video_name] = (draft, execution_path)
             objects = {obj["id"]: obj for obj in video_spec["objects"]}
-            shape = tuple(result.frame_shape)
+            shape = tuple(draft.frame_shape)
             indexed_frames[video_name] = [
                 (
                     frame_spec["frame"],
@@ -1223,7 +1194,7 @@ def evaluate_decision_baseline(
                     f"Decision baseline video {video_name} has declared object(s) "
                     f"missing from every annotation frame: {missing_ids}"
                 )
-            candidate_masks = _candidate_masks(result.candidates, shape)
+            candidate_masks = _candidate_masks(draft.candidates, shape)
             candidate_masks_by_video[video_name] = candidate_masks
             evidence = []
             for candidate, mask in candidate_masks:
@@ -1259,25 +1230,14 @@ def evaluate_decision_baseline(
                     "mixed_semantic": len(matched_types) > 1,
                 })
             candidate_evidence_by_video[video_name] = evidence
-        result, execution_path = detections[video_name]
+        draft, execution_path = detections[video_name]
         request = case["request"]
-        selected = select_clean_candidates(
-            result.candidates,
-            targets=request["targets"],
-            intent=request["intent"],
+        case_draft = draft.for_request(
+            targets=request["targets"], intent=request["intent"], request=request,
         )
-        selected_ids = {candidate.id for candidate in selected}
-        user_directed = bool(request["targets"] or request["intent"])
-        selection = WipeEngine._explicit_selection_kwargs(
-            result.candidates, selected_ids, user_directed
-        )
-        plan = build_refined_wipe_plan(
-            str(video_path),
-            result,
-            sources[video_name],
+        plan = finalize(
+            case_draft,
             refine=False,
-            request=request,
-            **selection,
         )
         final_remove_ids = {track.id for track in plan.remove_tracks}
         candidate_masks = candidate_masks_by_video[video_name]
@@ -1366,7 +1326,7 @@ def evaluate_decision_baseline(
                 "video": video_name,
                 "request": request,
                 "detector_execution_path": execution_path,
-                "candidate_count": len(result.candidates),
+                "candidate_count": len(draft.candidates),
                 "selected_candidate_ids": sorted(final_remove_ids),
                 "case_exact_action_match": exact,
                 "frames": frame_reports,

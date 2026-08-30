@@ -529,7 +529,10 @@ def test_pre_cancelled_plan_never_enters_detection(monkeypatch):
     token = CancellationToken()
     token.cancel()
     entered = []
-    monkeypatch.setattr(engine, "_detect_clean", lambda *args: entered.append(True))
+    monkeypatch.setattr(
+        "videowipe.engine.prepare_clean_plan",
+        lambda *args, **kwargs: entered.append(True),
+    )
 
     with pytest.raises(ProcessingCancelledError):
         engine.plan(WipeRequest(video="input.mp4"), cancellation=token)
