@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -345,14 +346,12 @@ class _BaselineCustody:
     def record_detector_weight(self, draft: Any) -> None:
         _record_detector_weight(self._detector_weights, draft)
 
-    def publish(self, output_path: str, report: dict[str, Any]) -> None:
-        if self._formal:
-            _assert_formal_state_unchanged(
-                self._initial_provenance,
-                self._capture,
-                self._protected_paths,
-            )
-            _assert_detector_weights_unchanged(self._detector_weights)
+    def publish(
+        self,
+        output_path: str,
+        report: dict[str, Any],
+        previews: _PreviewCustody | None = None,
+    ) -> None:
         report["provenance"] = {
             **self._initial_provenance,
             "detector_weights": sorted(
@@ -360,10 +359,29 @@ class _BaselineCustody:
                 key=lambda item: (item["filename"], item["sha256"]),
             ),
         }
+        preview_paths: list[Path] = []
+        if previews is not None:
+            previews.validate_report_destination(Path(output_path))
+            preview_paths = previews.protected_paths
+            previews.publish()
+
+        def final_check() -> None:
+            _assert_formal_state_unchanged(
+                self._initial_provenance,
+                self._capture,
+                self._protected_paths,
+            )
+            _assert_detector_weights_unchanged(self._detector_weights)
+
         _write_json_report(
             Path(output_path),
             report,
-            [*self._protected_paths, *self._detector_weights],
+            [
+                *self._protected_paths,
+                *self._detector_weights,
+                *preview_paths,
+            ],
+            before_replace=final_check if self._formal else None,
         )
 
 
@@ -752,31 +770,12 @@ def _annotation_overlay(frame: np.ndarray, indexed: np.ndarray, objects: dict[in
     return overlay
 
 
-def _write_previews(
-    artifact_dir: Path,
-    artifact_id: str,
-    frame_index: int,
+def _preview_images(
     frame: np.ndarray,
     indexed: np.ndarray,
     predicted: np.ndarray,
     objects: dict[int, dict[str, Any]],
-) -> dict[str, str]:
-    root = artifact_dir.resolve()
-    target = root / artifact_id
-    if target.is_symlink():
-        raise ValueError(f"Preview target must not be a symlink: {target}")
-    resolved_target = target.resolve()
-    try:
-        resolved_target.relative_to(root)
-    except ValueError:
-        raise ValueError(f"Preview target escapes artifact directory: {artifact_id}") from None
-    target.mkdir(parents=True, exist_ok=True)
-    target = target.resolve()
-    try:
-        target.relative_to(root)
-    except ValueError:
-        raise ValueError(f"Preview target escapes artifact directory: {artifact_id}") from None
-    prefix = target / f"frame-{frame_index:06d}"
+) -> dict[str, np.ndarray]:
     annotated = _annotation_overlay(frame, indexed, objects)
     prediction = frame.copy()
     prediction[predicted] = (
@@ -786,36 +785,103 @@ def _write_previews(
     remove = np.isin(indexed, [key for key, value in objects.items() if value["action"] == "remove"])
     keep = np.isin(indexed, [key for key, value in objects.items() if value["action"] == "keep"])
     errors = frame.copy()
-    errors[predicted & remove] = (0, 220, 0)  # true positive
-    errors[remove & ~predicted] = (0, 220, 255)  # missed remove target
-    errors[predicted & ~remove & ~keep] = (0, 0, 255)  # false removal
-    errors[predicted & keep] = (255, 0, 0)  # keep-region injury
-    paths = {
-        "annotations": f"{prefix.name}-annotations.png",
-        "prediction": f"{prefix.name}-prediction.png",
-        "errors": f"{prefix.name}-errors.png",
-    }
-    for key, image in (("annotations", annotated), ("prediction", prediction), ("errors", errors)):
-        supplied_output = target / paths[key]
-        if supplied_output.is_symlink():
-            raise ValueError(f"Preview output must not be a symlink: {supplied_output}")
-        output = supplied_output.resolve()
-        try:
-            output.relative_to(root)
-        except ValueError:
-            raise ValueError(f"Preview output escapes artifact directory: {output}") from None
-        if output.exists() and not output.is_file():
-            raise ValueError(f"Preview output must be a regular file: {output}")
-        if not cv2.imwrite(str(output), image):
-            raise RuntimeError(f"Cannot write preview: {output}")
-        paths[key] = str(output.relative_to(root))
-    return paths
+    errors[predicted & remove] = (0, 220, 0)
+    errors[remove & ~predicted] = (0, 220, 255)
+    errors[predicted & ~remove & ~keep] = (0, 0, 255)
+    errors[predicted & keep] = (255, 0, 0)
+    return {"annotations": annotated, "prediction": prediction, "errors": errors}
+
+
+def _new_preview_run_id() -> str:
+    return f"run-{secrets.token_hex(16)}"
+
+
+class _PreviewCustody:
+    """Keep encoded previews off stable paths until final custody succeeds."""
+
+    # ponytail: immutable run directories can leave unreachable orphans if the
+    # final report write fails; add pruning only if artifact growth matters.
+
+    def __init__(self, artifact_dir: Path) -> None:
+        supplied_root = artifact_dir.absolute()
+        if supplied_root.is_symlink():
+            raise ValueError(f"Preview artifact directory must not be a symlink: {supplied_root}")
+        self._root = supplied_root.resolve()
+        self._run_id = _new_preview_run_id()
+        self._files: dict[str, bytes] = {}
+
+    @property
+    def protected_paths(self) -> list[Path]:
+        run = self._root / self._run_id
+        return [self._root, run, *(run / name for name in self._files)]
+
+    def validate_report_destination(self, output_path: Path) -> None:
+        supplied = output_path.absolute()
+        if supplied.is_symlink():
+            raise ValueError(f"Baseline report must not be a symlink: {supplied}")
+        destination = supplied.resolve()
+        run = (self._root / self._run_id).resolve()
+        if (
+            destination == self._root
+            or destination == run
+            or run in destination.parents
+        ):
+            raise ValueError(
+                f"Baseline report must not overwrite preview evidence: {destination}"
+            )
+
+    def stage(
+        self,
+        artifact_id: str,
+        frame_index: int,
+        frame: np.ndarray,
+        indexed: np.ndarray,
+        predicted: np.ndarray,
+        objects: dict[int, dict[str, Any]],
+    ) -> dict[str, str]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", artifact_id):
+            raise ValueError(f"Unsafe preview artifact id: {artifact_id!r}")
+        if frame_index < 0:
+            raise ValueError(f"Preview frame index must be non-negative: {frame_index}")
+        paths: dict[str, str] = {}
+        for key, image in _preview_images(frame, indexed, predicted, objects).items():
+            ok, encoded = cv2.imencode(".png", image)
+            if not ok:
+                raise RuntimeError(f"Cannot encode preview: {artifact_id}/{key}")
+            content = encoded.tobytes()
+            digest = hashlib.sha256(content).hexdigest()
+            filename = f"{artifact_id}-frame-{frame_index:06d}-{key}-{digest}.png"
+            previous = self._files.setdefault(filename, content)
+            if previous != content:
+                raise RuntimeError(f"Preview digest collision: {filename}")
+            paths[key] = f"{self._run_id}/{filename}"
+        return paths
+
+    def publish(self) -> None:
+        self._root.mkdir(parents=True, exist_ok=True)
+        if self._root.is_symlink():
+            raise ValueError(f"Preview artifact directory must not be a symlink: {self._root}")
+        destination = self._root / self._run_id
+        if destination.is_symlink() or destination.exists():
+            raise ValueError(f"Preview run destination already exists: {self._run_id}")
+        with tempfile.TemporaryDirectory(
+            dir=self._root,
+            prefix=f".{self._run_id}-",
+        ) as stage:
+            stage_path = Path(stage)
+            for filename, content in sorted(self._files.items()):
+                with (stage_path / filename).open("xb") as output:
+                    output.write(content)
+            if destination.is_symlink() or destination.exists():
+                raise ValueError(f"Preview run destination already exists: {self._run_id}")
+            os.rename(stage_path, destination)
 
 
 def _write_json_report(
     destination: Path,
     report: dict[str, Any],
     protected_paths: list[Path],
+    before_replace: Any = None,
 ) -> None:
     """Write a report atomically without following an existing symlink."""
     destination = destination.absolute()
@@ -843,6 +909,8 @@ def _write_json_report(
         ) as temporary:
             temporary.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
             temporary_path = Path(temporary.name)
+        if before_replace is not None:
+            before_replace()
         os.replace(temporary_path, resolved_destination)
     finally:
         if temporary_path is not None and temporary_path.exists():
@@ -963,6 +1031,7 @@ def evaluate_fact_baseline(
     manifest_root = manifest_path_obj.parent
     input_root = Path(input_dir).resolve()
     artifacts = Path(artifact_dir).resolve()
+    preview_custody = _PreviewCustody(artifacts)
     video_reports: list[dict[str, Any]] = []
     frame_union_jaccards: list[float] = []
     frame_union_boundary_f: list[float] = []
@@ -1069,8 +1138,7 @@ def evaluate_fact_baseline(
             all_selection_matches.extend(
                 match["selection_intent_match"] for match in matches
             )
-            previews = _write_previews(
-                artifacts,
+            previews = preview_custody.stage(
                 _artifact_id(video_name),
                 frame_index,
                 fixed_frames[frame_index],
@@ -1133,7 +1201,7 @@ def evaluate_fact_baseline(
         },
         "videos": video_reports,
     }
-    custody.publish(output_path, report)
+    custody.publish(output_path, report, preview_custody)
     return report
 
 

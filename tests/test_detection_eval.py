@@ -187,6 +187,12 @@ def test_fact_baseline_separates_remove_keep_and_writes_schema(tmp_path):
     assert frame["keep_prediction_coverage"] == pytest.approx(0.0)
     assert frame["visible_annotation_matches"][0]["classifier_semantic_match"] is True
     saved = json.loads((tmp_path / "report.json").read_text())
+    for relative in frame["previews"].values():
+        preview = tmp_path / "previews" / relative
+        assert preview.is_file()
+        assert preview.stem.rsplit("-", 1)[-1] == module.hashlib.sha256(
+            preview.read_bytes()
+        ).hexdigest()
     # schema v2: predictions are per-frame (built from a WipePlan), not a
     # replayed static mask.
     assert saved["schema_version"] == 2
@@ -697,37 +703,88 @@ def test_manifest_rejects_escape_paths_and_symlinks(tmp_path):
         module._load_fact_manifest(str(manifest), str(tmp_path))
 
 
-def test_preview_output_rejects_escaping_symlink(tmp_path):
+def test_preview_custody_rejects_unsafe_artifact_id_without_writing(tmp_path):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    custody = module._PreviewCustody(root)
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match="Unsafe preview artifact id"):
+        custody.stage(
+            "../escape", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+            np.zeros((8, 12), dtype=bool), {},
+        )
+    assert not root.exists()
+
+
+def test_preview_custody_rejects_artifact_root_symlink(tmp_path):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="artifact directory must not be a symlink"):
+        module._PreviewCustody(root)
+    assert list(outside.iterdir()) == []
+
+
+def test_preview_custody_rejects_run_destination_symlink(tmp_path, monkeypatch):
     module = _load_eval_module()
     root = tmp_path / "previews"
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    artifact_id = "sample-deadbeef"
-    (root / artifact_id).symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(module, "_new_preview_run_id", lambda: "run-fixed")
+    custody = module._PreviewCustody(root)
+    (root / "run-fixed").symlink_to(outside, target_is_directory=True)
     frame = np.zeros((8, 12, 3), dtype=np.uint8)
-    with pytest.raises(ValueError, match="symlink"):
-        module._write_previews(
-            root, artifact_id, 1, frame, np.zeros((8, 12), dtype=np.uint8),
-            np.zeros((8, 12), dtype=bool), {},
-        )
+    custody.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+
+    with pytest.raises(ValueError, match="run destination already exists"):
+        custody.publish()
+    assert list(outside.iterdir()) == []
+    assert [path.name for path in root.iterdir()] == ["run-fixed"]
 
 
-def test_preview_output_rejects_inside_root_symlink(tmp_path):
+def test_preview_custody_cleans_private_stage_when_publish_fails(tmp_path, monkeypatch):
     module = _load_eval_module()
     root = tmp_path / "previews"
-    root.mkdir()
-    other = root / "other-video"
-    other.mkdir()
-    artifact_id = "sample-deadbeef"
-    (root / artifact_id).symlink_to(other, target_is_directory=True)
+    custody = module._PreviewCustody(root)
     frame = np.zeros((8, 12, 3), dtype=np.uint8)
-    with pytest.raises(ValueError, match="symlink"):
-        module._write_previews(
-            root, artifact_id, 1, frame, np.zeros((8, 12), dtype=np.uint8),
-            np.zeros((8, 12), dtype=bool), {},
-        )
-    assert list(other.iterdir()) == []
+    custody.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+    def fail_rename(*_args, **_kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(module.os, "rename", fail_rename)
+
+    with pytest.raises(OSError, match="boom"):
+        custody.publish()
+
+    assert list(root.iterdir()) == []
+
+
+def test_preview_custody_publishes_without_dir_fd_support(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    monkeypatch.setattr(module.os, "supports_dir_fd", set())
+    monkeypatch.setattr(module, "_new_preview_run_id", lambda: "run-fixed")
+    custody = module._PreviewCustody(root)
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    paths = custody.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+
+    custody.publish()
+
+    assert (root / paths["annotations"]).is_file()
+    assert not list(root.glob(".*"))
 
 
 def test_report_output_rejects_symlink_and_input_alias(tmp_path):
@@ -742,6 +799,61 @@ def test_report_output_rejects_symlink_and_input_alias(tmp_path):
     with pytest.raises(ValueError, match="overwrite an input"):
         module._write_json_report(protected, {}, [protected])
     assert protected.read_text() == "{}"
+
+
+def test_report_final_check_runs_after_temp_write_before_replace(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    destination = tmp_path / "report.json"
+    events = []
+    real_replace = module.os.replace
+
+    def before_replace():
+        temporary = list(tmp_path.glob(".report.json.*.tmp"))
+        assert len(temporary) == 1
+        assert json.loads(temporary[0].read_text()) == {"ready": True}
+        assert not destination.exists()
+        events.append("check")
+
+    def replace(source, target):
+        events.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr(module.os, "replace", replace)
+    module._write_json_report(
+        destination, {"ready": True}, [], before_replace=before_replace,
+    )
+
+    assert events == ["check", "replace"]
+    assert json.loads(destination.read_text()) == {"ready": True}
+
+
+def test_formal_final_check_runs_after_preview_publish(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    previews = module._PreviewCustody(root)
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    paths = previews.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+    events = []
+    monkeypatch.setattr(module, "_require_clean_git_worktree", lambda _paths: None)
+    monkeypatch.setattr(module, "_baseline_provenance", lambda *_args: {})
+
+    def check_state(*_args):
+        assert (root / paths["annotations"]).is_file()
+        events.append("state")
+
+    def check_weights(*_args):
+        events.append("weights")
+
+    monkeypatch.setattr(module, "_assert_formal_state_unchanged", check_state)
+    monkeypatch.setattr(module, "_assert_detector_weights_unchanged", check_weights)
+    custody = module._BaselineCustody([], [], [], "balanced", "off", True)
+
+    custody.publish(str(tmp_path / "report.json"), {}, previews)
+
+    assert events == ["state", "weights"]
 
 
 def test_hash_uses_logical_name_not_invocation_path(tmp_path):
@@ -900,6 +1012,102 @@ def test_formal_baseline_state_change_prevents_report_publish(
     with pytest.raises(RuntimeError, match="changed during evaluation"):
         evaluate()
     assert not output.exists()
+
+
+def test_formal_fact_custody_failure_preserves_existing_report_and_previews(
+    tmp_path, monkeypatch
+):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[3:6, 3:7] = 1
+    manifest = _write_manifest(tmp_path, indexed)
+    _fake_detector(module, indexed == 1)
+    monkeypatch.setattr(module, "_require_clean_git_worktree", lambda _paths: None)
+    states = iter([{"state": "before"}, {"state": "after"}])
+    monkeypatch.setattr(module, "_baseline_provenance", lambda *_args: next(states))
+
+    output = tmp_path / "report.json"
+    output.write_bytes(b'{"previews":["sample-old/frame-old.png"]}\n')
+    old_preview = tmp_path / "previews" / "sample-old" / "frame-old.png"
+    old_preview.parent.mkdir(parents=True)
+    old_preview.write_bytes(b"old preview")
+    with pytest.raises(RuntimeError, match="changed during evaluation"):
+        module.evaluate_fact_baseline(
+            str(tmp_path),
+            str(manifest),
+            str(output),
+            str(tmp_path / "previews"),
+            require_clean_git=True,
+        )
+
+    report_bytes = output.read_bytes()
+    assert report_bytes == b'{"previews":["sample-old/frame-old.png"]}\n'
+    assert old_preview.read_bytes() == b"old preview"
+    orphan_runs = [
+        path for path in (tmp_path / "previews").iterdir()
+        if path.is_dir() and path.name.startswith("run-")
+    ]
+    assert len(orphan_runs) == 1
+    assert orphan_runs[0].name.encode() not in report_bytes
+    orphan_files = list(orphan_runs[0].iterdir())
+    assert orphan_files
+    for preview in orphan_files:
+        assert preview.stem.rsplit("-", 1)[-1] == module.hashlib.sha256(
+            preview.read_bytes()
+        ).hexdigest()
+
+
+def test_preview_report_alias_is_rejected_before_publish(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    monkeypatch.setattr(module, "_new_preview_run_id", lambda: "run-fixed")
+    previews = module._PreviewCustody(root)
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    paths = previews.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+    custody = module._BaselineCustody([], [], [], "balanced", "off", False)
+    output = root / paths["annotations"]
+
+    with pytest.raises(ValueError, match="must not overwrite preview evidence"):
+        custody.publish(str(output), {}, previews)
+
+    assert not root.exists()
+
+
+def test_report_write_failure_keeps_existing_evidence_and_orphan_run(
+    tmp_path, monkeypatch
+):
+    module = _load_eval_module()
+    root = tmp_path / "previews"
+    old_preview = root / "run-old" / "old.png"
+    old_preview.parent.mkdir(parents=True)
+    old_preview.write_bytes(b"old preview")
+    output = tmp_path / "report.json"
+    output.write_bytes(b"old report")
+    monkeypatch.setattr(module, "_new_preview_run_id", lambda: "run-new")
+    previews = module._PreviewCustody(root)
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    paths = previews.stage(
+        "sample-deadbeef", 1, frame, np.zeros((8, 12), dtype=np.uint8),
+        np.zeros((8, 12), dtype=bool), {},
+    )
+    custody = module._BaselineCustody([], [], [], "balanced", "off", False)
+
+    def fail_report(*_args, **_kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(module, "_write_json_report", fail_report)
+
+    with pytest.raises(OSError, match="boom"):
+        custody.publish(str(output), {}, previews)
+
+    assert output.read_bytes() == b"old report"
+    assert old_preview.read_bytes() == b"old preview"
+    assert (root / paths["annotations"]).is_file()
+    assert not list(root.glob(".*.tmp"))
 
 
 def test_detector_weight_provenance_detects_replacement(tmp_path):

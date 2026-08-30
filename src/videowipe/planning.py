@@ -296,32 +296,59 @@ def finalize(
     else:
         explicit_remove_ids = set()
         explicit_keep_ids = set()
-    kwargs = {
-        "request": draft._resolved_request,
-        "explicit_remove_ids": explicit_remove_ids,
-        "explicit_keep_ids": explicit_keep_ids,
-    }
-    result = draft._result
-    provisional = build_wipe_plan(
-        result.candidates,
-        result.sample_indices,
-        len(result.sample_indices),
-        draft._source,
-        result.frame_shape,
-        **kwargs,
-    )
     should_refine = (
         draft._resolved_request.get("detect_mode") != "fast"
         if refine is None else refine
     )
-    if not should_refine:
+    return _finalize_result(
+        draft._video_path,
+        draft._result,
+        draft._source,
+        refine=should_refine,
+        request=draft._resolved_request,
+        explicit_remove_ids=explicit_remove_ids,
+        explicit_keep_ids=explicit_keep_ids,
+        progress=progress,
+        check_cancelled=check_cancelled,
+    )
+
+
+def _finalize_result(
+    video_path: str,
+    result: CleanDetectionResult,
+    source: Source,
+    *,
+    refine: bool,
+    request: Mapping[str, Any] | None = None,
+    explicit_remove_ids: set[str] | None = None,
+    explicit_keep_ids: set[str] | None = None,
+    loaded_actions: Mapping[str, str] | None = None,
+    progress: Any = None,
+    check_cancelled: Any = None,
+) -> WipePlan:
+    """Build the provisional -> refine -> final plan for prepared evidence."""
+    kwargs = {
+        "request": request,
+        "explicit_remove_ids": explicit_remove_ids,
+        "explicit_keep_ids": explicit_keep_ids,
+        "loaded_actions": loaded_actions,
+    }
+    provisional = build_wipe_plan(
+        result.candidates,
+        result.sample_indices,
+        len(result.sample_indices),
+        source,
+        result.frame_shape,
+        **kwargs,
+    )
+    if not refine:
         return provisional
 
     warnings = refine_temporal_presence(
-        draft._video_path,
+        video_path,
         result,
         {track.id: track.segments for track in provisional.remove_tracks},
-        draft._source.frame_count,
+        source.frame_count,
         progress=progress,
         check_cancelled=check_cancelled,
     )
@@ -329,7 +356,7 @@ def finalize(
         result.candidates,
         result.sample_indices,
         len(result.sample_indices),
-        draft._source,
+        source,
         result.frame_shape,
         **kwargs,
     )

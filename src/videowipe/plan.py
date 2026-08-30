@@ -519,6 +519,36 @@ def build_wipe_plan(
     return plan
 
 
+def build_refined_wipe_plan(
+    video_path: str,
+    result: Any,
+    source: Source,
+    *,
+    refine: bool,
+    request: Mapping[str, Any] | None = None,
+    explicit_remove_ids: set[str] | None = None,
+    explicit_keep_ids: set[str] | None = None,
+    loaded_actions: Mapping[str, str] | None = None,
+    progress: Any = None,
+    check_cancelled: Any = None,
+) -> WipePlan:
+    """Compatibility wrapper for the planning-owned refinement flow."""
+    from videowipe.planning import _finalize_result
+
+    return _finalize_result(
+        video_path,
+        result,
+        source,
+        refine=refine,
+        request=request,
+        explicit_remove_ids=explicit_remove_ids,
+        explicit_keep_ids=explicit_keep_ids,
+        loaded_actions=loaded_actions,
+        progress=progress,
+        check_cancelled=check_cancelled,
+    )
+
+
 # ── validation ───────────────────────────────────────────────────────────────
 
 def validate_plan(
@@ -646,7 +676,7 @@ def save_wipe_plan(plan: WipePlan, output_dir: str) -> tuple[str, str]:
         arr = np.asarray(t.mask)
         if arr.ndim == 3:
             arr = arr[:, :, 0]
-        masks[t.mask_key] = arr.astype(np.uint8)
+        masks[t.mask_key] = (arr > 0).astype(np.uint8)
     np.savez_compressed(npz_path, **masks)
 
     plan.mask_asset = MaskAsset(

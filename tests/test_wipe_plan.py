@@ -24,6 +24,7 @@ from videowipe.plan import (
     Source,
     Track,
     WipePlan,
+    build_refined_wipe_plan,
     build_wipe_plan,
     compute_source,
     execution_masks,
@@ -439,6 +440,51 @@ def test_save_load_roundtrip_preserves_plan_and_masks(tmp_path):
     # masks pixel-identical after round-trip
     for orig, got in zip(plan.tracks, loaded.tracks):
         assert np.array_equal(np.asarray(orig.mask).squeeze(), np.asarray(got.mask).squeeze())
+
+
+def test_signed_mask_roundtrip_preserves_execution_projection(tmp_path):
+    plan = _plan_with_two_tracks()
+    plan.tracks[0].mask = np.array(
+        [[-1 if (row + column) % 2 else 2 for column in range(100)] for row in range(100)],
+        dtype=np.int16,
+    )
+    before = execution_masks(plan)
+
+    json_path, _ = save_wipe_plan(plan, str(tmp_path))
+    loaded = load_wipe_plan(json_path)
+
+    assert all(np.array_equal(a, b) for a, b in zip(before, execution_masks(loaded)))
+
+
+def test_legacy_refined_plan_entrypoint_delegates_with_loaded_actions(monkeypatch):
+    import videowipe.planning as planning
+
+    result = SimpleNamespace(
+        candidates=[_candidate(cid="c1", presence_frames=[0, 20, 40, 59])],
+        sample_indices=[0, 20, 40, 59],
+        frame_shape=(100, 100),
+    )
+    calls = []
+    monkeypatch.setattr(
+        planning,
+        "refine_temporal_presence",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or ["refined"],
+    )
+
+    plan = build_refined_wipe_plan(
+        "x.mp4",
+        result,
+        _source(),
+        refine=True,
+        loaded_actions={"c1": "keep"},
+        progress="progress",
+        check_cancelled="cancel",
+    )
+
+    assert plan.tracks[0].action == "keep"
+    assert plan.tracks[0].decision_reason.startswith("loaded-plan:keep")
+    assert plan.warnings[-1] == "refined"
+    assert calls[0][1] == {"progress": "progress", "check_cancelled": "cancel"}
 
 
 def test_save_rejects_duplicate_mask_keys(tmp_path):
