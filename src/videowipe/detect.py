@@ -43,6 +43,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 _PERSISTENT_OVERLAY_FRACTION = 0.80
+_STABLE_APPEARANCE_CORRELATION = 0.80
 
 
 # ── Data types ───────────────────────────────────────────────────────────────
@@ -674,6 +675,63 @@ def _zone(bbox: tuple[int, int, int, int], w: int, h: int) -> str:
     return f"{vertical}-{horizontal}"
 
 
+def _appearance_thumbnail(frame: np.ndarray, max_width: int = 320) -> np.ndarray:
+    """Keep a small grayscale sample for later candidate-identity checks."""
+    h, w = frame.shape[:2]
+    width = min(w, max_width)
+    height = max(1, round(h * width / w))
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.resize(gray, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def _appearance_signature(
+    thumbnail: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> np.ndarray | None:
+    h, w = frame_shape
+    th, tw = thumbnail.shape
+    x1, y1, x2, y2 = bbox
+    tx1 = max(0, min(tw - 1, int(x1 * tw / w)))
+    ty1 = max(0, min(th - 1, int(y1 * th / h)))
+    tx2 = max(tx1 + 1, min(tw, int(np.ceil((x2 + 1) * tw / w))))
+    ty2 = max(ty1 + 1, min(th, int(np.ceil((y2 + 1) * th / h))))
+    crop = thumbnail[ty1:ty2, tx1:tx2]
+    if crop.size == 0:
+        return None
+    resized = cv2.resize(crop, (64, 16), interpolation=cv2.INTER_AREA)
+    edges = cv2.Laplacian(resized, cv2.CV_32F)
+    deviation = float(edges.std())
+    if deviation < 1e-6:
+        return None
+    return ((edges - edges.mean()) / deviation).reshape(-1)
+
+
+def _appearance_stability(
+    thumbnails: dict[int, np.ndarray],
+    presence_frames: list[int],
+    bbox: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> float | None:
+    signatures = [
+        signature
+        for frame_index in presence_frames
+        if frame_index in thumbnails
+        for signature in [
+            _appearance_signature(thumbnails[frame_index], bbox, frame_shape)
+        ]
+        if signature is not None
+    ]
+    if len(signatures) < 3:
+        return None
+    reference = signatures[0]
+    correlations = [
+        float(np.dot(reference, signature) / reference.size)
+        for signature in signatures[1:]
+    ]
+    return float(np.median(correlations))
+
+
 
 def _candidate_label(target_type: str, zone: str) -> str:
     labels = {
@@ -1033,6 +1091,7 @@ def _classify_region(
     w: int,
     h: int,
     presence_fraction: float | None = None,
+    appearance_stability: float | None = None,
 ) -> tuple[str, str, bool]:
     """Classify a detected region by position and content patterns."""
     x1, y1, x2, y2 = bbox
@@ -1053,10 +1112,15 @@ def _classify_region(
     if cy > h * 0.50 and width_ratio > 0.15:
         return "subtitle", f"wide bottom text in {zone}", True
     if cy < h * 0.30 and width_ratio > 0.15:
-        if (
+        persistent = (
             presence_fraction is not None
             and presence_fraction >= _PERSISTENT_OVERLAY_FRACTION
-        ):
+        )
+        appearance_changed = (
+            appearance_stability is not None
+            and appearance_stability < _STABLE_APPEARANCE_CORRELATION
+        )
+        if persistent and not appearance_changed:
             if zone.startswith("top-right"):
                 return "logo", f"persistent top-right overlay in {zone}", False
             return "watermark", f"persistent top text overlay in {zone}", False
@@ -1146,6 +1210,7 @@ def detect_clean_candidates(
     valid_sample_indices: list[int] = []
     sampled_frame_boxes: dict[int, list[TextBox]] = {}
     all_frame_boxes: list[tuple[int, list[TextBox]]] = []
+    appearance_thumbnails: dict[int, np.ndarray] = {}
     first_frame = None
     best_preview = None
     best_preview_score = -1
@@ -1174,6 +1239,7 @@ def detect_clean_candidates(
         valid_sample_indices.append(sample_index)
         sampled_frame_boxes[sample_index] = boxes
         all_frame_boxes.append((sample_index, boxes))
+        appearance_thumbnails[sample_index] = _appearance_thumbnail(frame)
         frame_mask = np.zeros((h, w), dtype=np.uint8)
         for box in boxes:
             cv2.fillPoly(frame_mask, [box.points.astype(np.int32)], 1)
@@ -1242,9 +1308,16 @@ def detect_clean_candidates(
                         text_samples.append(text)
 
             zone = _zone((x1, y1, x2, y2), w, h)
+            appearance_stability = _appearance_stability(
+                appearance_thumbnails,
+                presence_frames,
+                (x1, y1, x2, y2),
+                (h, w),
+            )
             target_type, reason, default_remove = _classify_region(
                 (x1, y1, x2, y2), zone, text_samples, w, h,
                 presence_fraction=len(presence_frames) / n_valid,
+                appearance_stability=appearance_stability,
             )
 
             region_freq = freq[y1:y2 + 1, x1:x2 + 1]

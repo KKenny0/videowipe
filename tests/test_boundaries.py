@@ -601,21 +601,59 @@ def test_clean_timestamp_requires_recognized_text_content(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("bbox", "zone", "presence", "expected"),
+    ("bbox", "zone", "presence", "appearance", "expected"),
     [
-        ((5, 5, 150, 20), "top-left", 1.0, ("watermark", False)),
-        ((170, 5, 315, 20), "top-right", 1.0, ("logo", False)),
-        ((5, 5, 150, 20), "top-left", 0.5, ("subtitle", True)),
+        ((5, 5, 150, 20), "top-left", 1.0, 1.0, ("watermark", False)),
+        ((170, 5, 315, 20), "top-right", 1.0, 1.0, ("logo", False)),
+        ((5, 5, 150, 20), "top-left", 1.0, None, ("watermark", False)),
+        ((5, 5, 150, 20), "top-left", 0.5, 1.0, ("subtitle", True)),
     ],
 )
 def test_top_text_semantics_use_persistence_and_side(
-    bbox, zone, presence, expected
+    bbox, zone, presence, appearance, expected
 ):
     target_type, _reason, default_remove = _classify_region(
-        bbox, zone, [], 320, 180, presence_fraction=presence
+        bbox, zone, [], 320, 180, presence_fraction=presence,
+        appearance_stability=appearance,
     )
 
     assert (target_type, default_remove) == expected
+
+
+@pytest.mark.parametrize(
+    ("text_template", "expected"),
+    [
+        ("brand", ("watermark", False)),
+        ("headline {index}", ("subtitle", True)),
+    ],
+)
+def test_top_overlay_requires_stable_appearance(
+    tmp_path, text_template, expected
+):
+    video = tmp_path / "input.mp4"
+
+    def draw(frame, index):
+        cv2.putText(
+            frame, text_template.format(index=index),
+            (20, 25), cv2.FONT_HERSHEY_SIMPLEX,
+            0.6, (255, 255, 255), 2,
+        )
+
+    _write_test_video(video, width=320, height=180, frames=5, draw=draw)
+
+    class TopSubtitleDetector:
+        def detect(self, frame):
+            return [TextBox(
+                points=np.array([[15, 5], [260, 5], [260, 35], [15, 35]]),
+                confidence=0.9,
+            )]
+
+    result = detect_clean_candidates(
+        str(video), detector=TopSubtitleDetector(), sample_count=5,
+    )
+
+    candidate = result.candidates[0]
+    assert (candidate.type, candidate.default_remove) == expected
 
 
 def test_dbnet_rejects_weight_replaced_during_load(tmp_path, monkeypatch):
