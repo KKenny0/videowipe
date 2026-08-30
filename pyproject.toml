@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "videowipe"
-version = "0.8.1"
+version = "0.8.2"
 description = "Local hardcoded-subtitle and watermark remover: preview first, then wipe. CLI, Docker, web UI."
 license = { file = "LICENSE" }
 requires-python = ">=3.10"

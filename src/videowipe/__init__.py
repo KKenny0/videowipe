@@ -1,6 +1,6 @@
 """VideoWipe - an embeddable video-cleanup engine."""
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 from videowipe.api import CancellationToken, ProgressEvent, WipeRequest, WipeResult
 from videowipe.detect import (
