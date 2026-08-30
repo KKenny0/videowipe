@@ -26,7 +26,7 @@ class InpaintJob:
 
     Attributes:
         video_path: input video file path.
-        mask: binary mask, shape ``(H, W, 1)``, values in ``{0, 1}``.
+        mask: static mask, shape ``(H, W, 1)``, values in ``[0, 1]``.
         output_dir: directory for the output video and artifacts.
         fps, frame_count, width, height: video metadata.
         device: ``"auto"`` | ``"cpu"`` | ``"cuda"``.
@@ -41,9 +41,8 @@ class InpaintJob:
             inpainter writes phase timings into.
         mask_path: mask file path for file-based inpainters (e.g. the external
             subprocess); the ``mask`` ndarray is ignored by those inpainters.
-        feather_radius: Gaussian alpha radius applied to bbox-only mask
-            candidates so the inpainting blend produces a soft seam. ``0``
-            keeps the legacy hard binary mask (used by the eval IoU path).
+        feather_radius: Compatibility hint for custom inpainters. WipePlan
+            execution masks are already feathered before the job is created.
         frame_mask: optional ``callable(global_frame_index) -> (H, W) mask``.
             When set, the frame-based inpainter blends each frame with this
             per-frame mask instead of the static ``mask`` ndarray, so a

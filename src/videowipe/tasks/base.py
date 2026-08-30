@@ -58,9 +58,8 @@ class BaseTask:
         self.backend = None
         self.inpainter = None
         self._bm = None
-        # Gaussian alpha radius applied to bbox-only mask candidates so the
-        # STTN blend produces a soft seam instead of a hard rectangle. Set by
-        # WipeEngine; 0 keeps the legacy hard binary mask (eval path).
+        # Gaussian alpha radius used when WipePlan projects execution masks.
+        # Set by WipeEngine; 0 keeps the hard binary mask used by evaluation.
         self.feather_radius = 0
 
     def load_model(self, weight_path: str, device: str = "auto"):
@@ -69,7 +68,8 @@ class BaseTask:
         print(f"Loaded weight: {weight_path} (backend: {type(self.backend).__name__})")
 
     def process_video(self, reader, frame_info, mask, output_dir: str,
-                      video_path: str = "", progress=None) -> str:
+                      video_path: str = "", progress=None,
+                      frame_mask=None) -> str:
         """Process video. Subclasses must implement this.
 
         Returns the output file path.

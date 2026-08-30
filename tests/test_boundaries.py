@@ -1796,8 +1796,7 @@ def test_mask_from_candidates_feathers_candidate_with_premask():
     assert not np.array_equal(soft, hard.astype(np.float32))
 
 
-def test_inpaint_job_has_feather_radius_field_default_zero():
-    """InpaintJob exposes feather_radius with default 0 (legacy binary)."""
+def test_inpaint_job_defaults_to_static_mask():
     job = InpaintJob(
         video_path="v.mp4",
         mask=np.zeros((4, 4, 1), dtype=np.uint8),
@@ -1808,6 +1807,7 @@ def test_inpaint_job_has_feather_radius_field_default_zero():
         height=0,
     )
     assert job.feather_radius == 0
+    assert job.frame_mask is None
     assert job.progress is None
 
 
@@ -1919,7 +1919,6 @@ def test_sttn_inpaint_preserves_audio_and_reports_progress(tmp_path, monkeypatch
             height=64,
             reader=reader,
             progress=_progress,
-            feather_radius=3,
             gap=8,
         )
         outcome = inpainter.inpaint(job)
@@ -1947,107 +1946,6 @@ def test_sttn_inpaint_preserves_audio_and_reports_progress(tmp_path, monkeypatch
     assert "Audio:" in diagnostic, (
         f"output has no audio stream\n{diagnostic}"
     )
-
-
-# ── WipePlan Phase A / C4: temporal STTN execution ───────────────────────────
-
-def test_build_frame_mask_unions_active_remove_tracks_only():
-    """_build_frame_mask returns the spatial union of tracks active at idx."""
-    from types import SimpleNamespace
-
-    from videowipe.plan import Segment, Source, Track, WipePlan
-
-    H, W = 64, 96
-    band_a = np.zeros((H, W), dtype=np.uint8)
-    band_a[50:60, 10:50] = 1
-    band_b = np.zeros((H, W), dtype=np.uint8)
-    band_b[50:60, 46:86] = 1
-
-    plan = WipePlan(
-        kind="wipe_plan", schema_version=1,
-        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
-        request={}, temporal_resolution=SimpleNamespace(max_gap_frames=15, max_gap_seconds=3.75, max_boundary_error_frames=7),
-        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
-        tracks=[
-            Track(id="c1", type="subtitle", label="a", action="remove",
-                  bbox=(10, 50, 50, 60), confidence=0.9, presence_fraction=0.3,
-                  decision_reason="x", segments=[Segment(10, 30)], mask_key="c1", mask=band_a),
-            Track(id="c2", type="subtitle", label="b", action="remove",
-                  bbox=(46, 50, 86, 60), confidence=0.9, presence_fraction=0.3,
-                  decision_reason="x", segments=[Segment(20, 40)], mask_key="c2", mask=band_b),
-        ],
-    )
-    fm = WipeEngine._build_frame_mask(plan)
-
-    # inactive everywhere before 10
-    assert fm(0).sum() == 0
-    # [10,20): only a active
-    assert fm(15)[55, 30] == 1 and fm(15)[55, 60] == 0
-    # [20,30): a and b active (union)
-    assert fm(25)[55, 30] == 1 and fm(25)[55, 60] == 1
-    # [30,40): only b active
-    assert fm(35)[55, 30] == 0 and fm(35)[55, 60] == 1
-    # >=40: inactive
-    assert fm(45).sum() == 0
-
-
-def test_build_frame_mask_caches_only_the_latest_active_combination():
-    """Consecutive equal track sets reuse one immutable full-frame mask."""
-    from types import SimpleNamespace
-
-    from videowipe.plan import Segment, Source, Track, WipePlan
-
-    H, W = 64, 96
-    band_a = np.zeros((H, W), dtype=np.uint8)
-    band_a[50:60, 10:50] = 1
-    band_b = np.zeros((H, W), dtype=np.uint8)
-    band_b[50:60, 46:86] = 1
-    plan = WipePlan(
-        kind="wipe_plan", schema_version=1,
-        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
-        request={},
-        temporal_resolution=SimpleNamespace(
-            max_gap_frames=15, max_gap_seconds=3.75,
-            max_boundary_error_frames=7,
-        ),
-        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
-        tracks=[
-            Track(
-                id="c1", type="subtitle", label="a", action="remove",
-                bbox=(10, 50, 50, 60), confidence=0.9,
-                presence_fraction=0.3, decision_reason="x",
-                segments=[Segment(10, 30)], mask_key="c1", mask=band_a,
-            ),
-            Track(
-                id="c2", type="subtitle", label="b", action="remove",
-                bbox=(46, 50, 86, 60), confidence=0.9,
-                presence_fraction=0.3, decision_reason="x",
-                segments=[Segment(20, 40)], mask_key="c2", mask=band_b,
-            ),
-        ],
-    )
-    fm = WipeEngine._build_frame_mask(plan, feather_radius=4)
-
-    empty = fm(0)
-    assert empty is fm(1)
-    assert not empty.flags.writeable
-    with pytest.raises(ValueError):
-        empty[0, 0] = 1
-
-    only_a = fm(15)
-    assert only_a is fm(16)
-    assert not only_a.flags.writeable
-    assert only_a[55, 30] == 1 and only_a[55, 70] == 0
-
-    both = fm(25)
-    assert both is fm(26)
-    assert both is not only_a
-    assert both[55, 30] == 1 and both[55, 70] == 1
-
-    # maxsize=1 evicted the earlier A-only value, but rebuilding is exact.
-    rebuilt_a = fm(15)
-    assert rebuilt_a is not only_a
-    np.testing.assert_array_equal(rebuilt_a, only_a)
 
 
 def test_get_inpaint_mode_uses_an_unprocessed_frontier():
@@ -2333,7 +2231,7 @@ def test_sttn_frame_mask_blends_only_active_frames_across_segments(tmp_path, mon
         job = InpaintJob(
             video_path=str(video), mask=static, output_dir=str(tmp_path),
             fps=4.0, frame_count=N, width=W, height=H,
-            reader=reader, gap=15, feather_radius=0, frame_mask=frame_mask,
+            reader=reader, gap=15, frame_mask=frame_mask,
         )
         outcome = inpainter.inpaint(job)
     finally:
@@ -2390,38 +2288,3 @@ def test_file_based_backend_rejects_temporal_plan(tmp_path):
             )
     finally:
         engine.cleanup()
-
-
-def test_build_frame_mask_feathers_temporal_path_to_match_static():
-    """feather_radius>0 yields a soft float mask; ==0 yields hard uint8 (F3 guard).
-
-    The temporal frame_mask must feather like the static mask_from_candidates
-    path, otherwise temporal plans regress to hard rectangle seams.
-    """
-    from types import SimpleNamespace
-
-    from videowipe.plan import Segment, Source, Track, WipePlan
-
-    H, W = 64, 96
-    band = np.zeros((H, W), dtype=np.uint8)
-    band[20:40, 20:40] = 1  # square region with a hard edge
-    plan = WipePlan(
-        kind="wipe_plan", schema_version=1,
-        source=Source("x.mp4", "a" * 64, W, H, 4.0, 60),
-        request={},
-        temporal_resolution=SimpleNamespace(max_gap_frames=15, max_gap_seconds=3.75, max_boundary_error_frames=7),
-        mask_asset=SimpleNamespace(filename="wipe_plan_masks.npz", sha256=""),
-        tracks=[Track(id="c1", type="subtitle", label="a", action="remove",
-                      bbox=(20, 20, 40, 40), confidence=0.9, presence_fraction=1.0,
-                      decision_reason="x", segments=[Segment(0, 60)], mask_key="c1", mask=band)],
-    )
-    hard = WipeEngine._build_frame_mask(plan, feather_radius=0)(10)
-    soft = WipeEngine._build_frame_mask(plan, feather_radius=4)(10)
-    # hard path: uint8 in {0,1}
-    assert hard.dtype == np.uint8
-    assert set(np.unique(hard)).issubset({0, 1})
-    # soft path: float32 in [0,1], interior pinned to 1.0, edge is fractional
-    assert soft.dtype == np.float32
-    assert 0.0 <= soft.min() and soft.max() <= 1.0
-    assert soft[30, 30] == 1.0  # interior
-    assert 0.0 < soft[19, 30] < 1.0  # just outside the top edge -> feathered

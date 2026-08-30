@@ -20,3 +20,11 @@ produces the deterministic `WipePlan`.
 
 The draft and its planning interface are internal. `WipeEngine.plan()` remains
 the public planning interface.
+
+## WipePlan Execution
+
+The deterministic projection of a `WipePlan` into the static spatial mask and,
+for segmented remove tracks, the per-frame temporal mask. It owns precise-mask
+validation, binary normalization, union, feathering, segment activation, and
+the bounded immutable frame cache. Inpainting adapters consume the projection;
+they do not reinterpret tracks.

@@ -10,15 +10,23 @@ import numpy as np
 import pytest
 
 import videowipe.detect as detect_module
-from videowipe.detect import CleanCandidate, CleanDetectionResult, TextBox, refine_temporal_presence
+from videowipe.detect import (
+    CleanCandidate,
+    CleanDetectionResult,
+    TextBox,
+    refine_temporal_presence,
+)
 from videowipe.errors import InvalidInputError
 from videowipe.plan import (
     JSON_FILENAME,
     MASK_FILENAME,
     Segment,
     Source,
+    Track,
+    WipePlan,
     build_wipe_plan,
     compute_source,
+    execution_masks,
     is_temporal,
     load_wipe_plan,
     save_wipe_plan,
@@ -433,6 +441,15 @@ def test_save_load_roundtrip_preserves_plan_and_masks(tmp_path):
         assert np.array_equal(np.asarray(orig.mask).squeeze(), np.asarray(got.mask).squeeze())
 
 
+def test_save_rejects_duplicate_mask_keys(tmp_path):
+    plan = _plan_with_two_tracks()
+    plan.tracks[1].mask_key = plan.tracks[0].mask_key
+
+    with pytest.raises(InvalidInputError, match="duplicate mask_key"):
+        save_wipe_plan(plan, str(tmp_path))
+    assert not tmp_path.joinpath(MASK_FILENAME).exists()
+
+
 def test_roundtrip_is_byte_stable(tmp_path):
     plan = _plan_with_two_tracks()
     save_wipe_plan(plan, str(tmp_path))
@@ -645,6 +662,95 @@ def test_remove_union_mask_is_time_independent():
     assert union[85, 50]
 
 
+def _temporal_execution_plan(mask_value=1):
+    mask = np.zeros((64, 96), dtype=np.uint8)
+    mask[20:40, 20:40] = mask_value
+    return WipePlan(
+        kind="wipe_plan",
+        schema_version=1,
+        source=Source("x.mp4", "a" * 64, 96, 64, 4.0, 60),
+        request={},
+        temporal_resolution=SimpleNamespace(
+            max_gap_frames=15,
+            max_gap_seconds=3.75,
+            max_boundary_error_frames=7,
+        ),
+        mask_asset=SimpleNamespace(filename=MASK_FILENAME, sha256=""),
+        tracks=[Track(
+            id="c1", type="subtitle", label="a", action="remove",
+            bbox=(20, 20, 40, 40), confidence=0.9, presence_fraction=0.3,
+            decision_reason="x", segments=[Segment(10, 30)], mask_key="c1",
+            mask=mask,
+        )],
+    )
+
+
+def test_execution_masks_projects_static_and_temporal_masks_consistently():
+    static, frame_mask = execution_masks(_temporal_execution_plan(), feather_radius=4)
+
+    assert static.shape == (64, 96, 1)
+    assert static.dtype == np.float32
+    assert static[30, 30, 0] == 1.0
+    assert 0.0 < static[19, 30, 0] < 1.0
+    assert frame_mask is not None
+    np.testing.assert_array_equal(frame_mask(15), static[:, :, 0])
+    assert not frame_mask(0).any()
+    assert frame_mask(15) is frame_mask(16)
+    assert not frame_mask(15).flags.writeable
+    with pytest.raises(ValueError):
+        frame_mask(15)[0, 0] = 1
+
+
+def test_execution_masks_normalizes_255_masks_before_temporal_blend():
+    static, frame_mask = execution_masks(_temporal_execution_plan(mask_value=255))
+
+    assert frame_mask is not None
+    assert set(np.unique(static)).issubset({0, 1})
+    assert set(np.unique(frame_mask(15))).issubset({0, 1})
+
+
+def test_execution_masks_all_keep_returns_empty_static_without_temporal_projection():
+    plan = _temporal_execution_plan()
+    plan.tracks[0].action = "keep"
+
+    static, frame_mask = execution_masks(plan, feather_radius=4)
+
+    assert static.shape == (64, 96, 1)
+    assert not static.any()
+    assert frame_mask is None
+
+
+def test_execution_masks_rejects_missing_remove_mask():
+    plan = _temporal_execution_plan()
+    plan.tracks[0].mask = None
+
+    with pytest.raises(InvalidInputError, match="no precise mask"):
+        execution_masks(plan)
+
+
+def test_execution_masks_rejects_empty_remove_segments():
+    plan = _temporal_execution_plan()
+    plan.tracks[0].segments = []
+
+    with pytest.raises(InvalidInputError, match="at least one segment"):
+        execution_masks(plan)
+
+
+def test_execution_masks_rejects_invalid_mask_channels():
+    plan = _temporal_execution_plan()
+    plan.tracks[0].mask = np.zeros((64, 96, 0), dtype=np.uint8)
+
+    with pytest.raises(InvalidInputError, match="one channel"):
+        execution_masks(plan)
+
+
+def test_execution_masks_rejects_empty_remove_mask():
+    plan = _temporal_execution_plan(mask_value=0)
+
+    with pytest.raises(InvalidInputError, match="mask is empty"):
+        execution_masks(plan)
+
+
 def test_compute_source_rounds_frame_count(monkeypatch, tmp_path):
     """compute_source rounds CAP_PROP_FRAME_COUNT to match read_frame_info (A1).
 
@@ -739,16 +845,13 @@ def test_remove_track_without_mask_rejected_for_execution():
 
 
 def test_union_mask_rejects_missing_remove_mask():
-    """Engine raises rather than silently widening a maskless track to its bbox."""
-    from videowipe.engine import WipeEngine
-
+    """Execution raises rather than silently widening a maskless track."""
     plan = _plan_with_two_tracks()
     for t in plan.tracks:
         if t.action == "remove":
             t.mask = None
-    engine = WipeEngine(task="clean")
     with pytest.raises(InvalidInputError, match="no precise mask"):
-        engine._union_mask_from_plan(plan, (100, 100))
+        execution_masks(plan)
 
 
 def test_normal_plan_with_precise_masks_passes_execution_check():

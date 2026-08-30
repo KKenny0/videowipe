@@ -23,8 +23,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 import cv2
@@ -552,6 +553,7 @@ def validate_plan(
         )
 
     ids: set[str] = set()
+    mask_keys: set[str] = set()
     has_remove = False
     for t in plan.tracks:
         if not t.id:
@@ -559,6 +561,11 @@ def validate_plan(
         if t.id in ids:
             raise InvalidInputError(f"duplicate track id: {t.id}")
         ids.add(t.id)
+        if not t.mask_key:
+            raise InvalidInputError(f"track {t.id}: mask_key must be non-empty")
+        if t.mask_key in mask_keys:
+            raise InvalidInputError(f"duplicate mask_key: {t.mask_key}")
+        mask_keys.add(t.mask_key)
         if t.action not in _ACTION_VALUES:
             raise InvalidInputError(
                 f"track {t.id}: action {t.action!r} not in {_ACTION_VALUES}"
@@ -582,6 +589,10 @@ def validate_plan(
                 raise InvalidInputError(
                     f"track {t.id}: mask must be 2D/3D, got shape {arr.shape}"
                 )
+            if arr.ndim == 3 and arr.shape[2] != 1:
+                raise InvalidInputError(
+                    f"track {t.id}: 3D mask must have one channel, got shape {arr.shape}"
+                )
             if (arr.shape[0], arr.shape[1]) != (height, width):
                 raise InvalidInputError(
                     f"track {t.id}: mask shape {arr.shape[:2]} != source {height}x{width}"
@@ -591,6 +602,10 @@ def validate_plan(
                     f"track {t.id}: mask dtype {arr.dtype} must be integer/bool"
                 )
 
+        if t.action == "remove" and not t.segments:
+            raise InvalidInputError(
+                f"track {t.id}: remove track must have at least one segment"
+            )
         prev_end = 0
         for seg in t.segments:
             if not (0 <= seg.start < seg.end <= frame_count):
@@ -619,6 +634,7 @@ def save_wipe_plan(plan: WipePlan, output_dir: str) -> tuple[str, str]:
     arrays keyed by ``track.mask_key`` (sorted for determinism). The NPZ
     SHA-256 is computed after writing and embedded in the JSON.
     """
+    validate_plan(plan)
     os.makedirs(output_dir, exist_ok=True)
     json_path = os.path.join(output_dir, JSON_FILENAME)
     npz_path = _child_path(output_dir, plan.mask_asset.filename)
@@ -715,6 +731,87 @@ def is_temporal(plan: WipePlan) -> bool:
     return False
 
 
+def _execution_tracks(plan: WipePlan) -> list[tuple[Track, np.ndarray]]:
+    """Return remove tracks with precise masks normalized to binary ``uint8``."""
+    validate_plan(plan)
+    prepared = []
+    for track in plan.remove_tracks:
+        if track.mask is None:
+            raise InvalidInputError(
+                f"track {track.id}: remove track has no precise mask; cannot execute"
+            )
+        arr = np.asarray(track.mask)
+        if arr.ndim == 3:
+            arr = arr[:, :, 0]
+        normalized = (arr > 0).astype(np.uint8)
+        prepared.append((track, normalized))
+    return prepared
+
+
+def _project_mask(
+    prepared: list[tuple[Track, np.ndarray]],
+    active_tracks: tuple[int, ...],
+    frame_shape: tuple[int, int],
+    feather_radius: int = 0,
+) -> np.ndarray:
+    mask = np.zeros(frame_shape, dtype=np.uint8)
+    for index in active_tracks:
+        np.maximum(mask, prepared[index][1], out=mask)
+    if feather_radius > 0 and mask.any():
+        flat = mask.astype(np.float32)
+        kernel = max(3, feather_radius * 2 + 1)
+        blurred = cv2.GaussianBlur(flat, (kernel, kernel), feather_radius / 2.0)
+        return np.clip(np.where(flat >= 1.0, 1.0, blurred), 0.0, 1.0)
+    return mask
+
+
+def _active_tracks(
+    prepared: list[tuple[Track, np.ndarray]], frame_index: int
+) -> tuple[int, ...]:
+    return tuple(
+        index
+        for index, (track, _mask) in enumerate(prepared)
+        if any(segment.contains(frame_index) for segment in track.segments)
+    )
+
+
+def execution_masks(
+    plan: WipePlan, feather_radius: int = 0
+) -> tuple[np.ndarray, Callable[[int], np.ndarray] | None]:
+    """Project a plan into its static mask and optional temporal frame mask.
+
+    The static mask is ``(H, W, 1)``. Temporal plans also receive a bounded,
+    one-entry cached ``frame_mask(index) -> (H, W)`` projection. Cached masks
+    are immutable so one consumer cannot corrupt a later frame.
+    """
+    prepared = _execution_tracks(plan)
+    for track, mask in prepared:
+        if not mask.any():
+            raise InvalidInputError(
+                f"track {track.id}: remove track mask is empty; cannot execute"
+            )
+    frame_shape = (plan.source.height, plan.source.width)
+    all_tracks = tuple(range(len(prepared)))
+    static_mask = _project_mask(
+        prepared, all_tracks, frame_shape, feather_radius
+    )[:, :, None]
+    if not prepared or not is_temporal(plan):
+        return static_mask, None
+
+    @lru_cache(maxsize=1)
+    def mask_for(active_tracks: tuple[int, ...]) -> np.ndarray:
+        mask = _project_mask(
+            prepared, active_tracks, frame_shape, feather_radius
+        )
+        mask.setflags(write=False)
+        return mask
+
+    def frame_mask(frame_index: int) -> np.ndarray:
+        return mask_for(_active_tracks(prepared, frame_index))
+
+    return static_mask, frame_mask
+
+
 def predicted_mask_at(plan: WipePlan, frame_index: int) -> np.ndarray:
     """Boolean ``(H, W)`` remove-prediction mask at *frame_index*.
 
@@ -722,25 +819,19 @@ def predicted_mask_at(plan: WipePlan, frame_index: int) -> np.ndarray:
     the per-frame prediction a temporal plan makes; the fact-baseline evaluator
     uses it instead of replaying one static mask on every annotated frame.
     """
-    height, width = plan.source.height, plan.source.width
-    mask = np.zeros((height, width), dtype=bool)
-    for t in plan.remove_tracks:
-        if any(s.start <= frame_index < s.end for s in t.segments) and t.mask is not None:
-            arr = np.asarray(t.mask)
-            if arr.ndim == 3:
-                arr = arr[:, :, 0]
-            mask |= arr.astype(bool)
-    return mask
+    prepared = _execution_tracks(plan)
+    return _project_mask(
+        prepared,
+        _active_tracks(prepared, frame_index),
+        (plan.source.height, plan.source.width),
+    ).astype(bool)
 
 
 def remove_union_mask(plan: WipePlan) -> np.ndarray:
     """Boolean ``(H, W)`` spatial union of all remove tracks (time-independent)."""
-    height, width = plan.source.height, plan.source.width
-    mask = np.zeros((height, width), dtype=bool)
-    for t in plan.remove_tracks:
-        if t.mask is not None:
-            arr = np.asarray(t.mask)
-            if arr.ndim == 3:
-                arr = arr[:, :, 0]
-            mask |= arr.astype(bool)
-    return mask
+    prepared = _execution_tracks(plan)
+    return _project_mask(
+        prepared,
+        tuple(range(len(prepared))),
+        (plan.source.height, plan.source.width),
+    ).astype(bool)

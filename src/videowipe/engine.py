@@ -32,6 +32,7 @@ from videowipe.inpainters import InpaintJob, get_registry
 from videowipe.plan import (
     WipePlan,
     compute_source,
+    execution_masks,
     is_temporal,
     load_wipe_plan,
     save_wipe_plan,
@@ -68,8 +69,8 @@ _DEFAULT_WEIGHTS_ONNX = {
     "clean": "sttn",
 }
 
-# Gaussian alpha radius applied to bbox-only mask candidates. A small default
-# is enough to remove the hard rectangle seam from STTN's blend without
+# Gaussian alpha radius applied while WipePlan projects execution masks. A
+# small default removes the hard seam from STTN's blend without
 # softening so much that the filled region bleeds into surrounding detail.
 # This is a "finished feel" default, not a user-facing knob.
 _DEFAULT_FEATHER_RADIUS = 4
@@ -456,7 +457,7 @@ class WipeEngine:
             raise InvalidInputError("plan is only supported for the clean task")
         self._last_warnings = []
         self._active_plan: Optional[WipePlan] = None
-        self._task_impl.frame_mask = None
+        frame_mask = None
         os.makedirs(output, exist_ok=True)
         bm: dict = {"video_path": video, "timing": {}}
         bm["mask_source"] = "manual" if mask is not None else "auto"
@@ -474,14 +475,9 @@ class WipeEngine:
                 )
                 self._last_warnings = list(wipe_plan.warnings)
                 self._active_plan = wipe_plan
-                # Temporal plans drive STTN per-frame via frame_mask; static
-                # (full-video) plans reuse the fast whole-video mask path.
-                if is_temporal(wipe_plan):
-                    self._task_impl.frame_mask = self._build_frame_mask(
-                        wipe_plan, self._task_impl.feather_radius
-                    )
-                det_frame_shape = (wipe_plan.source.height, wipe_plan.source.width)
-                mask_arr = self._union_mask_from_plan(wipe_plan, det_frame_shape)
+                mask_arr, frame_mask = execution_masks(
+                    wipe_plan, self._task_impl.feather_radius
+                )
                 auto_mask_path = os.path.join(output, "auto_mask.png")
                 if not cv2.imwrite(
                     auto_mask_path, (mask_arr * 255).astype(np.uint8),
@@ -587,6 +583,8 @@ class WipeEngine:
             process_kwargs = {"video_path": video}
             if progress is not None:
                 process_kwargs["progress"] = progress
+            if frame_mask is not None:
+                process_kwargs["frame_mask"] = frame_mask
             out_path = self._task_impl.process_video(
                 reader, frame_info, mask_arr, output, **process_kwargs
             )
@@ -729,7 +727,9 @@ class WipeEngine:
                 draft, {track.id for track in wipe_plan.remove_tracks}, output_dir,
             )
             save_wipe_plan(wipe_plan, output_dir)
-            mask_arr = self._union_mask_from_plan(wipe_plan, draft.frame_shape)
+            mask_arr, _ = execution_masks(
+                wipe_plan, self._task_impl.feather_radius
+            )
             auto_mask_path = os.path.join(output_dir, "auto_mask.png")
             if not cv2.imwrite(
                 auto_mask_path, (mask_arr * 255).astype(np.uint8),
@@ -839,83 +839,6 @@ class WipeEngine:
                 )
             return plan
         return load_wipe_plan(os.fspath(plan), video_path=video)
-
-    def _union_mask_from_plan(self, plan: WipePlan, frame_shape: tuple[int, int]):
-        """Spatial union of the plan's remove tracks, with the task's feather radius.
-
-        Every remove track must carry a precise mask; a missing mask is an
-        error rather than a silent bbox-rectangle fallback (the executed mask
-        must reflect what the plan actually selected, not an approximation).
-        """
-        from types import SimpleNamespace
-
-        from videowipe.detect import mask_from_candidates
-
-        adapters = []
-        for t in plan.remove_tracks:
-            if t.mask is None:
-                raise InvalidInputError(
-                    f"remove track {t.id} has no precise mask; cannot build union"
-                )
-            arr = np.asarray(t.mask)
-            mask_nd = arr[:, :, None] if arr.ndim == 2 else arr
-            adapters.append(SimpleNamespace(mask=mask_nd, bbox=t.bbox))
-        return mask_from_candidates(
-            adapters, frame_shape, feather_radius=self._task_impl.feather_radius,
-        )
-
-    @staticmethod
-    def _build_frame_mask(plan: WipePlan, feather_radius: int = 0):
-        """Build a ``frame_mask(global_idx) -> (H, W)`` callable for STTN.
-
-        The returned mask is the spatial union of every remove track whose
-        segments contain *global_idx*. When *feather_radius* > 0 it is
-        Gaussian-feathered to match the static ``mask_from_candidates`` path
-        (so temporal plans do not regress to hard rectangle seams); the
-        interior (>=1) is pinned back to full opacity. The most recent active
-        track combination is cached because consecutive frames normally share
-        it; a one-entry cache keeps memory bounded. Returns ``None`` when there
-        are no remove tracks.
-        """
-        remove_tracks = plan.remove_tracks
-        if not remove_tracks:
-            return None
-        height, width = plan.source.height, plan.source.width
-        prepared = []
-        for t in remove_tracks:
-            arr = None if t.mask is None else np.asarray(t.mask)
-            if arr is not None and arr.ndim == 3:
-                arr = arr[:, :, 0]
-            prepared.append((arr, [(s.start, s.end) for s in t.segments]))
-
-        kernel = max(3, feather_radius * 2 + 1) if feather_radius > 0 else None
-        sigma = feather_radius / 2.0
-
-        @lru_cache(maxsize=1)
-        def mask_for(active_tracks: tuple[int, ...]) -> np.ndarray:
-            mask = np.zeros((height, width), dtype=np.uint8)
-            for index in active_tracks:
-                arr = prepared[index][0]
-                if arr is not None:
-                    np.maximum(mask, arr, out=mask)
-            if kernel is not None and mask.any():
-                flat = mask.astype(np.float32)
-                blurred = cv2.GaussianBlur(flat, (kernel, kernel), sigma)
-                flat = np.where(flat >= 1.0, 1.0, blurred)
-                mask = np.clip(flat, 0.0, 1.0)
-            mask.setflags(write=False)
-            return mask
-
-        def frame_mask(global_idx: int) -> np.ndarray:
-            active_tracks = tuple(
-                index
-                for index, (_arr, segments) in enumerate(prepared)
-                if any(start <= global_idx < end for start, end in segments)
-            )
-            return mask_for(active_tracks)
-
-        return frame_mask
-
 
 def remove_text(
     video: str,
