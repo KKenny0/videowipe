@@ -1676,6 +1676,7 @@ def write_clean_artifacts(
         )
 
     preview_path = os.path.join(output_dir, "clean_preview.jpg")
+    editable_preview_path = os.path.join(output_dir, "clean_preview_source.jpg")
     if result.preview_frame is not None:
         preview = result.preview_frame.copy()
         for candidate in result.candidates:
@@ -1694,8 +1695,14 @@ def write_clean_artifacts(
             )
         if not cv2.imwrite(preview_path, preview):
             raise OSError(f"Failed to write image: {preview_path}")
+        if not cv2.imwrite(editable_preview_path, result.preview_frame):
+            raise OSError(f"Failed to write image: {editable_preview_path}")
 
-    return {"candidates": candidates_path, "preview": preview_path}
+    return {
+        "candidates": candidates_path,
+        "preview": preview_path,
+        "editable_preview": editable_preview_path,
+    }
 
 
 def _default_detector() -> DBNetDetector:

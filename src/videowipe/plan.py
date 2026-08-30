@@ -178,7 +178,10 @@ class Track:
             type=str(d["type"]),
             label=str(d["label"]),
             action=str(d["action"]),
-            bbox=tuple(int(v) for v in d["bbox"]),
+            # Preserve JSON values until validate_plan() has checked that all
+            # four coordinates are genuine integers. Coercing here would turn
+            # a tampered 90.5 into 90 before the trust-boundary validator sees it.
+            bbox=tuple(d["bbox"]),
             confidence=float(d["confidence"]),
             presence_fraction=float(d["presence_fraction"]),
             decision_reason=str(d["decision_reason"]),
@@ -600,11 +603,20 @@ def validate_plan(
             raise InvalidInputError(
                 f"track {t.id}: action {t.action!r} not in {_ACTION_VALUES}"
             )
-        if len(t.bbox) != 4 or any(int(v) < 0 for v in t.bbox):
+        if len(t.bbox) != 4 or any(
+            isinstance(v, (bool, np.bool_))
+            or not isinstance(v, (int, np.integer))
+            or int(v) < 0
+            for v in t.bbox
+        ):
             raise InvalidInputError(f"track {t.id}: bbox must be 4 non-negative ints")
         x1, y1, x2, y2 = t.bbox
         if x2 < x1 or y2 < y1:
             raise InvalidInputError(f"track {t.id}: bbox {t.bbox} is inverted")
+        if x2 >= width or y2 >= height:
+            raise InvalidInputError(
+                f"track {t.id}: bbox {t.bbox} exceeds source {width}x{height}"
+            )
 
         # Execution requires a precise mask on every remove track. A plan read
         # metadata-only (load_masks=False) may carry mask=None for inspection,

@@ -93,6 +93,7 @@ class FakeEngine:
         preview_image = np.zeros((64, 96, 3), dtype=np.uint8)
         preview_image[50:60, 10:86] = (0, 200, 0)
         cv2.imwrite(str(output_path / "clean_preview.jpg"), preview_image)
+        cv2.imwrite(str(output_path / "clean_preview_source.jpg"), preview_image)
         mask_image = np.zeros((64, 96), dtype=np.uint8)
         mask_image[50:60, 10:86] = 255
         cv2.imwrite(str(output_path / "auto_mask.png"), mask_image)
@@ -275,6 +276,7 @@ def test_preview_returns_candidates(client, tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert body["preview_url"] == f"/jobs/{job_id}/preview-image"
+    assert body["editable_preview_url"] == f"/jobs/{job_id}/editable-preview-image"
     assert [candidate["id"] for candidate in body["candidates"]] == ["c1", "c2"]
     assert body["default_selected_ids"] == ["c1"]
     assert fake.calls[0]["intent"] == "remove bottom subtitles"
@@ -290,6 +292,75 @@ def test_preview_returns_candidates(client, tmp_path):
     assert snapshot["phase"] == "preview"
     assert snapshot["timings"]["upload_s"] >= 0
     assert snapshot["timings"]["plan_s"] >= 0
+    editable = test_client.get(body["editable_preview_url"])
+    assert editable.status_code == 200
+    assert editable.headers["content-type"].startswith("image/jpeg")
+
+
+def test_confirm_bbox_override_replaces_only_edited_track_mask(client, tmp_path):
+    test_client, fake = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job_dir = tmp_path / "jobs" / job_id
+    before = load_wipe_plan(str(job_dir / "wipe_plan.json"))
+    before_sha = before.mask_asset.sha256
+    c2_before = next(track for track in before.tracks if track.id == "c2").mask.copy()
+
+    response = test_client.post(
+        f"/jobs/{job_id}/confirm",
+        json={
+            "selected_ids": ["c1"],
+            "bbox_overrides": {"c1": [8, 48, 90, 62]},
+        },
+    )
+
+    assert response.status_code == 200
+    _wait_for_state(test_client, job_id, "done")
+    executed = fake.calls[-1]["plan"]
+    c1 = next(track for track in executed.tracks if track.id == "c1")
+    c2 = next(track for track in executed.tracks if track.id == "c2")
+    expected = np.zeros((64, 96), dtype=np.uint8)
+    expected[48:63, 8:91] = 1
+    assert c1.bbox == (8, 48, 90, 62)
+    assert c1.decision_reason == "user-confirm:remove:bbox-override"
+    assert np.array_equal(c1.mask, expected)
+    assert np.array_equal(c2.mask, c2_before)
+    assert executed.mask_asset.sha256 != before_sha
+
+
+@pytest.mark.parametrize(
+    ("payload", "status_code"),
+    [
+        ({"selected_ids": ["c1"], "bbox_overrides": {"missing": [0, 0, 2, 2]}}, 400),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c2": [4, 4, 28, 16]}}, 400),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c1": [8, 8, 7, 12]}}, 400),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c1": [8, 8, 8, 12]}}, 400),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c1": [8, 8, 96, 12]}}, 400),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c1": [8, 8, 12]}}, 422),
+        ({"selected_ids": ["c1"], "bbox_overrides": {"c1": [8.5, 8, 12, 12]}}, 422),
+    ],
+)
+def test_invalid_bbox_override_keeps_plan_unchanged(
+    client, tmp_path, payload, status_code,
+):
+    test_client, fake = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job_dir = tmp_path / "jobs" / job_id
+    plan_path = job_dir / "wipe_plan.json"
+    mask_path = job_dir / "wipe_plan_masks.npz"
+    before = (plan_path.read_bytes(), mask_path.read_bytes())
+
+    response = test_client.post(f"/jobs/{job_id}/confirm", json=payload)
+
+    assert response.status_code == status_code
+    assert test_client.get(f"/jobs/{job_id}").json()["state"] == "preview_ready"
+    assert (plan_path.read_bytes(), mask_path.read_bytes()) == before
+    assert [call["method"] for call in fake.calls] == ["plan"]
 
 
 def test_confirm_runs_and_progress_sse(client, tmp_path):
@@ -381,6 +452,11 @@ def test_web_page_contains_refresh_recovery_contract(client):
     assert 'status.state === "running") {\n        submitBtn.disabled = true;' in page
     assert "renderTracks(preview.tracks || [])" in page
     assert "preview.candidates.map" not in page
+    assert "preview.editable_preview_url || preview.preview_url" in page
+    assert "function transformBBox(" in page
+    assert 'sessionStorage.setItem(bboxStorageKey(currentJobId)' in page
+    assert "bbox_overrides: overrides" in page
+    assert '["n", "ne", "e", "se", "s", "sw", "w", "nw"]' in page
 
 
 def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):

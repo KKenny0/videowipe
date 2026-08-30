@@ -774,6 +774,7 @@ def test_clean_preview_writes_artifacts_without_loading_model(tmp_path, monkeypa
 
     assert (output / "clean_candidates.json").exists()
     assert (output / "clean_preview.jpg").exists()
+    assert (output / "clean_preview_source.jpg").exists()
     assert (output / "auto_mask.png").exists()
 
 

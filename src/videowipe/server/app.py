@@ -7,9 +7,10 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 
 from videowipe.api import ProgressEvent, WipeRequest
 from videowipe.engine import WipeEngine
@@ -39,6 +40,9 @@ _engine_lock = threading.Lock()
 
 class ConfirmRequest(BaseModel):
     selected_ids: list[str] | None = None
+    bbox_overrides: dict[
+        str, tuple[StrictInt, StrictInt, StrictInt, StrictInt]
+    ] | None = None
 
 
 def _jobs_root() -> str:
@@ -223,6 +227,7 @@ def preview(job_id: str):
         "candidates": candidates,
         "tracks": _load_tracks(job),
         "preview_url": f"/jobs/{job.id}/preview-image",
+        "editable_preview_url": f"/jobs/{job.id}/editable-preview-image",
         "default_selected_ids": snapshot["default_selected_ids"],
     }
 
@@ -235,6 +240,17 @@ def preview_image(job_id: str):
     path = Path(job.output_dir) / "clean_preview.jpg"
     if not path.exists():
         raise HTTPException(status_code=404, detail="preview image not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/jobs/{job_id}/editable-preview-image")
+def editable_preview_image(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    path = Path(job.output_dir) / "clean_preview_source.jpg"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="editable preview image not found")
     return FileResponse(path, media_type="image/jpeg")
 
 
@@ -265,9 +281,57 @@ def confirm(job_id: str, body: ConfirmRequest):
                 detail=f"unknown candidate id: {', '.join(unknown_ids)}",
             )
         selected = set(selected_ids)
+        overrides = body.bbox_overrides or {}
+        unknown_override_ids = sorted(set(overrides) - known_ids)
+        if unknown_override_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown bbox override id: {', '.join(unknown_override_ids)}",
+            )
+        unselected_override_ids = sorted(set(overrides) - selected)
+        if unselected_override_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "bbox override requires selected target: "
+                    f"{', '.join(unselected_override_ids)}"
+                ),
+            )
+        validated_overrides: dict[str, tuple[int, int, int, int]] = {}
+        for track_id, bbox in overrides.items():
+            x1, y1, x2, y2 = bbox
+            if x2 < x1 or y2 < y1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"bbox override for {track_id} is inverted or empty",
+                )
+            if x2 - x1 + 1 < 2 or y2 - y1 + 1 < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"bbox override for {track_id} must be at least 2x2 pixels",
+                )
+            if x1 < 0 or y1 < 0 or x2 >= plan.source.width or y2 >= plan.source.height:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"bbox override for {track_id} exceeds source "
+                        f"{plan.source.width}x{plan.source.height}"
+                    ),
+                )
+            validated_overrides[track_id] = (x1, y1, x2, y2)
+
         for track in plan.tracks:
             track.action = "remove" if track.id in selected else "keep"
             track.decision_reason = f"user-confirm:{track.action}"
+            if track.id in validated_overrides:
+                x1, y1, x2, y2 = validated_overrides[track.id]
+                mask = np.zeros(
+                    (plan.source.height, plan.source.width), dtype=np.uint8
+                )
+                mask[y1:y2 + 1, x1:x2 + 1] = 1
+                track.bbox = (x1, y1, x2, y2)
+                track.mask = mask
+                track.decision_reason = "user-confirm:remove:bbox-override"
         try:
             validate_plan(plan, require_remove=True)
         except InvalidInputError as exc:

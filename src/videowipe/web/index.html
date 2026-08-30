@@ -449,14 +449,81 @@
       position: relative;
     }
 
+    .preview-media {
+      position: absolute;
+      inset: 0;
+      display: none;
+    }
+
     .preview-stage img {
       width: 100%;
       height: 100%;
       max-height: 560px;
       object-fit: contain;
-      display: none;
+      display: block;
       background: #111;
     }
+
+    .bbox-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .bbox-box {
+      position: absolute;
+      min-width: 2px;
+      min-height: 2px;
+      border: 2px solid #ffd166;
+      background: rgba(255, 209, 102, 0.13);
+      pointer-events: auto;
+      touch-action: none;
+      cursor: move;
+      outline: none;
+    }
+
+    .bbox-box.is-active {
+      border-color: var(--accent);
+      background: rgba(255, 107, 53, 0.16);
+      box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.52);
+    }
+
+    .bbox-box:focus-visible {
+      box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--accent);
+    }
+
+    .bbox-handle {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      display: none;
+      touch-action: none;
+    }
+
+    .bbox-handle::after {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: 6px;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .bbox-box.is-active .bbox-handle { display: block; }
+    .bbox-handle[data-edge="n"] { left: 50%; top: -12px; transform: translateX(-50%); cursor: ns-resize; }
+    .bbox-handle[data-edge="s"] { left: 50%; bottom: -12px; transform: translateX(-50%); cursor: ns-resize; }
+    .bbox-handle[data-edge="w"] { left: -12px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+    .bbox-handle[data-edge="e"] { right: -12px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+    .bbox-handle[data-edge="nw"] { left: -12px; top: -12px; cursor: nwse-resize; }
+    .bbox-handle[data-edge="ne"] { right: -12px; top: -12px; cursor: nesw-resize; }
+    .bbox-handle[data-edge="sw"] { left: -12px; bottom: -12px; cursor: nesw-resize; }
+    .bbox-handle[data-edge="se"] { right: -12px; bottom: -12px; cursor: nwse-resize; }
 
     .preview-empty {
       display: grid;
@@ -539,7 +606,7 @@
 
     .candidate {
       display: grid;
-      grid-template-columns: 20px minmax(0, 1fr) auto;
+      grid-template-columns: 20px minmax(0, 1fr) auto auto;
       gap: 10px;
       align-items: center;
       padding: 10px;
@@ -552,6 +619,34 @@
       width: 16px;
       height: 16px;
       accent-color: var(--green);
+    }
+
+    .candidate.is-active {
+      border-color: var(--accent);
+      background: #fff8f3;
+    }
+
+    .candidate-main {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .candidate-main:disabled { cursor: default; }
+
+    .candidate-reset {
+      min-height: 30px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
     }
 
     .candidate-main {
@@ -794,7 +889,10 @@
       <section class="panel workspace">
         <div class="preview">
           <div class="preview-stage">
-            <img id="previewImage" alt="Detection preview">
+            <div id="previewMedia" class="preview-media">
+              <img id="previewImage" alt="Editable representative video frame">
+              <div id="bboxLayer" class="bbox-layer" aria-label="Editable cleanup regions"></div>
+            </div>
             <div id="previewEmpty" class="preview-empty">
               <svg class="empty-logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
                 <rect x="7" y="10" width="50" height="44" rx="4" stroke="#efe8dc" stroke-width="1.6"/>
@@ -841,7 +939,9 @@
     const resetBtn = document.querySelector("#resetBtn");
     const confirmBtn = document.querySelector("#confirmBtn");
     const statusEl = document.querySelector("#status");
+    const previewMedia = document.querySelector("#previewMedia");
     const previewImage = document.querySelector("#previewImage");
+    const bboxLayer = document.querySelector("#bboxLayer");
     const previewEmpty = document.querySelector("#previewEmpty");
     const candidateList = document.querySelector("#candidateList");
     const candidateCount = document.querySelector("#candidateCount");
@@ -854,7 +954,38 @@
     let selectedFile = null;
     let currentJobId = null;
     let stream = null;
+    let currentTracks = [];
+    let activeTrackId = null;
+    let bboxDrafts = {};
     const jobStorageKey = "videowipe.currentJobId";
+    const bboxStoragePrefix = "videowipe.bboxDrafts.";
+
+    function bboxStorageKey(jobId) {
+      return `${bboxStoragePrefix}${jobId}`;
+    }
+
+    function loadBBoxDrafts(jobId) {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(bboxStorageKey(jobId)) || "{}");
+        bboxDrafts = parsed && typeof parsed === "object" ? parsed : {};
+      } catch (_) {
+        bboxDrafts = {};
+      }
+    }
+
+    function saveBBoxDrafts() {
+      if (!currentJobId) return;
+      if (Object.keys(bboxDrafts).length) {
+        sessionStorage.setItem(bboxStorageKey(currentJobId), JSON.stringify(bboxDrafts));
+      } else {
+        sessionStorage.removeItem(bboxStorageKey(currentJobId));
+      }
+    }
+
+    function clearBBoxDrafts(jobId = currentJobId) {
+      if (jobId) sessionStorage.removeItem(bboxStorageKey(jobId));
+      bboxDrafts = {};
+    }
 
     function rememberJob(jobId) {
       currentJobId = jobId;
@@ -925,6 +1056,7 @@
         stream.close();
         stream = null;
       }
+      clearBBoxDrafts();
       rememberJob(null);
       selectedFile = null;
       fileInput.value = "";
@@ -932,7 +1064,10 @@
       candidateList.innerHTML = '<div class="empty-list">Detected regions will appear here for review.</div>';
       candidateCount.textContent = "0 found";
       previewImage.removeAttribute("src");
-      previewImage.style.display = "none";
+      previewMedia.style.display = "none";
+      bboxLayer.innerHTML = "";
+      currentTracks = [];
+      activeTrackId = null;
       previewEmpty.style.display = "grid";
       setProgress(0);
       setOutput("Waiting for preview", "Run cleanup after targets are detected.");
@@ -960,10 +1095,188 @@
       return segments.map((s) => `frames ${s[0]}-${s[1] - 1}`).join(", ");
     }
 
-    // Render the plan's tracks. Each row is a whole-track remove/keep toggle:
-    // a checked checkbox means "remove this track" (mirrors the plan action).
-    // No draggable timeline — v1 only toggles whole tracks.
+    function selectedCandidateIds() {
+      return Array.from(candidateList.querySelectorAll('input[type="checkbox"]:checked'))
+        .map((input) => input.value);
+    }
+
+    function trackById(trackId) {
+      return currentTracks.find((track) => track.id === trackId);
+    }
+
+    function effectiveBBox(track) {
+      return bboxDrafts[track.id] || track.bbox;
+    }
+
+    function sameBBox(a, b) {
+      return a.length === b.length && a.every((value, index) => value === b[index]);
+    }
+
+    function setActiveTrack(trackId) {
+      activeTrackId = selectedCandidateIds().includes(trackId) ? trackId : null;
+      candidateList.querySelectorAll(".candidate").forEach((row) => {
+        row.classList.toggle("is-active", row.dataset.trackId === activeTrackId);
+      });
+      bboxLayer.querySelectorAll(".bbox-box").forEach((box) => {
+        box.classList.toggle("is-active", box.dataset.trackId === activeTrackId);
+      });
+    }
+
+    function imageMetrics() {
+      if (!previewImage.naturalWidth || !previewImage.naturalHeight) return null;
+      const rect = previewImage.getBoundingClientRect();
+      const scale = Math.min(
+        rect.width / previewImage.naturalWidth,
+        rect.height / previewImage.naturalHeight,
+      );
+      const width = previewImage.naturalWidth * scale;
+      const height = previewImage.naturalHeight * scale;
+      return {
+        scale,
+        left: (rect.width - width) / 2,
+        top: (rect.height - height) / 2,
+        sourceWidth: previewImage.naturalWidth,
+        sourceHeight: previewImage.naturalHeight,
+      };
+    }
+
+    function positionOverlay(box, bbox, metrics) {
+      const [x1, y1, x2, y2] = bbox;
+      box.style.left = `${metrics.left + x1 * metrics.scale}px`;
+      box.style.top = `${metrics.top + y1 * metrics.scale}px`;
+      box.style.width = `${(x2 - x1 + 1) * metrics.scale}px`;
+      box.style.height = `${(y2 - y1 + 1) * metrics.scale}px`;
+      box.setAttribute("aria-label", `Edit ${box.dataset.trackId} region, ${x1}, ${y1}, ${x2}, ${y2}`);
+    }
+
+    function updateOverlayPositions() {
+      const metrics = imageMetrics();
+      if (!metrics) return;
+      bboxLayer.querySelectorAll(".bbox-box").forEach((box) => {
+        const track = trackById(box.dataset.trackId);
+        if (track) positionOverlay(box, effectiveBBox(track), metrics);
+      });
+    }
+
+    function transformBBox(start, edge, dx, dy, width, height) {
+      let [x1, y1, x2, y2] = start;
+      if (edge === "move") {
+        dx = Math.max(-x1, Math.min(width - 1 - x2, dx));
+        dy = Math.max(-y1, Math.min(height - 1 - y2, dy));
+        return [x1 + dx, y1 + dy, x2 + dx, y2 + dy];
+      }
+      if (edge.includes("w")) x1 = Math.max(0, Math.min(x2 - 1, x1 + dx));
+      if (edge.includes("e")) x2 = Math.min(width - 1, Math.max(x1 + 1, x2 + dx));
+      if (edge.includes("n")) y1 = Math.max(0, Math.min(y2 - 1, y1 + dy));
+      if (edge.includes("s")) y2 = Math.min(height - 1, Math.max(y1 + 1, y2 + dy));
+      return [x1, y1, x2, y2];
+    }
+
+    function storeDraft(track, bbox) {
+      if (sameBBox(bbox, track.bbox)) delete bboxDrafts[track.id];
+      else bboxDrafts[track.id] = bbox;
+      saveBBoxDrafts();
+      const row = candidateList.querySelector(`[data-track-id="${CSS.escape(track.id)}"]`);
+      if (row) {
+        row.classList.toggle("is-edited", Boolean(bboxDrafts[track.id]));
+        row.querySelector(".candidate-reset").disabled = !bboxDrafts[track.id];
+      }
+      updateOverlayPositions();
+    }
+
+    function beginPointerEdit(event, track, edge) {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveTrack(track.id);
+      const metrics = imageMetrics();
+      if (!metrics) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startBBox = [...effectiveBBox(track)];
+      const target = event.currentTarget;
+      target.setPointerCapture(event.pointerId);
+      target.onpointermove = (moveEvent) => {
+        const dx = Math.round((moveEvent.clientX - startX) / metrics.scale);
+        const dy = Math.round((moveEvent.clientY - startY) / metrics.scale);
+        storeDraft(track, transformBBox(
+          startBBox, edge, dx, dy, metrics.sourceWidth, metrics.sourceHeight,
+        ));
+      };
+      target.onpointerup = target.onpointercancel = () => {
+        target.onpointermove = null;
+        target.onpointerup = null;
+        target.onpointercancel = null;
+      };
+    }
+
+    function keyboardEdit(event, track, edge) {
+      const deltas = {
+        ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+        ArrowUp: [0, -1], ArrowDown: [0, 1],
+      };
+      if (!deltas[event.key]) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveTrack(track.id);
+      const metrics = imageMetrics();
+      if (!metrics) return;
+      const amount = event.shiftKey ? 10 : 1;
+      const [dx, dy] = deltas[event.key].map((value) => value * amount);
+      storeDraft(track, transformBBox(
+        effectiveBBox(track), edge, dx, dy,
+        metrics.sourceWidth, metrics.sourceHeight,
+      ));
+    }
+
+    function renderOverlays() {
+      bboxLayer.innerHTML = "";
+      const selected = new Set(selectedCandidateIds());
+      const metrics = imageMetrics();
+      if (!metrics) return;
+      currentTracks.filter((track) => selected.has(track.id)).forEach((track) => {
+        const box = document.createElement("div");
+        box.className = "bbox-box";
+        box.dataset.trackId = track.id;
+        box.tabIndex = 0;
+        box.setAttribute("role", "group");
+        box.addEventListener("pointerdown", (event) => beginPointerEdit(event, track, "move"));
+        box.addEventListener("keydown", (event) => keyboardEdit(event, track, "move"));
+        ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach((edge) => {
+          const handle = document.createElement("button");
+          handle.type = "button";
+          handle.className = "bbox-handle";
+          handle.dataset.edge = edge;
+          handle.setAttribute("aria-label", `Resize ${track.id} from ${edge}`);
+          handle.addEventListener("pointerdown", (event) => beginPointerEdit(event, track, edge));
+          handle.addEventListener("keydown", (event) => keyboardEdit(event, track, edge));
+          box.append(handle);
+        });
+        positionOverlay(box, effectiveBBox(track), metrics);
+        bboxLayer.append(box);
+      });
+      setActiveTrack(activeTrackId || selected.values().next().value || null);
+    }
+
+    function sanitizeBBoxDrafts() {
+      const known = new Map(currentTracks.map((track) => [track.id, track]));
+      const width = previewImage.naturalWidth;
+      const height = previewImage.naturalHeight;
+      Object.entries(bboxDrafts).forEach(([trackId, bbox]) => {
+        const valid = known.has(trackId)
+          && Array.isArray(bbox)
+          && bbox.length === 4
+          && bbox.every(Number.isInteger)
+          && bbox[0] >= 0 && bbox[1] >= 0
+          && bbox[2] > bbox[0] && bbox[3] > bbox[1]
+          && bbox[2] < width && bbox[3] < height;
+        if (!valid || sameBBox(bbox, known.get(trackId).bbox)) delete bboxDrafts[trackId];
+      });
+      saveBBoxDrafts();
+    }
+
     function renderTracks(tracks) {
+      currentTracks = tracks;
       candidateList.innerHTML = "";
       candidateCount.textContent = `${tracks.length} track${tracks.length === 1 ? "" : "s"}`;
       if (!tracks.length) {
@@ -972,16 +1285,19 @@
         return;
       }
       tracks.forEach((track) => {
-        const row = document.createElement("label");
+        const row = document.createElement("div");
         row.className = "candidate";
+        row.dataset.trackId = track.id;
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.value = track.id;
         checkbox.checked = track.action === "remove";
 
-        const main = document.createElement("span");
+        const main = document.createElement("button");
+        main.type = "button";
         main.className = "candidate-main";
+        main.disabled = !checkbox.checked;
 
         const name = document.createElement("span");
         name.className = "candidate-name";
@@ -995,8 +1311,27 @@
         pill.className = "pill";
         pill.textContent = track.type;
 
+        const resetBox = document.createElement("button");
+        resetBox.type = "button";
+        resetBox.className = "candidate-reset";
+        resetBox.textContent = "Reset";
+        resetBox.disabled = !bboxDrafts[track.id];
+        resetBox.addEventListener("click", () => {
+          delete bboxDrafts[track.id];
+          saveBBoxDrafts();
+          resetBox.disabled = true;
+          row.classList.remove("is-edited");
+          updateOverlayPositions();
+        });
+        main.addEventListener("click", () => setActiveTrack(track.id));
+        checkbox.addEventListener("change", () => {
+          main.disabled = !checkbox.checked;
+          if (!checkbox.checked && activeTrackId === track.id) activeTrackId = null;
+          renderOverlays();
+        });
+
         main.append(name, meta);
-        row.append(checkbox, main, pill);
+        row.append(checkbox, main, pill, resetBox);
         candidateList.append(row);
       });
       confirmBtn.disabled = false;
@@ -1022,10 +1357,15 @@
         throw new Error(payload.detail || "Preview failed");
       }
       const preview = await response.json();
-      previewImage.src = `${preview.preview_url}?t=${Date.now()}`;
-      previewImage.style.display = "block";
-      previewEmpty.style.display = "none";
+      loadBBoxDrafts(jobId);
       renderTracks(preview.tracks || []);
+      previewImage.onload = () => {
+        sanitizeBBoxDrafts();
+        previewMedia.style.display = "block";
+        renderOverlays();
+      };
+      previewImage.src = `${preview.editable_preview_url || preview.preview_url}?t=${Date.now()}`;
+      previewEmpty.style.display = "none";
       setProgress(0);
       setOutput("Ready to clean", "Review targets, then start video cleanup.");
       confirmBtn.style.display = "";
@@ -1172,11 +1512,6 @@
       }
     }
 
-    function selectedCandidateIds() {
-      return Array.from(candidateList.querySelectorAll("input:checked"))
-        .map((input) => input.value);
-    }
-
     async function confirmRun() {
       if (!currentJobId) {
         return;
@@ -1193,7 +1528,14 @@
       setProgress(0);
       setOutput("Cleaning video", "This can take a while on CPU.");
       try {
-        await postJson(`/jobs/${currentJobId}/confirm`, { selected_ids: selectedIds });
+        const overrides = Object.fromEntries(
+          Object.entries(bboxDrafts).filter(([trackId]) => selectedIds.includes(trackId)),
+        );
+        await postJson(`/jobs/${currentJobId}/confirm`, {
+          selected_ids: selectedIds,
+          bbox_overrides: overrides,
+        });
+        clearBBoxDrafts();
         startProgressStream(currentJobId);
       } catch (error) {
         setOutput("Cleanup stopped", error.message);
@@ -1207,6 +1549,7 @@
     submitBtn.addEventListener("click", submit);
     confirmBtn.addEventListener("click", confirmRun);
     resetBtn.addEventListener("click", reset);
+    window.addEventListener("resize", updateOverlayPositions);
     restoreJob().catch((error) => {
       setOutput("Restore stopped", error.message);
       setStatus(error.message, "error");

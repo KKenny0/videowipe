@@ -566,6 +566,20 @@ def test_validate_rejects_inverted_bbox():
         validate_plan(plan)
 
 
+def test_validate_rejects_bbox_outside_source():
+    plan = _valid_plan()
+    plan.tracks[0].bbox = (10, 80, 100, 95)
+    with pytest.raises(InvalidInputError, match="exceeds source"):
+        validate_plan(plan)
+
+
+def test_validate_rejects_non_integer_bbox():
+    plan = _valid_plan()
+    plan.tracks[0].bbox = (10, 80, 90.5, 95)
+    with pytest.raises(InvalidInputError, match="4 non-negative ints"):
+        validate_plan(plan)
+
+
 def test_validate_rejects_wrong_mask_shape():
     plan = _valid_plan()
     plan.tracks[0].mask = np.zeros((50, 50), dtype=np.uint8)  # source is 100x100
@@ -617,6 +631,18 @@ def test_load_rejects_asset_sha_mismatch(tmp_path):
         fh.write(b"tampered")
     with pytest.raises(InvalidInputError, match="sha256 mismatch"):
         load_wipe_plan(str(tmp_path / JSON_FILENAME))
+
+
+def test_load_rejects_float_bbox_in_json_without_coercion(tmp_path):
+    plan = _plan_with_two_tracks()
+    save_wipe_plan(plan, str(tmp_path))
+    plan_path = tmp_path / JSON_FILENAME
+    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    payload["tracks"][0]["bbox"][2] = 90.5
+    plan_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(InvalidInputError, match="4 non-negative ints"):
+        load_wipe_plan(str(plan_path))
 
 
 def test_load_rejects_mask_key_not_in_npz(tmp_path):

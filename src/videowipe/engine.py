@@ -287,6 +287,7 @@ class WipeEngine:
             "auto_mask.png",
             "clean_candidates.json",
             "clean_preview.jpg",
+            "clean_preview_source.jpg",
             "benchmark.json",
             "wipe_plan.json",
             "wipe_plan_masks.npz",
