@@ -852,6 +852,56 @@ def test_formal_baseline_rejects_state_changed_during_evaluation(monkeypatch):
     assert events == ["validate", "capture"]
 
 
+@pytest.mark.parametrize("baseline_kind", ["fact", "decision"])
+def test_formal_baseline_state_change_prevents_report_publish(
+    tmp_path, monkeypatch, baseline_kind
+):
+    module = _load_eval_module()
+    _write_video(tmp_path / "sample.mp4")
+    indexed = np.zeros((8, 12), dtype=np.uint8)
+    indexed[3:6, 3:7] = 1
+    indexed[0:2, 0:2] = 2
+    fact_manifest = _write_manifest(tmp_path, indexed)
+    _fake_detector(module, indexed == 1)
+    monkeypatch.setattr(module, "_require_clean_git_worktree", lambda _paths: None)
+    states = iter([{"state": "before"}, {"state": "after"}])
+    monkeypatch.setattr(module, "_baseline_provenance", lambda *_args: next(states))
+
+    output = tmp_path / f"{baseline_kind}-report.json"
+    if baseline_kind == "fact":
+        def evaluate():
+            return module.evaluate_fact_baseline(
+                str(tmp_path),
+                str(fact_manifest),
+                str(output),
+                str(tmp_path / "previews"),
+                require_clean_git=True,
+            )
+    else:
+        decision_manifest = _write_decision_manifest(
+            tmp_path,
+            [
+                {
+                    "id": "default",
+                    "file": "sample.mp4",
+                    "request": {},
+                    "expected_actions": {"1": "remove", "2": "keep"},
+                }
+            ],
+        )
+        def evaluate():
+            return module.evaluate_decision_baseline(
+                str(tmp_path),
+                str(decision_manifest),
+                str(output),
+                require_clean_git=True,
+            )
+
+    with pytest.raises(RuntimeError, match="changed during evaluation"):
+        evaluate()
+    assert not output.exists()
+
+
 def test_detector_weight_provenance_detects_replacement(tmp_path):
     module = _load_eval_module()
     weight = tmp_path / "detector.onnx"
@@ -880,6 +930,20 @@ def test_detector_weight_provenance_uses_load_time_digest(tmp_path):
 
     with pytest.raises(RuntimeError, match="Detector weight changed"):
         module._record_detector_weight({}, draft)
+
+
+def test_baseline_custody_does_not_overwrite_detector_weight(tmp_path, monkeypatch):
+    module = _load_eval_module()
+    weight = tmp_path / "detector.onnx"
+    weight.write_bytes(b"loaded")
+    draft = type("Draft", (), {"detector_weight": (str(weight), None)})()
+    monkeypatch.setattr(module, "_baseline_provenance", lambda *_args: {})
+    custody = module._BaselineCustody([], [], [], "balanced", "off", False)
+    custody.record_detector_weight(draft)
+
+    with pytest.raises(ValueError, match="overwrite an input"):
+        custody.publish(str(weight), {})
+    assert weight.read_bytes() == b"loaded"
 
 
 def test_regression_compare_detects_removed_video_in_legacy_snapshot(tmp_path):

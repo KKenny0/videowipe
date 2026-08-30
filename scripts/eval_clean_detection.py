@@ -308,6 +308,65 @@ def _assert_detector_weights_unchanged(
             )
 
 
+class _BaselineCustody:
+    """Keep baseline evidence stable until its report is atomically published."""
+
+    def __init__(
+        self,
+        input_paths: list[tuple[str, Path]],
+        annotation_paths: list[tuple[str, Path]],
+        protected_paths: list[Path],
+        detect_mode: str,
+        ocr_mode: str,
+        require_clean_git: bool,
+        legacy_paths: list[tuple[str, Path]] | None = None,
+    ) -> None:
+        self._input_paths = input_paths
+        self._annotation_paths = annotation_paths
+        self._protected_paths = protected_paths
+        self._detect_mode = detect_mode
+        self._ocr_mode = ocr_mode
+        self._legacy_paths = legacy_paths
+        self._formal = require_clean_git
+        self._detector_weights: dict[Path, dict[str, str]] = {}
+        if self._formal:
+            _require_clean_git_worktree(self._protected_paths)
+        self._initial_provenance = self._capture()
+
+    def _capture(self) -> dict[str, Any]:
+        return _baseline_provenance(
+            self._input_paths,
+            self._annotation_paths,
+            self._detect_mode,
+            self._ocr_mode,
+            self._legacy_paths,
+        )
+
+    def record_detector_weight(self, draft: Any) -> None:
+        _record_detector_weight(self._detector_weights, draft)
+
+    def publish(self, output_path: str, report: dict[str, Any]) -> None:
+        if self._formal:
+            _assert_formal_state_unchanged(
+                self._initial_provenance,
+                self._capture,
+                self._protected_paths,
+            )
+            _assert_detector_weights_unchanged(self._detector_weights)
+        report["provenance"] = {
+            **self._initial_provenance,
+            "detector_weights": sorted(
+                self._detector_weights.values(),
+                key=lambda item: (item["filename"], item["sha256"]),
+            ),
+        }
+        _write_json_report(
+            Path(output_path),
+            report,
+            [*self._protected_paths, *self._detector_weights],
+        )
+
+
 def _evaluator_source_files() -> list[tuple[str, Path]]:
     return [
         ("scripts/eval_clean_detection.py", Path(__file__).resolve()),
@@ -944,16 +1003,15 @@ def evaluate_fact_baseline(
     protected_paths = [
         path for _, path in input_paths + annotation_paths + legacy_calibration_paths
     ] + [path for _, path in _evaluator_source_files()]
-    if require_clean_git:
-        _require_clean_git_worktree(protected_paths)
-    initial_provenance = _baseline_provenance(
+    custody = _BaselineCustody(
         input_paths,
         annotation_paths,
+        protected_paths,
         detect_mode,
         ocr_mode,
+        require_clean_git,
         legacy_calibration_paths,
     )
-    detector_weights: dict[Path, dict[str, str]] = {}
 
     for video_spec in manifest["videos"]:
         video_name = video_spec["file"]
@@ -961,7 +1019,7 @@ def evaluate_fact_baseline(
         draft, _default_selected, _static, execution_path = _detect_video(
             str(video_path), detect_mode, ocr_mode
         )
-        _record_detector_weight(detector_weights, draft)
+        custody.record_detector_weight(draft)
         shape = tuple(draft.frame_shape)
         # Build a WipePlan (default flow, no user direction) so the fact
         # baseline reflects the safety rule + temporal segments — the same
@@ -1055,30 +1113,9 @@ def evaluate_fact_baseline(
                 "frames": frame_reports,
             }
         )
-    if require_clean_git:
-        _assert_formal_state_unchanged(
-            initial_provenance,
-            lambda: _baseline_provenance(
-                input_paths,
-                annotation_paths,
-                detect_mode,
-                ocr_mode,
-                legacy_calibration_paths,
-            ),
-            protected_paths,
-        )
-        _assert_detector_weights_unchanged(detector_weights)
-    provenance = {
-        **initial_provenance,
-        "detector_weights": sorted(
-            detector_weights.values(),
-            key=lambda item: (item["filename"], item["sha256"]),
-        ),
-    }
     report = {
         "schema_version": FACT_BASELINE_REPORT_SCHEMA_VERSION,
         "report_kind": "detection_fact_baseline",
-        "provenance": provenance,
         "aggregation": {
             "frame_remove_union": "Mean across annotated frames with a visible remove target; compares the selected union with the remove union.",
             "visible_object": "Mean across visible annotation instances only; each object uses only selected candidates that overlap that object.",
@@ -1096,7 +1133,7 @@ def evaluate_fact_baseline(
         },
         "videos": video_reports,
     }
-    _write_json_report(Path(output_path), report, protected_paths)
+    custody.publish(output_path, report)
     return report
 
 
@@ -1138,12 +1175,14 @@ def evaluate_decision_baseline(
     protected_paths = [
         path for _, path in input_paths + annotation_paths
     ] + [path for _, path in _evaluator_source_files()]
-    if require_clean_git:
-        _require_clean_git_worktree(protected_paths)
-    initial_provenance = _baseline_provenance(
-        input_paths, annotation_paths, detect_mode, ocr_mode
+    custody = _BaselineCustody(
+        input_paths,
+        annotation_paths,
+        protected_paths,
+        detect_mode,
+        ocr_mode,
+        require_clean_git,
     )
-    detector_weights: dict[Path, dict[str, str]] = {}
 
     detections: dict[str, Any] = {}
     indexed_frames: dict[str, list[tuple[int, np.ndarray]]] = {}
@@ -1165,7 +1204,7 @@ def evaluate_decision_baseline(
             draft, _selected, _static, execution_path = _detect_video(
                 str(video_path), detect_mode, ocr_mode
             )
-            _record_detector_weight(detector_weights, draft)
+            custody.record_detector_weight(draft)
             detections[video_name] = (draft, execution_path)
             objects = {obj["id"]: obj for obj in video_spec["objects"]}
             shape = tuple(draft.frame_shape)
@@ -1333,22 +1372,6 @@ def evaluate_decision_baseline(
             }
         )
 
-    if require_clean_git:
-        _assert_formal_state_unchanged(
-            initial_provenance,
-            lambda: _baseline_provenance(
-                input_paths, annotation_paths, detect_mode, ocr_mode
-            ),
-            protected_paths,
-        )
-        _assert_detector_weights_unchanged(detector_weights)
-    provenance = {
-        **initial_provenance,
-        "detector_weights": sorted(
-            detector_weights.values(),
-            key=lambda item: (item["filename"], item["sha256"]),
-        ),
-    }
     annotated_candidate_evidence = [
         item
         for video_name in used_videos
@@ -1359,7 +1382,6 @@ def evaluate_decision_baseline(
         "schema_version": DECISION_BASELINE_REPORT_SCHEMA_VERSION,
         "report_kind": "decision_selection_baseline",
         "set_kind": manifest["set_kind"],
-        "provenance": provenance,
         "aggregation": {
             "unit": "Visible annotated object instance on a fixed frame.",
             "candidate_availability": "Whether any detected candidate overlaps an expected remove object.",
@@ -1407,7 +1429,7 @@ def evaluate_decision_baseline(
         ],
         "cases": case_reports,
     }
-    _write_json_report(Path(output_path), report, protected_paths)
+    custody.publish(output_path, report)
     return report
 
 
