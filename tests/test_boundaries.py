@@ -2030,10 +2030,10 @@ def test_blend_frame_regions_matches_whole_frame_float_reference():
         (False, True, 2),
     ],
 )
-def test_sttn_masks_model_input_before_preprocess(
+def test_sttn_preserves_model_input_before_preprocess(
     tmp_path, monkeypatch, temporal, production, output_count,
 ):
-    """Masked inference and the bounded production reader preserve pixels."""
+    """STTN sees source pixels; masks are applied only to the final blend."""
     from videowipe.inpainters.sttn import STTNInpainter
 
     height, width = 8, 64  # split_h=12 exercises H < split_h too.
@@ -2147,23 +2147,13 @@ def test_sttn_masks_model_input_before_preprocess(
 
     assert len(captured) == len(frames)
     assert inference_reader.index == len(frames)
-    resized_mask = cv2.resize(
-        mask[:, :, 0], (640, 120), interpolation=cv2.INTER_LINEAR,
-    )
-    for index, (source, model_input) in enumerate(zip(frames, captured)):
+    for source, model_input in zip(frames, captured):
         expected = cv2.resize(
             source, (640, 120), interpolation=cv2.INTER_LINEAR,
         ).astype(np.float32)
-        active_mask = resized_mask if not temporal or index == 1 else np.zeros_like(resized_mask)
-        assert np.array_equal(model_input[active_mask == 0], expected[active_mask == 0])
-        assert np.all(model_input[active_mask == 1] == 0.0)
-        soft = (active_mask > 0) & (active_mask < 1)
-        assert np.allclose(
-            model_input[soft],
-            expected[soft] * (1.0 - active_mask[soft])[:, None],
-        )
+        assert np.array_equal(model_input, expected)
     if temporal:
-        assert mask_indices == [0, 1, 0, 1, 2, 2]
+        assert mask_indices == [0, 1, 2]
     if production:
         assert output_reader.index == len(frames)
         assert output_reader.released

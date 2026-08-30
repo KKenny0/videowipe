@@ -72,24 +72,6 @@ def _blend_frame_regions(frame_ori, comp_frames, modes, mask):
     return frame
 
 
-def _masked_model_crop(image, mask, mode, output_size):
-    """Resize a crop and hide its removal mask before model inference."""
-    from_h, to_h = mode
-    image_crop = image[from_h:to_h]
-    image_resize = cv2.resize(
-        image_crop, output_size, interpolation=cv2.INTER_LINEAR,
-    ).astype(np.float32)
-    mask_crop = np.asarray(mask)[from_h:to_h]
-    if mask_crop.ndim == 3:
-        mask_crop = mask_crop[:, :, 0]
-    mask_resize = cv2.resize(
-        mask_crop.astype(np.float32), output_size,
-        interpolation=cv2.INTER_LINEAR,
-    )
-    mask_resize = np.clip(mask_resize, 0.0, 1.0)
-    return image_resize * (1.0 - mask_resize[:, :, None])
-
-
 def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
     """Inpaint a batch of frames through the model (backend-agnostic)."""
     video_length = len(frames)
@@ -281,16 +263,12 @@ class STTNInpainter:
                             )
                         if frames_hr is not None:
                             frames_hr.append(image)
-                        global_index = start_f + local_index
-                        model_mask = (
-                            np.asarray(job.frame_mask(global_index))
-                            if job.frame_mask is not None
-                            else job.mask
-                        )
                         for k in range(len(mode)):
-                            frames[k].append(_masked_model_crop(
-                                image, model_mask, mode[k], (w, h),
-                            ))
+                            from_h, to_h = mode[k]
+                            frames[k].append(cv2.resize(
+                                image[from_h:to_h], (w, h),
+                                interpolation=cv2.INTER_LINEAR,
+                            ).astype(np.float32))
 
                     futures = {
                         k: executor.submit(
