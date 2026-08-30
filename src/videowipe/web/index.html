@@ -854,6 +854,16 @@
     let selectedFile = null;
     let currentJobId = null;
     let stream = null;
+    const jobStorageKey = "videowipe.currentJobId";
+
+    function rememberJob(jobId) {
+      currentJobId = jobId;
+      if (jobId) {
+        sessionStorage.setItem(jobStorageKey, jobId);
+      } else {
+        sessionStorage.removeItem(jobStorageKey);
+      }
+    }
 
     function setStatus(text, tone = "") {
       statusEl.textContent = text;
@@ -915,7 +925,7 @@
         stream.close();
         stream = null;
       }
-      currentJobId = null;
+      rememberJob(null);
       selectedFile = null;
       fileInput.value = "";
       fileName.textContent = "MP4, MOV, or WebM";
@@ -1005,18 +1015,7 @@
       return response.json();
     }
 
-    async function waitForPreview(jobId) {
-      while (true) {
-        const status = await fetch(`/jobs/${jobId}`).then((r) => r.json());
-        if (status.state === "error") {
-          throw new Error(status.error || "Preview failed");
-        }
-        if (status.state === "preview_ready") {
-          break;
-        }
-        await sleep(900);
-      }
-
+    async function loadPreview(jobId) {
       const response = await fetch(`/jobs/${jobId}/preview`);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
@@ -1026,22 +1025,110 @@
       previewImage.src = `${preview.preview_url}?t=${Date.now()}`;
       previewImage.style.display = "block";
       previewEmpty.style.display = "none";
-      // Prefer the plan's tracks; fall back to candidates for one compat cycle.
-      const tracks = (preview.tracks && preview.tracks.length)
-        ? preview.tracks
-        : preview.candidates.map((candidate) => ({
-            id: candidate.id,
-            type: candidate.type,
-            label: candidate.label,
-            action: candidate.selected ? "remove" : "keep",
-            segments: [],
-          }));
-      renderTracks(tracks);
+      renderTracks(preview.tracks || []);
       setProgress(0);
       setOutput("Ready to clean", "Review targets, then start video cleanup.");
       confirmBtn.style.display = "";
       setStep("preview");
       setStatus("Preview ready", "ok");
+    }
+
+    async function waitForPreview(jobId) {
+      while (true) {
+        const response = await fetch(`/jobs/${jobId}`);
+        if (!response.ok) throw new Error("Preview job was not found");
+        const status = await response.json();
+        if (status.state === "error" || status.state === "cancelled") {
+          throw new Error(status.error || "Preview stopped");
+        }
+        if (status.state === "preview_ready") {
+          return loadPreview(jobId);
+        }
+        await sleep(900);
+      }
+    }
+
+    function showDone(jobId) {
+      setProgress(100);
+      downloadLink.href = `/jobs/${jobId}/download`;
+      downloadLink.style.display = "flex";
+      confirmBtn.style.display = "none";
+      setStep("download");
+      setOutput("Cleaned MP4 ready", "Download includes the original audio track.");
+      setStatus("Done", "ok");
+    }
+
+    function showFailure(data) {
+      const message = data.error || "Processing failed";
+      setOutput(data.state === "cancelled" ? "Job cancelled" : "Cleanup stopped", message);
+      setStatus(message, "error");
+      confirmBtn.disabled = data.state !== "preview_ready";
+    }
+
+    function startProgressStream(jobId) {
+      if (stream) stream.close();
+      stream = new EventSource(`/jobs/${jobId}/progress`);
+      stream.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        setProgress((data.progress || 0) * 100);
+        if (data.state === "done") {
+          stream.close();
+          stream = null;
+          showDone(jobId);
+        } else if (data.state === "error" || data.state === "cancelled") {
+          stream.close();
+          stream = null;
+          showFailure(data);
+        }
+      };
+      stream.onerror = () => {
+        if (stream) {
+          stream.close();
+          stream = null;
+        }
+        setOutput("Connection closed", "Progress updates stopped before completion.");
+        setStatus("Progress stream closed", "error");
+      };
+    }
+
+    async function restoreJob() {
+      let status = null;
+      const storedId = sessionStorage.getItem(jobStorageKey);
+      if (storedId) {
+        const response = await fetch(`/jobs/${storedId}`);
+        if (response.ok) status = await response.json();
+        else sessionStorage.removeItem(jobStorageKey);
+      }
+      if (!status) {
+        const response = await fetch("/jobs/current");
+        if (response.ok) status = await response.json();
+      }
+      if (!status || status.state === "idle") return;
+
+      rememberJob(status.id);
+      setProgress((status.progress || 0) * 100);
+      if (status.state === "pending") {
+        submitBtn.disabled = true;
+        confirmBtn.disabled = true;
+        setStep("preview");
+        setOutput("Detecting targets", "Restored the active preview job.");
+        setStatus("Detecting");
+        await waitForPreview(status.id);
+      } else if (status.state === "preview_ready") {
+        submitBtn.disabled = true;
+        await loadPreview(status.id);
+      } else if (status.state === "running") {
+        submitBtn.disabled = true;
+        confirmBtn.disabled = true;
+        setStep("download");
+        setOutput("Cleaning video", "Restored the active cleanup job.");
+        setStatus("Processing");
+        startProgressStream(status.id);
+      } else if (status.state === "done") {
+        showDone(status.id);
+      } else {
+        showFailure(status);
+      }
     }
 
     async function submit() {
@@ -1071,7 +1158,7 @@
           throw new Error(payload.detail || response.statusText);
         }
         const job = await response.json();
-        currentJobId = job.id;
+        rememberJob(job.id);
         await waitForPreview(currentJobId);
       } catch (error) {
         const isBusy = error.message.includes("server busy");
@@ -1107,35 +1194,7 @@
       setOutput("Cleaning video", "This can take a while on CPU.");
       try {
         await postJson(`/jobs/${currentJobId}/confirm`, { selected_ids: selectedIds });
-        stream = new EventSource(`/jobs/${currentJobId}/progress`);
-        stream.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          setProgress((data.progress || 0) * 100);
-          if (data.state === "done") {
-            stream.close();
-            stream = null;
-            setProgress(100);
-            downloadLink.href = `/jobs/${currentJobId}/download`;
-            downloadLink.style.display = "flex";
-            confirmBtn.style.display = "none";
-            setOutput("Cleaned MP4 ready", "Download includes the original audio track.");
-            setStatus("Done", "ok");
-          }
-          if (data.state === "error") {
-            stream.close();
-            stream = null;
-            setOutput("Cleanup stopped", data.error || "Processing failed");
-            setStatus(data.error || "Processing failed", "error");
-          }
-        };
-        stream.onerror = () => {
-          if (stream) {
-            stream.close();
-            stream = null;
-          }
-          setOutput("Connection closed", "Progress updates stopped before completion.");
-          setStatus("Progress stream closed", "error");
-        };
+        startProgressStream(currentJobId);
       } catch (error) {
         setOutput("Cleanup stopped", error.message);
         setStatus(error.message, "error");
@@ -1148,6 +1207,10 @@
     submitBtn.addEventListener("click", submit);
     confirmBtn.addEventListener("click", confirmRun);
     resetBtn.addEventListener("click", reset);
+    restoreJob().catch((error) => {
+      setOutput("Restore stopped", error.message);
+      setStatus(error.message, "error");
+    });
 
     ["dragenter", "dragover"].forEach((eventName) => {
       dropzone.addEventListener(eventName, (event) => {

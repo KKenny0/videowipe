@@ -17,6 +17,9 @@ class Job:
     output_dir: str
     state: JobState = "pending"
     progress: float = 0.0
+    phase: str = "upload"
+    warnings: list[str] = field(default_factory=list)
+    timings: dict[str, float] = field(default_factory=dict)
     error: Optional[str] = None
     selected_ids: list[str] = field(default_factory=list)
     default_selected_ids: list[str] = field(default_factory=list)
@@ -29,6 +32,9 @@ class Job:
                 "id": self.id,
                 "state": self.state,
                 "progress": self.progress,
+                "phase": self.phase,
+                "warnings": list(self.warnings),
+                "timings": dict(self.timings),
                 "error": self.error,
                 "selected_ids": list(self.selected_ids),
                 "default_selected_ids": list(self.default_selected_ids),

@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from videowipe.api import ProgressEvent, WipeResult
 from videowipe.cli import _build_parser
-from videowipe.plan import build_wipe_plan, compute_source, save_wipe_plan
+from videowipe.plan import build_wipe_plan, compute_source, load_wipe_plan, save_wipe_plan
 from videowipe.server import jobs
 from videowipe.server import app as server_app
 
@@ -52,71 +53,74 @@ class FakeEngine:
     def __init__(self):
         self.calls = []
 
-    def process(self, *, video, output, preview=False, intent=None, mask=None, progress=None, **kwargs):
+    def plan(self, request, on_progress=None):
         self.calls.append(
             {
-                "video": video,
-                "output": output,
-                "preview": preview,
-                "intent": intent,
-                "mask": mask,
-                "plan": kwargs.get("plan"),
+                "method": "plan",
+                "video": request.video,
+                "output": request.output_dir,
+                "preview": request.preview,
+                "intent": request.intent,
+                "mask": request.mask,
+                "plan": request.plan,
             }
         )
-        output_path = Path(output)
+        if on_progress is not None:
+            on_progress(ProgressEvent("detect", 0, 0))
+            on_progress(ProgressEvent("persist", 1, 1))
+        output_path = Path(request.output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+        candidates = {
+            "candidates": [
+                {
+                    "id": "c1", "type": "subtitle", "label": "bottom subtitle",
+                    "bbox": [10, 50, 86, 60], "confidence": 0.9,
+                    "frame_fraction": 1.0, "reason": "wide bottom text",
+                    "default_remove": True, "text_samples": ["subtitle"],
+                    "selected": True,
+                },
+                {
+                    "id": "c2", "type": "watermark", "label": "top watermark",
+                    "bbox": [4, 4, 28, 16], "confidence": 0.6,
+                    "frame_fraction": 1.0, "reason": "edge text",
+                    "default_remove": False, "text_samples": [], "selected": False,
+                },
+            ]
+        }
+        (output_path / "clean_candidates.json").write_text(
+            json.dumps(candidates), encoding="utf-8",
+        )
+        preview_image = np.zeros((64, 96, 3), dtype=np.uint8)
+        preview_image[50:60, 10:86] = (0, 200, 0)
+        cv2.imwrite(str(output_path / "clean_preview.jpg"), preview_image)
+        mask_image = np.zeros((64, 96), dtype=np.uint8)
+        mask_image[50:60, 10:86] = 255
+        cv2.imwrite(str(output_path / "auto_mask.png"), mask_image)
+        return self._write_plan(request.video, output_path)
 
-        if preview:
-            candidates = {
-                "candidates": [
-                    {
-                        "id": "c1",
-                        "type": "subtitle",
-                        "label": "bottom subtitle",
-                        "bbox": [10, 50, 86, 60],
-                        "confidence": 0.9,
-                        "frame_fraction": 1.0,
-                        "reason": "wide bottom text",
-                        "default_remove": True,
-                        "text_samples": ["subtitle"],
-                        "selected": True,
-                    },
-                    {
-                        "id": "c2",
-                        "type": "watermark",
-                        "label": "top watermark",
-                        "bbox": [4, 4, 28, 16],
-                        "confidence": 0.6,
-                        "frame_fraction": 1.0,
-                        "reason": "edge text",
-                        "default_remove": False,
-                        "text_samples": [],
-                        "selected": False,
-                    },
-                ]
+    def run(self, request, on_progress=None):
+        plan = load_wipe_plan(request.plan, video_path=request.video)
+        self.calls.append(
+            {
+                "method": "run",
+                "video": request.video,
+                "output": request.output_dir,
+                "preview": request.preview,
+                "intent": request.intent,
+                "mask": request.mask,
+                "plan": plan,
             }
-            (output_path / "clean_candidates.json").write_text(
-                json.dumps(candidates),
-                encoding="utf-8",
-            )
-            preview_image = np.zeros((64, 96, 3), dtype=np.uint8)
-            preview_image[50:60, 10:86] = (0, 200, 0)
-            cv2.imwrite(str(output_path / "clean_preview.jpg"), preview_image)
-            mask_image = np.zeros((64, 96), dtype=np.uint8)
-            mask_image[50:60, 10:86] = 255
-            cv2.imwrite(str(output_path / "auto_mask.png"), mask_image)
-            # Phase A: the real engine also writes a WipePlan during preview.
-            # Build one bound to this test video so the server's plan-driven
-            # confirm path can load + mutate + execute it.
-            self._write_plan(video, output_path)
-            return str(output_path)
-
-        if progress is not None:
-            progress(4, 8)
-            progress(8, 8)
+        )
+        if on_progress is not None:
+            on_progress(ProgressEvent("inpaint", 4, 8))
+            on_progress(ProgressEvent("inpaint", 8, 8))
+        output_path = Path(request.output_dir)
         result = output_path / "input_clean.mp4"
-        shutil.copyfile(video, result)
-        return str(result)
+        shutil.copyfile(request.video, result)
+        return WipeResult(
+            output_path=str(result), backend="fake", mask_source="auto",
+            timings={"inpaint": 0.01}, warnings=("fake warning",),
+        )
 
     @staticmethod
     def _write_plan(video, output_path):
@@ -147,6 +151,7 @@ class FakeEngine:
             frame_shape=(64, 96),
         )
         save_wipe_plan(plan, str(output_path))
+        return plan
 
     def cleanup(self):
         pass
@@ -206,6 +211,9 @@ def test_create_job_returns_pending(client, tmp_path):
     body = response.json()
     assert body["id"]
     assert body["state"] == "pending"
+    assert body["phase"] in {"upload", "plan", "detect", "persist"}
+    assert isinstance(body["warnings"], list)
+    assert isinstance(body["timings"], dict)
 
 
 def test_second_job_while_busy_returns_409(client, tmp_path):
@@ -278,6 +286,10 @@ def test_preview_returns_candidates(client, tmp_path):
         "c2": "keep",
     }
     assert all(track.get("segments") is not None for track in tracks)
+    snapshot = test_client.get(f"/jobs/{job_id}").json()
+    assert snapshot["phase"] == "preview"
+    assert snapshot["timings"]["upload_s"] >= 0
+    assert snapshot["timings"]["plan_s"] >= 0
 
 
 def test_confirm_runs_and_progress_sse(client, tmp_path):
@@ -307,6 +319,68 @@ def test_confirm_runs_and_progress_sse(client, tmp_path):
     assert confirm_call["plan"] is not None
     actions = {track.id: track.action for track in confirm_call["plan"].tracks}
     assert actions == {"c1": "remove", "c2": "keep"}
+    snapshot = test_client.get(f"/jobs/{job_id}").json()
+    assert snapshot["phase"] == "complete"
+    assert snapshot["warnings"] == ["fake warning"]
+    assert snapshot["timings"]["inpaint"] == 0.01
+    assert snapshot["timings"]["run_wall_s"] >= 0
+
+
+def test_confirm_rejects_id_present_only_in_candidates_json(client, tmp_path):
+    test_client, _ = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+
+    candidates_path = tmp_path / "jobs" / job_id / "clean_candidates.json"
+    payload = json.loads(candidates_path.read_text(encoding="utf-8"))
+    payload["candidates"].append({"id": "candidate-only", "selected": True})
+    candidates_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = test_client.post(
+        f"/jobs/{job_id}/confirm",
+        json={"selected_ids": ["candidate-only"]},
+    )
+
+    assert response.status_code == 400
+    assert "candidate-only" in response.json()["detail"]
+    assert test_client.get(f"/jobs/{job_id}").json()["state"] == "preview_ready"
+
+
+def test_confirm_rejects_corrupt_plan_without_starting_job(client, tmp_path):
+    test_client, _ = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    plan_path = tmp_path / "jobs" / job_id / "wipe_plan.json"
+    plan_path.write_text("{", encoding="utf-8")
+
+    response = test_client.post(
+        f"/jobs/{job_id}/confirm",
+        json={"selected_ids": ["c1"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job plan is invalid"
+    assert test_client.get(f"/jobs/{job_id}").json()["state"] == "preview_ready"
+
+
+def test_web_page_contains_refresh_recovery_contract(client):
+    test_client, _ = client
+
+    page = test_client.get("/").text
+
+    assert 'sessionStorage.getItem(jobStorageKey)' in page
+    assert 'fetch("/jobs/current")' in page
+    assert 'fetch(`/jobs/${storedId}`)' in page
+    assert "async function restoreJob()" in page
+    assert "startProgressStream(status.id)" in page
+    assert 'status.state === "preview_ready") {\n        submitBtn.disabled = true;' in page
+    assert 'status.state === "running") {\n        submitBtn.disabled = true;' in page
+    assert "renderTracks(preview.tracks || [])" in page
+    assert "preview.candidates.map" not in page
 
 
 def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):
@@ -364,36 +438,21 @@ def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):
     }
 
 
-def test_confirm_without_selected_ids_uses_wipe_plan_actions(client, tmp_path, monkeypatch):
-    """A no-body confirm must follow the WipePlan's actions, not a stale
-    clean_candidates.json default. Simulate migration-period drift: the
-    candidate file marks c2 (a safety-kept logo) selected, but the plan
-    keeps it. Confirming with an empty body must still remove only c1."""
+def test_confirm_without_selected_ids_uses_current_wipe_plan_actions(client, tmp_path):
+    """A no-body confirm follows an Agent-edited plan, not stale job defaults."""
     test_client, fake = client
     video = tmp_path / "input.mp4"
     _write_test_video(video)
-
-    # Drift the candidate default so it disagrees with the plan: c2 is
-    # selected in clean_candidates.json but kept in wipe_plan.json.
-    original_load_candidates = server_app._load_candidates
-
-    def _drifting_load_candidates(job):
-        candidates = original_load_candidates(job)
-        for candidate in candidates:
-            if candidate["id"] == "c2":
-                candidate["selected"] = True
-        return candidates
-
-    monkeypatch.setattr(server_app, "_load_candidates", _drifting_load_candidates)
 
     create_response = _post_video(test_client, video)
     job_id = create_response.json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
 
-    preview = test_client.get(f"/jobs/{job_id}/preview").json()
-    # The stale candidate default may still surface in `candidates`, but the
-    # plan-driven default selection must list only the remove track.
-    assert preview["default_selected_ids"] == ["c1"]
+    plan_path = tmp_path / "jobs" / job_id / "wipe_plan.json"
+    plan = load_wipe_plan(str(plan_path))
+    for track in plan.tracks:
+        track.action = "remove" if track.id == "c2" else "keep"
+    save_wipe_plan(plan, str(plan_path.parent))
 
     confirm = test_client.post(f"/jobs/{job_id}/confirm", json={})
     assert confirm.status_code == 200
@@ -401,8 +460,8 @@ def test_confirm_without_selected_ids_uses_wipe_plan_actions(client, tmp_path, m
 
     executed = fake.calls[-1]["plan"]
     assert {track.id: track.action for track in executed.tracks} == {
-        "c1": "remove",
-        "c2": "keep",
+        "c1": "keep",
+        "c2": "remove",
     }
 
 

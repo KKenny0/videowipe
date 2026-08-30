@@ -11,8 +11,15 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from videowipe.api import ProgressEvent, WipeRequest
 from videowipe.engine import WipeEngine
-from videowipe.plan import JSON_FILENAME, load_wipe_plan, save_wipe_plan
+from videowipe.errors import InvalidInputError
+from videowipe.plan import (
+    JSON_FILENAME,
+    load_wipe_plan,
+    save_wipe_plan,
+    validate_plan,
+)
 from videowipe.server.jobs import (
     Job,
     JobBusy,
@@ -53,8 +60,16 @@ def _get_engine() -> WipeEngine:
 def _set_error(job: Job, exc: Exception) -> None:
     with job.lock:
         job.state = "error"
+        job.phase = "error"
         job.error = str(exc)
     release_job(job.id)
+
+
+def _update_progress(job: Job, event: ProgressEvent) -> None:
+    with job.lock:
+        job.phase = event.phase
+        if event.fraction is not None:
+            job.progress = event.fraction
 
 
 def _load_candidates(job: Job) -> list[dict]:
@@ -66,52 +81,34 @@ def _load_candidates(job: Job) -> list[dict]:
 
 
 def _load_tracks(job: Job) -> list[dict]:
-    """Metadata-only track view of the plan for the UI; empty if absent.
-
-    Read as plain JSON (no SHA/mask validation) — this is display only. The
-    plan is validated when it is executed, not when it is shown.
-    """
+    """Return validated metadata-only tracks from the job's WipePlan."""
     path = Path(job.output_dir) / JSON_FILENAME
     if not path.exists():
         return []
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh).get("tracks", [])
+    plan = load_wipe_plan(str(path), load_masks=False)
+    return [track.to_dict() for track in plan.tracks]
 
 
 def _run_preview(job: Job, intent: str | None) -> None:
     try:
-        _get_engine().process(
-            video=job.video_path,
-            output=job.output_dir,
-            intent=intent or None,
-            preview=True,
+        started = time.perf_counter()
+        plan = _get_engine().plan(
+            WipeRequest(
+                video=job.video_path,
+                output_dir=job.output_dir,
+                intent=intent or None,
+                preview=True,
+            ),
+            on_progress=lambda event: _update_progress(job, event),
         )
-        candidates = _load_candidates(job)
-        # WipePlan is the single source of truth for remove/keep once it
-        # exists. Derive the default confirmation selection from its track
-        # actions so a stale clean_candidates.json (whose `selected` field
-        # predates the plan) cannot silently flip a safety-kept track — e.g.
-        # a persistent top logo the plan keeps — to remove on a no-body
-        # confirm. The candidate `selected` field stays as a fallback for
-        # jobs that predate the plan. Check file existence, not `if tracks`,
-        # so a present-but-empty plan is not mistaken for an old job.
-        plan_path = Path(job.output_dir) / JSON_FILENAME
-        if plan_path.exists():
-            default_selected = [
-                track["id"]
-                for track in _load_tracks(job)
-                if track.get("action") == "remove"
-            ]
-        else:
-            default_selected = [
-                candidate["id"]
-                for candidate in candidates
-                if candidate.get("selected")
-            ]
+        default_selected = [track.id for track in plan.remove_tracks]
         with job.lock:
             job.default_selected_ids = default_selected
             job.selected_ids = list(default_selected)
             job.progress = 0.0
+            job.phase = "preview"
+            job.warnings = list(plan.warnings)
+            job.timings["plan_s"] = time.perf_counter() - started
             job.state = "preview_ready"
     except Exception as exc:
         _set_error(job, exc)
@@ -119,44 +116,23 @@ def _run_preview(job: Job, intent: str | None) -> None:
 
 def _run_inpaint(job: Job) -> None:
     try:
-        with job.lock:
-            selected_ids = list(job.selected_ids)
-
-        # Phase A wrote wipe_plan.json + .npz during preview. Confirm overrides
-        # each track's action from the selection (chosen ids → remove, the rest
-        # → keep), persists the confirmed plan, and executes it. This uses the
-        # plan's precise per-track NPZ masks and temporal segments instead of
-        # reconstructing a mask from bboxes, so a changed selection no longer
-        # degrades to an approximation and the default selection runs temporally
-        # (closing subtitle-gap false erasures on the web path too).
-        #
-        # Load without video_path: load_wipe_plan otherwise enforces
-        # require_remove on the DEFAULT plan (before the selection is applied),
-        # which would reject the legitimate case of toggling a track to remove
-        # when the default plan is all-keep (e.g. a video whose only overlay is
-        # a safety-kept logo). engine.process re-validates the mutated plan and
-        # re-derives the source SHA, so video binding and NPZ integrity are
-        # preserved; load_wipe_plan still verifies the NPZ sha here.
-        plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
-        selected = set(selected_ids)
-        for track in plan.tracks:
-            track.action = "remove" if track.id in selected else "keep"
-            track.decision_reason = f"user-confirm:{track.action}"
-        save_wipe_plan(plan, job.output_dir)
-
-        def _progress(done: int, total: int) -> None:
-            with job.lock:
-                job.progress = done / total if total else 0.0
-
-        result_path = _get_engine().process(
-            video=job.video_path,
-            plan=plan,
-            output=job.output_dir,
-            progress=_progress,
+        plan_path = str(Path(job.output_dir) / JSON_FILENAME)
+        started = time.perf_counter()
+        result = _get_engine().run(
+            WipeRequest(
+                video=job.video_path,
+                output_dir=job.output_dir,
+                plan=plan_path,
+            ),
+            on_progress=lambda event: _update_progress(job, event),
         )
         with job.lock:
-            job.result_path = result_path
+            job.result_path = result.output_path
             job.progress = 1.0
+            job.phase = "complete"
+            job.warnings = list(result.warnings)
+            job.timings.update(result.timings)
+            job.timings["run_wall_s"] = time.perf_counter() - started
             job.state = "done"
     except Exception as exc:
         _set_error(job, exc)
@@ -182,6 +158,7 @@ async def create(
     suffix = Path(video.filename or "").suffix or ".mp4"
     input_path = Path(job.output_dir) / f"input{suffix}"
     try:
+        started = time.perf_counter()
         with input_path.open("wb") as fh:
             while True:
                 chunk = await video.read(1024 * 1024)
@@ -190,6 +167,8 @@ async def create(
                 fh.write(chunk)
         with job.lock:
             job.video_path = str(input_path)
+            job.phase = "plan"
+            job.timings["upload_s"] = time.perf_counter() - started
         threading.Thread(target=_run_preview, args=(job, intent), daemon=True).start()
         return job.snapshot()
     except Exception as exc:
@@ -267,22 +246,36 @@ def confirm(job_id: str, body: ConfirmRequest):
     with job.lock:
         if job.state != "preview_ready":
             raise HTTPException(status_code=409, detail=f"job is {job.state}")
+        try:
+            plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
+        except (InvalidInputError, OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="job plan is invalid") from exc
         selected_ids = (
             list(body.selected_ids)
             if body.selected_ids is not None
-            else list(job.default_selected_ids)
+            else [track.id for track in plan.remove_tracks]
         )
         if not selected_ids:
             raise HTTPException(status_code=400, detail="select at least one target")
-        known_ids = {candidate["id"] for candidate in _load_candidates(job)}
+        known_ids = {track.id for track in plan.tracks}
         unknown_ids = sorted(set(selected_ids) - known_ids)
         if unknown_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"unknown candidate id: {', '.join(unknown_ids)}",
             )
+        selected = set(selected_ids)
+        for track in plan.tracks:
+            track.action = "remove" if track.id in selected else "keep"
+            track.decision_reason = f"user-confirm:{track.action}"
+        try:
+            validate_plan(plan, require_remove=True)
+        except InvalidInputError as exc:
+            raise HTTPException(status_code=409, detail="job plan is invalid") from exc
+        save_wipe_plan(plan, job.output_dir)
         job.selected_ids = selected_ids
         job.progress = 0.0
+        job.phase = "prepare"
         job.state = "running"
     threading.Thread(target=_run_inpaint, args=(job,), daemon=True).start()
     return job.snapshot()
