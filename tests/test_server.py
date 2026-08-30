@@ -441,7 +441,7 @@ def test_confirm_rejects_corrupt_plan_without_starting_job(client, tmp_path):
 def test_web_page_contains_refresh_recovery_contract(client):
     test_client, _ = client
 
-    page = test_client.get("/").text
+    page = test_client.get("/").text.replace("\r\n", "\n")
 
     assert 'sessionStorage.getItem(jobStorageKey)' in page
     assert 'fetch("/jobs/current")' in page
