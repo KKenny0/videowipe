@@ -108,7 +108,7 @@ class WipeEngine:
         weight: Path to model weight file (.pth for PyTorch, .onnx for ONNX).
             For STTN, None auto-resolves the default weights. Custom adapters
             receive None in their ``load()`` method when no weight is set.
-        device: "auto", "cuda", or "cpu". Only used with .pth weights.
+        device: "auto", "cuda", "mps", or "cpu". Only used with .pth weights.
         gap: Frames per inpainting segment. The conservative default of 25
             balances context and performance; larger values provide more
             context but have superlinear compute and memory cost.

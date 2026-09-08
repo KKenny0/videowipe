@@ -323,6 +323,8 @@ videowipe clean input.mp4 --external-command "python scripts/propainter_wipe.py"
 
 ## Python API（流水线 / 批量）
 
+在支持的 Mac 上，Torch 自动使用 MPS（CUDA → MPS → CPU）；Python API 仍可显式指定 `device="cpu"`。时间遮罩在当前输出段没有移除像素时跳过相应裁剪带，有目标的裁剪带仍使用完整上下文。
+
 命令行、网页、Docker 用的是同一套引擎。要做批处理或接入自己的 Worker 时用这里。
 
 ```python

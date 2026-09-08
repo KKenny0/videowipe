@@ -2146,7 +2146,7 @@ def test_sttn_preserves_model_input_before_preprocess(
         return
     inpainter.inpaint(job)
 
-    assert len(captured) == len(frames)
+    assert len(captured) == (2 if temporal else len(frames))
     assert inference_reader.index == len(frames)
     for source, model_input in zip(frames, captured):
         expected = cv2.resize(

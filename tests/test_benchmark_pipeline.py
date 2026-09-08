@@ -110,6 +110,7 @@ def test_file_input_repeat_isolated_and_median_aggregated(tmp_path, monkeypatch)
         "detect_mode": "balanced",
         "ocr": "off",
         "gap": 17,
+        "device": "auto",
         "repeat": 3,
     }
     assert all(
@@ -124,3 +125,32 @@ def test_file_input_repeat_isolated_and_median_aggregated(tmp_path, monkeypatch)
         ),
     }
     assert all(call["gap"] == 17 for call in calls)
+
+
+def test_metadata_failure_preserves_processing_error_and_cleans_up(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    script = _load_script()
+    cleaned = []
+
+    def unavailable_metadata():
+        raise FileNotFoundError("weight removed")
+
+    class Engine:
+        def __init__(self, **kwargs):
+            assert kwargs["device"] == "mps"
+            self._task_impl = SimpleNamespace(backend=SimpleNamespace(
+                benchmark_metadata=unavailable_metadata,
+            ))
+
+        def process(self, **kwargs):
+            raise RuntimeError("inference failed")
+
+        def cleanup(self):
+            cleaned.append(True)
+
+    monkeypatch.setattr(script, "WipeEngine", Engine)
+    result = script._benchmark_video("video.mp4", None, str(tmp_path), "auto", device="mps")
+    assert result["error"] == "inference failed"
+    assert result["runtime"] == {"metadata_error": "weight removed"}
+    assert cleaned == [True]

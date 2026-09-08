@@ -119,6 +119,7 @@ def _benchmark_video(
     detect_mode: str = "balanced",
     ocr_mode: str = "auto",
     gap: int = 25,
+    device: str = "auto",
 ) -> dict:
     """Run the full clean pipeline on one video and collect benchmark data."""
     os.makedirs(output_dir, exist_ok=True)
@@ -129,8 +130,10 @@ def _benchmark_video(
         detect_mode=detect_mode,
         ocr=ocr_mode,
         gap=gap,
+        device=device,
     )
     result = None
+    runtime = {}
     try:
         engine.process(
             video=video_path,
@@ -140,7 +143,14 @@ def _benchmark_video(
     except Exception as exc:
         result = {"video": os.path.basename(video_path), "error": str(exc)}
     finally:
-        engine.cleanup()
+        backend = getattr(getattr(engine, "_task_impl", None), "backend", None)
+        try:
+            if hasattr(backend, "benchmark_metadata"):
+                runtime = backend.benchmark_metadata()
+        except Exception as exc:
+            runtime = {"metadata_error": str(exc)}
+        finally:
+            engine.cleanup()
     if result is None:
         bm_path = os.path.join(output_dir, "benchmark.json")
         if os.path.exists(bm_path):
@@ -152,6 +162,7 @@ def _benchmark_video(
                 "video": os.path.basename(video_path),
                 "error": "benchmark.json not found",
             }
+    result["runtime"] = runtime
     result["wall_time_s"] = round(time.monotonic() - started, 3)
     result["process_peak_rss_so_far_mib"] = _process_peak_rss_so_far_mib()
     result["output_dir"] = os.path.abspath(output_dir)
@@ -163,6 +174,7 @@ def main() -> None:
         description="Benchmark VideoWipe pipeline",
         epilog=f"Memory metric: {_RSS_NOTE}",
     )
+    parser.add_argument("--device", default="auto", help="Torch device: auto, cpu, mps, cuda")
     parser.add_argument("input_path", help="Video file or directory containing videos")
     parser.add_argument(
         "--mask-dir", help="Directory with manual masks ({stem}_mask.png)"
@@ -235,6 +247,7 @@ def main() -> None:
                 detect_mode=args.detect_mode,
                 ocr_mode=args.ocr,
                 gap=args.gap,
+                device=args.device,
             )
             run["run"] = repeat_index
             runs.append(run)
@@ -269,6 +282,7 @@ def main() -> None:
                     "detect_mode": args.detect_mode,
                     "ocr": args.ocr,
                     "gap": args.gap,
+                    "device": args.device,
                     "repeat": args.repeat,
                 },
                 "metric_notes": {

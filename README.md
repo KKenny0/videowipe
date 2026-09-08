@@ -327,6 +327,8 @@ Multilingual music video (Korean + Burmese subtitles, 852×480, 10s). Same mask 
 
 ## Python API (for pipelines)
 
+On supported Macs, Torch automatically uses MPS (CUDA → MPS → CPU). Explicit `device="cpu"` remains available through the Python API. Temporal plans skip crop bands with no active removal pixels in the emitted segment while retaining full context for active bands.
+
 The same engine powers CLI, web, and Docker. Use it when you want batch jobs or a custom worker.
 
 ```python

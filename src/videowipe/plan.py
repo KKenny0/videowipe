@@ -851,6 +851,8 @@ def execution_masks(
     def frame_mask(frame_index: int) -> np.ndarray:
         return mask_for(_active_tracks(prepared, frame_index))
 
+    # Private producer guarantee: these cached results never change after return.
+    frame_mask._videowipe_stable_masks = True
     return static_mask, frame_mask
 
 

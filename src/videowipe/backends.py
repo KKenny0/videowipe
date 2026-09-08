@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from typing import List
 
 import cv2
@@ -72,15 +73,29 @@ class TorchBackend(InpaintBackend):
         from videowipe.models.sttn import InpaintGenerator
 
         if device == "auto":
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device(
+                "cuda:0" if torch.cuda.is_available()
+                else "mps" if torch.backends.mps.is_available() else "cpu"
+            )
         else:
             self.device = torch.device(device)
 
+        if self.device.type == "mps" and not torch.backends.mps.is_available():
+            raise ValueError("MPS is unavailable in this environment; use device=cpu or a supported macOS runtime")
+        self.weight_path = weight_path
         self.model = InpaintGenerator().to(self.device)
         data = torch.load(weight_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(data["netG"])
         self.model.eval()
         self._torch = torch
+
+    def benchmark_metadata(self) -> dict:
+        digest = hashlib.sha256()
+        with open(self.weight_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return {"device": str(self.device), "torch": self._torch.__version__,
+                "threads": self._torch.get_num_threads(), "weight_sha256": digest.hexdigest()}
 
     def encode(self, tensor: np.ndarray) -> np.ndarray:
         torch = self._torch

@@ -263,6 +263,26 @@ class STTNInpainter:
                     end_f = min((i + 1) * gap, video_length)
                     print(f"Processing frames {start_f + 1}-{end_f}/{video_length}")
 
+                    # Cache only emitted masks. Keep all context frames whenever
+                    # any emitted pixel in a band needs a prediction.
+                    segment_masks = {}
+                    active_modes = set(range(len(mode)))
+                    if job.frame_mask is not None:
+                        active_modes = set()
+                        for index in range(max(start_f, first), min(end_f, last)):
+                            alpha = np.asarray(job.frame_mask(index))
+                            # Only the plan producer guarantees stable storage.
+                            # Even readonly views from custom callbacks can alias
+                            # a buffer that the next callback invocation changes.
+                            if not getattr(job.frame_mask, "_videowipe_stable_masks", False):
+                                alpha = alpha.copy()
+                            if alpha.ndim == 2:
+                                alpha = alpha[:, :, None]
+                            segment_masks[index] = alpha
+                            for k, (top, bottom) in enumerate(mode):
+                                if k not in active_modes and np.any(alpha[top:bottom] != 0):
+                                    active_modes.add(k)
+
                     frames_hr = [] if output_reader is None else None
                     frames = {k: [] for k in range(len(mode))}
 
@@ -275,7 +295,7 @@ class STTNInpainter:
                             )
                         if frames_hr is not None:
                             frames_hr.append(image)
-                        for k in range(len(mode)):
+                        for k in active_modes:
                             from_h, to_h = mode[k]
                             frames[k].append(cv2.resize(
                                 image[from_h:to_h], (w, h),
@@ -309,9 +329,7 @@ class STTNInpainter:
                         # Per-frame temporal mask (global index start_f + j) when a
                         # WipePlan supplies one; else the static whole-video mask.
                         if job.frame_mask is not None:
-                            per_frame = np.asarray(job.frame_mask(start_f + j))
-                            if per_frame.ndim == 2:
-                                per_frame = per_frame[:, :, None]
+                            per_frame = segment_masks[start_f + j]
                         frame_comps = []
                         for k in range(len(mode)):
                             if comps.get(k) and j < len(comps[k]):

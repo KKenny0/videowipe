@@ -14,7 +14,7 @@ from videowipe.inpainters import sttn
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires ffmpeg")
-@pytest.mark.parametrize("interval,audio", [((5, 13), True), ((17, 20), False), ((0, 1), False)])
+@pytest.mark.parametrize("interval,audio", [((5, 13), True), ((17, 20), False), ((0, 1), False), ((4, 7), False), ((10, 11), False)])
 def test_trial_matches_full_run_before_encoding(tmp_path, monkeypatch, interval, audio):
     video = tmp_path / "source.mp4"
     subprocess.run([
@@ -75,7 +75,10 @@ def test_trial_matches_full_run_before_encoding(tmp_path, monkeypatch, interval,
     first, last = interval
     assert np.array_equal(np.asarray(pixels), full_pixels[first:last])
     assert indices == list(range(first, last))
-    expected_contexts = full_contexts[first // 4:(last + 3) // 4]
+    expected_contexts = [
+        context for start, context in zip((4, 8), full_contexts)
+        if max(first, start, 7) < min(last, start + 4, 11)
+    ]
     assert len(contexts) == len(expected_contexts)
     assert all(np.array_equal(a, b) for a, b in zip(contexts, expected_contexts))
     cap = cv2.VideoCapture(result.output_path)
