@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-JobState = Literal["pending", "preview_ready", "running", "done", "error", "cancelled"]
+JobState = Literal["pending", "preview_ready", "running", "trial_running", "done", "error", "cancelled"]
 
 
 @dataclass
@@ -24,6 +24,8 @@ class Job:
     selected_ids: list[str] = field(default_factory=list)
     default_selected_ids: list[str] = field(default_factory=list)
     result_path: Optional[str] = None
+    trial: Optional[dict] = None
+    trial_path: Optional[str] = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict:
@@ -39,6 +41,7 @@ class Job:
                 "selected_ids": list(self.selected_ids),
                 "default_selected_ids": list(self.default_selected_ids),
                 "result_path": self.result_path,
+                "trial": dict(self.trial) if self.trial else None,
             }
 
 
@@ -92,7 +95,7 @@ def cancel_current_job() -> Optional[Job]:
         return None
 
     with job.lock:
-        if job.state in {"pending", "running"}:
+        if job.state in {"pending", "running", "trial_running"}:
             raise JobNotCancellable(f"job is {job.state}")
         job.state = "cancelled"
         job.error = "cancelled"

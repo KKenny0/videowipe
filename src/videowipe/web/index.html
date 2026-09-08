@@ -818,6 +818,15 @@
         min-height: 42px;
       }
     }
+    .trial-panel { padding: 20px; border-top: 1px solid var(--line); }
+    .trial-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+    .trial-controls label { display: grid; gap: 6px; font-size: 12px; }
+    .trial-controls input, .trial-controls select { width: 130px; padding: 10px; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 4px; }
+    .trial-controls button { width: auto; padding: 12px 18px; }
+    .trial-panel p, .trial-panel figcaption { font-size: 12px; line-height: 1.6; }
+    .trial-panel figure { margin: 12px 0 0; }
+    .trial-panel video { display: block; width: 100%; max-height: 600px; background: #000; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
@@ -905,6 +914,18 @@
             </div>
           </div>
 
+          <section id="trialPanel" class="trial-panel" hidden aria-label="Try a short cleanup">
+            <div class="trial-controls">
+              <label>Start (seconds)<input id="trialStart" type="number" required min="0" step="0.1" value="0"></label>
+              <label>Length<select id="trialDuration"><option value="3">3 seconds</option><option value="5">5 seconds</option></select></label>
+              <button id="trialBtn" class="primary" type="button">Try cleanup</button>
+            </div>
+            <p id="trialHint" aria-live="polite">Test a short section before cleaning the whole video.</p>
+            <figure id="trialResult" hidden>
+              <figcaption id="trialCaption">Original above · Cleaned below</figcaption>
+              <video id="trialVideo" controls playsinline preload="metadata" aria-label="Original above, cleaned below"></video>
+            </figure>
+          </section>
           <div class="review">
             <div class="candidates">
               <p class="section-title">Targets <span id="candidateCount">0 found</span></p>
@@ -949,6 +970,16 @@
     const progressBar = document.querySelector("#progressBar");
     const progressText = document.querySelector("#progressText");
     const downloadLink = document.querySelector("#downloadLink");
+    const trialPanel = document.querySelector("#trialPanel");
+    const trialStart = document.querySelector("#trialStart");
+    const trialDuration = document.querySelector("#trialDuration");
+    const trialBtn = document.querySelector("#trialBtn");
+    const trialHint = document.querySelector("#trialHint");
+    const trialResult = document.querySelector("#trialResult");
+    const trialVideo = document.querySelector("#trialVideo");
+    const trialCaption = document.querySelector("#trialCaption");
+    let trialBusy = false;
+    let trialSignature = null;
     const steps = Array.from(document.querySelectorAll(".step"));
 
     let selectedFile = null;
@@ -993,6 +1024,82 @@
         sessionStorage.setItem(jobStorageKey, jobId);
       } else {
         sessionStorage.removeItem(jobStorageKey);
+      }
+    }
+
+    function reviewRequest() {
+      const selectedIds = selectedCandidateIds();
+      return {
+        selected_ids: selectedIds,
+        bbox_overrides: Object.fromEntries(
+          Object.entries(bboxDrafts).filter(([id]) => selectedIds.includes(id)),
+        ),
+        start_seconds: Number(trialStart.value),
+        duration_seconds: Number(trialDuration.value),
+      };
+    }
+
+    function signature(request) {
+      return JSON.stringify([
+        [...(request.selected_ids || [])].sort(),
+        Object.entries(request.bbox_overrides || {}).sort(([a], [b]) => a.localeCompare(b)),
+        request.start_seconds, request.duration_seconds,
+      ]);
+    }
+
+    function invalidateTrial() {
+      if (currentJobId) sessionStorage.setItem(`videowipe.review.${currentJobId}`, JSON.stringify(reviewRequest()));
+      if (trialSignature === signature(reviewRequest())) return;
+      trialVideo.pause();
+      trialVideo.removeAttribute("src");
+      trialVideo.load();
+      trialResult.hidden = true;
+      trialSignature = null;
+      trialHint.textContent = "Settings changed. Try cleanup again to see the current result.";
+    }
+
+    function setReviewBusy(busy) {
+      trialBusy = busy;
+      trialBtn.disabled = busy;
+      trialStart.disabled = busy;
+      trialDuration.disabled = busy;
+      candidateList.inert = busy;
+      bboxLayer.inert = busy;
+      confirmBtn.disabled = busy || !selectedCandidateIds().length;
+    }
+
+    function displayTrial(trial) {
+      if (!trial || !trial.ready) return;
+      if (signature(trial.request) !== signature(reviewRequest())) {
+        trialHint.textContent = "Settings changed. Try cleanup again to see the current result.";
+        return;
+      }
+      setProgress(100);
+      trialSignature = signature(trial.request);
+      trialVideo.src = `/jobs/${currentJobId}/trial-video?trial_id=${encodeURIComponent(trial.id)}`;
+      trialResult.hidden = false;
+      trialCaption.textContent = `Original above · Cleaned below · ${trial.start_seconds.toFixed(2)}–${(trial.start_seconds + trial.duration_seconds).toFixed(2)}s`;
+      trialHint.textContent = `Trial ready in ${trial.elapsed_s}s. This section does not guarantee the quality of the whole video.`;
+    }
+
+    async function runTrial() {
+      if (!currentJobId || trialBusy) return;
+      if (!selectedCandidateIds().length) { setStatus("Select at least one target", "error"); return; }
+      if (!trialStart.reportValidity()) return;
+      trialSignature = null;
+      invalidateTrial();
+      setReviewBusy(true);
+      setProgress(0);
+      trialHint.textContent = "Trying cleanup with the selected targets…";
+      setStatus("Trying cleanup");
+      setOutput("Trying a short cleanup", "The full video will wait for your confirmation.");
+      try {
+        await postJson(`/jobs/${currentJobId}/trial`, reviewRequest());
+        startProgressStream(currentJobId);
+      } catch (error) {
+        setReviewBusy(false);
+        trialHint.textContent = error.message;
+        setStatus("Trial stopped", "error");
       }
     }
 
@@ -1056,6 +1163,12 @@
         stream.close();
         stream = null;
       }
+      trialSignature = null;
+      invalidateTrial();
+      trialPanel.hidden = true;
+      if (currentJobId) sessionStorage.removeItem(`videowipe.review.${currentJobId}`);
+      trialStart.value = "0";
+      setReviewBusy(false);
       clearBBoxDrafts();
       rememberJob(null);
       selectedFile = null;
@@ -1173,9 +1286,11 @@
     }
 
     function storeDraft(track, bbox) {
+      if (trialBusy) return;
       if (sameBBox(bbox, track.bbox)) delete bboxDrafts[track.id];
       else bboxDrafts[track.id] = bbox;
       saveBBoxDrafts();
+      invalidateTrial();
       const row = candidateList.querySelector(`[data-track-id="${CSS.escape(track.id)}"]`);
       if (row) {
         row.classList.toggle("is-edited", Boolean(bboxDrafts[track.id]));
@@ -1195,6 +1310,7 @@
       const startY = event.clientY;
       const startBBox = [...effectiveBBox(track)];
       const target = event.currentTarget;
+      target.focus();
       target.setPointerCapture(event.pointerId);
       target.onpointermove = (moveEvent) => {
         const dx = Math.round((moveEvent.clientX - startX) / metrics.scale);
@@ -1292,6 +1408,7 @@
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.value = track.id;
+        checkbox.setAttribute("aria-label", `Remove ${track.label || track.id}`);
         checkbox.checked = track.action === "remove";
 
         const main = document.createElement("button");
@@ -1319,12 +1436,15 @@
         resetBox.addEventListener("click", () => {
           delete bboxDrafts[track.id];
           saveBBoxDrafts();
+          invalidateTrial();
           resetBox.disabled = true;
           row.classList.remove("is-edited");
           updateOverlayPositions();
         });
         main.addEventListener("click", () => setActiveTrack(track.id));
         checkbox.addEventListener("change", () => {
+          invalidateTrial();
+          confirmBtn.disabled = !selectedCandidateIds().length;
           main.disabled = !checkbox.checked;
           if (!checkbox.checked && activeTrackId === track.id) activeTrackId = null;
           renderOverlays();
@@ -1358,11 +1478,32 @@
       }
       const preview = await response.json();
       loadBBoxDrafts(jobId);
+      trialPanel.hidden = false;
+      trialStart.max = String(Math.max(0, (preview.source.frame_count - 1) / preview.source.fps));
+      let savedReview = null;
+      try { savedReview = JSON.parse(sessionStorage.getItem(`videowipe.review.${jobId}`)); } catch (_) {}
+      const restoredReview = savedReview || (preview.trial && preview.trial.request);
+      if (restoredReview) {
+        const request = restoredReview;
+        bboxDrafts = request.bbox_overrides || {};
+        saveBBoxDrafts();
+        trialStart.value = request.start_seconds;
+        trialDuration.value = request.duration_seconds;
+      }
       renderTracks(preview.tracks || []);
+      if (restoredReview) {
+        const request = restoredReview;
+        candidateList.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+          input.checked = (request.selected_ids || []).includes(input.value);
+          input.closest(".candidate").querySelector(".candidate-main").disabled = !input.checked;
+        });
+      }
+      setReviewBusy(false);
       previewImage.onload = () => {
         sanitizeBBoxDrafts();
         previewMedia.style.display = "block";
         renderOverlays();
+        displayTrial(preview.trial);
       };
       previewImage.src = `${preview.editable_preview_url || preview.preview_url}?t=${Date.now()}`;
       previewEmpty.style.display = "none";
@@ -1371,6 +1512,11 @@
       confirmBtn.style.display = "";
       setStep("preview");
       setStatus("Preview ready", "ok");
+      const statusResponse = await fetch(`/jobs/${jobId}`);
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status.error) trialHint.textContent = `Trial stopped: ${status.error}. Try again.`;
+      }
     }
 
     async function waitForPreview(jobId) {
@@ -1384,11 +1530,21 @@
         if (status.state === "preview_ready") {
           return loadPreview(jobId);
         }
+        if (status.state === "done") return showDone(jobId);
+        if (status.state === "running") {
+          setReviewBusy(true);
+          setStep("download");
+          setOutput("Cleaning video", "Full cleanup was started in another tab.");
+          return startProgressStream(jobId);
+        }
+        setProgress((status.progress || 0) * 100);
         await sleep(900);
       }
     }
 
     function showDone(jobId) {
+      trialPanel.hidden = true;
+      setReviewBusy(true);
       setProgress(100);
       downloadLink.href = `/jobs/${jobId}/download`;
       downloadLink.style.display = "flex";
@@ -1415,6 +1571,18 @@
           stream.close();
           stream = null;
           showDone(jobId);
+        } else if (data.state === "preview_ready") {
+          stream.close();
+          stream = null;
+          setReviewBusy(false);
+          if (data.error) {
+            trialHint.textContent = `Trial stopped: ${data.error}. Adjust settings or try again.`;
+            setStatus("Trial stopped", "error");
+          } else {
+            displayTrial(data.trial);
+            setStatus("Trial ready", "ok");
+            setOutput("Ready to clean", "Review the trial, adjust targets, or clean the full video.");
+          }
         } else if (data.state === "error" || data.state === "cancelled") {
           stream.close();
           stream = null;
@@ -1457,6 +1625,13 @@
       } else if (status.state === "preview_ready") {
         submitBtn.disabled = true;
         await loadPreview(status.id);
+      } else if (status.state === "trial_running") {
+        submitBtn.disabled = true;
+        setReviewBusy(true);
+        trialPanel.hidden = false;
+        setStatus("Trying cleanup");
+        // Restore the reviewed controls after the running trial finishes.
+        await waitForPreview(status.id);
       } else if (status.state === "running") {
         submitBtn.disabled = true;
         confirmBtn.disabled = true;
@@ -1521,7 +1696,9 @@
         setStatus("Select at least one target", "error");
         return;
       }
-      confirmBtn.disabled = true;
+      trialSignature = null;
+      invalidateTrial();
+      setReviewBusy(true);
       downloadLink.style.display = "none";
       setStatus("Processing");
       setStep("download");
@@ -1540,7 +1717,7 @@
       } catch (error) {
         setOutput("Cleanup stopped", error.message);
         setStatus(error.message, "error");
-        confirmBtn.disabled = false;
+        setReviewBusy(false);
       }
     }
 
@@ -1549,6 +1726,9 @@
     submitBtn.addEventListener("click", submit);
     confirmBtn.addEventListener("click", confirmRun);
     resetBtn.addEventListener("click", reset);
+    trialBtn.addEventListener("click", runTrial);
+    trialStart.addEventListener("input", invalidateTrial);
+    trialDuration.addEventListener("change", invalidateTrial);
     window.addEventListener("resize", updateOverlayPositions);
     restoreJob().catch((error) => {
       setOutput("Restore stopped", error.message);

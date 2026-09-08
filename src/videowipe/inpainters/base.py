@@ -48,6 +48,8 @@ class InpaintJob:
             per-frame mask instead of the static ``mask`` ndarray, so a
             temporal WipePlan can close subtitle gaps and spare inactive
             regions. ``None`` keeps the legacy whole-video static mask.
+        trial_range: Optional STTN source-frame interval [start, end). Inference
+            keeps full-run segment boundaries; only requested frames are written.
     """
 
     video_path: str
@@ -67,6 +69,7 @@ class InpaintJob:
     mask_path: Optional[str] = None
     feather_radius: int = 0
     frame_mask: Optional[Callable[[int], np.ndarray]] = None
+    trial_range: Optional[tuple[int, int]] = None
 
 
 @dataclass

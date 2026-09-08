@@ -80,6 +80,21 @@ No Python? Use [Docker](#docker).
 
 Optional extras: `.[torch]` (PyTorch), `.[ocr]` (OCR text recognition), `.[propainter]` (adapter deps only; model not bundled).
 
+### Try a short cleanup first
+
+After detection in the local web UI, choose a start time and try 3 or 5 seconds
+(the interval is shortened at the end of the source). The player shows the
+original above the cleaned result in one synchronized video, with audio from
+that interval. Changing targets, boxes, or time hides the old trial. Retry if
+needed, then use **Clean video** for the full source. Refresh restores the
+current job; restarting the server does not restore in-memory jobs.
+
+Trials currently support built-in STTN only and reuse the full-run segment
+context and masks. They demonstrate the selected interval, not the entire
+video's quality. SDK callers can use `WipeRequest(trial_range=(start_frame,
+end_frame), ...)` for a comparison video with a half-open frame interval.
+`preview=True` still means detection-only and cannot be combined with a trial.
+
 ## Features
 
 | | |

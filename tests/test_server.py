@@ -567,3 +567,155 @@ def test_download_returns_mp4_with_audio(client, tmp_path):
         check=False,
     )
     assert "Audio:" in probe.stderr + probe.stdout
+
+
+def test_trial_isolated_plan_retry_and_media(client, tmp_path, monkeypatch):
+    test_client, fake = client
+    video = tmp_path / "source.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    canonical = Path(job.output_dir) / "wipe_plan.json"
+    original = canonical.read_bytes()
+    body = {"selected_ids": ["c1"], "bbox_overrides": {"c1": [12, 50, 80, 60]},
+            "start_seconds": 1.25, "duration_seconds": 3}
+    assert test_client.post(f"/jobs/{job_id}/trial", json=body).status_code == 200
+    state = _wait_for_state(test_client, job_id, "preview_ready")
+    assert state["trial"]["ready"]
+    assert state["trial"]["frame_range"] == [5, 8]  # truncated at source end
+    assert canonical.read_bytes() == original
+    assert fake.calls[-1]["plan"].tracks[0].bbox == (12, 50, 80, 60)
+    assert test_client.get("/jobs/current").json()["id"] == job_id
+    trial_id = state["trial"]["id"]
+    response = test_client.get(f"/jobs/{job_id}/trial-video?trial_id={trial_id}",
+                               headers={"Range": "bytes=0-15"})
+    assert response.status_code == 206
+    assert len(response.content) == 16
+    assert test_client.get(f"/jobs/{job_id}/trial-video?trial_id=old").status_code == 409
+    assert test_client.get(f"/jobs/{job_id}/download").status_code == 409
+    original_run = fake.run
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("test inference failure")
+
+    monkeypatch.setattr(fake, "run", fail)
+    test_client.post(f"/jobs/{job_id}/trial", json=body)
+    failed = _wait_for_state(test_client, job_id, "preview_ready")
+    assert failed["trial"] is None
+    assert "test inference failure" in failed["error"]
+    assert canonical.read_bytes() == original
+    monkeypatch.setattr(fake, "run", original_run)
+    assert test_client.post(f"/jobs/{job_id}/trial", json=body).status_code == 200
+    assert _wait_for_state(test_client, job_id, "preview_ready")["trial"]["ready"]
+    # Trial must not silently carry its edits into a subsequent full run.
+    assert test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]}).status_code == 200
+    _wait_for_state(test_client, job_id, "done")
+    assert fake.calls[-1]["plan"].tracks[0].bbox == (10, 50, 86, 60)
+
+
+@pytest.mark.parametrize("body,code", [
+    ({"selected_ids": []}, 400),
+    ({"selected_ids": ["unknown"]}, 400),
+    ({"start_seconds": -1}, 422),
+    ({"start_seconds": "NaN"}, 422),
+    ({"start_seconds": "Infinity"}, 422),
+    ({"start_seconds": 2}, 400),
+    ({"start_seconds": 1e308}, 400),
+    ({"duration_seconds": 0}, 422),
+    ({"duration_seconds": 6}, 422),
+    ({"bbox_overrides": {"c1": [0, 0, 100, 60]}}, 400),
+])
+def test_trial_rejects_invalid_inputs(client, tmp_path, body, code):
+    test_client, _fake = client
+    video = tmp_path / "source.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    assert test_client.post(f"/jobs/{job_id}/trial", json=body).status_code == code
+    assert test_client.get(f"/jobs/{job_id}").json()["state"] == "preview_ready"
+
+
+def test_trial_serializes_work_and_rejects_inactive_interval(client, tmp_path, monkeypatch):
+    import threading
+    from videowipe.plan import Segment
+    test_client, fake = client
+    video = tmp_path / "source.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    path = Path(job.output_dir) / "wipe_plan.json"
+    plan = load_wipe_plan(str(path))
+    plan.tracks[0].segments = [Segment(4, 8)]
+    save_wipe_plan(plan, job.output_dir)
+    assert test_client.post(f"/jobs/{job_id}/trial", json={"duration_seconds": 0.5}).status_code == 400
+    release = threading.Event()
+    original_run = fake.run
+
+    def blocked(*args, **kwargs):
+        assert release.wait(5)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(fake, "run", blocked)
+    try:
+        assert test_client.post(f"/jobs/{job_id}/trial", json={}).status_code == 200
+        assert test_client.get(f"/jobs/{job_id}").json()["state"] == "trial_running"
+        assert test_client.post(f"/jobs/{job_id}/trial", json={}).status_code == 409
+        assert test_client.post(f"/jobs/{job_id}/confirm", json={}).status_code == 409
+        assert test_client.delete("/jobs/current").status_code == 409
+        assert _post_video(test_client, video).status_code == 409
+    finally:
+        release.set()
+    _wait_for_state(test_client, job_id, "preview_ready")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="browser JavaScript check requires node")
+@pytest.mark.parametrize("state", ["running", "done", "preview_ready"])
+def test_trial_restore_handles_other_tabs_and_box_drafts(state):
+    """Execute the actual UI functions against server states missed between polls."""
+    html = server_app._web_index().read_text()
+    functions = html.split("    async function loadPreview(jobId) {", 1)[1].split(
+        "    function showDone(jobId) {", 1
+    )[0]
+    script = "async function loadPreview(jobId) {" + functions
+    harness = r'''
+const assert = require("node:assert/strict");
+const state = process.argv[1];
+const events = [];
+let bboxDrafts = {};
+const trialPanel = {}, trialStart = {}, trialDuration = {}, trialHint = {};
+const previewImage = {}, previewMedia = {}, previewEmpty = {style: {}};
+const confirmBtn = {style: {}};
+const sessionStorage = {getItem: () => null};
+const candidateList = {querySelectorAll: () => []};
+const loadBBoxDrafts = () => {};
+const saveBBoxDrafts = () => {};
+const renderTracks = () => events.push(["render", {...bboxDrafts}]);
+const setReviewBusy = () => {};
+const sanitizeBBoxDrafts = () => {};
+const renderOverlays = () => {};
+const displayTrial = () => {};
+const setProgress = () => {};
+const setOutput = () => {};
+const setStep = () => {};
+const setStatus = () => {};
+const showDone = id => events.push(["done", id]);
+const startProgressStream = id => events.push(["running", id]);
+const sleep = () => {throw new Error("unexpected continued polling");};
+const preview = {source: {frame_count: 20, fps: 4}, tracks: [],
+    trial: {request: {bbox_overrides: {c1: [1, 2, 3, 4]}, selected_ids: ["c1"],
+                     start_seconds: 0, duration_seconds: 3}}};
+const fetch = async url => ({ok: true, json: async () => url.endsWith("/preview") ? preview : {state}});
+'''
+    assertions = r'''
+(async () => {
+    await waitForPreview("job");
+    if (state === "preview_ready") {
+        assert.deepEqual(events[0], ["render", {c1: [1, 2, 3, 4]}]);
+    } else {
+        assert.deepEqual(events, [[state, "job"]]);
+    }
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+    subprocess.run(["node", "-e", harness + script + assertions, state], check=True)

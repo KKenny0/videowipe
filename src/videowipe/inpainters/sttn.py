@@ -172,6 +172,12 @@ class STTNInpainter:
         ori_w, ori_h = job.width, job.height
         fps = job.fps
         gap = job.gap
+        first, last = job.trial_range or (0, video_length)
+        if not 0 <= first < last <= video_length:
+            raise ValueError("trial_range exceeds the source video")
+        first_segment = first // gap
+        last_segment = (last + gap - 1) // gap
+        context_start = first_segment * gap
         reader = job.reader
 
         video_name = (
@@ -180,7 +186,7 @@ class STTNInpainter:
             else "output"
         )
         video_out_path = os.path.join(
-            job.output_dir, f"{video_name}_{job.output_suffix}.mp4"
+            job.output_dir, f"{video_name}_{job.output_suffix}{'_trial' if job.trial_range else ''}.mp4"
         )
         out_w = ori_w
         out_h = ori_h * 2 if job.dual else ori_h
@@ -208,6 +214,8 @@ class STTNInpainter:
         # metadata) survives. The trailing "?" on "1:a?" makes ffmpeg tolerate
         # videos with no audio track instead of erroring out.
         if job.video_path:
+            if job.trial_range is not None:
+                ffmpeg_cmd += ["-ss", str(first / fps)]
             ffmpeg_cmd += ["-i", job.video_path]
         ffmpeg_cmd += [
             "-map", "0:v",
@@ -220,6 +228,8 @@ class STTNInpainter:
         ]
         if job.video_path:
             ffmpeg_cmd += ["-c:a", "aac"]
+        if job.trial_range is not None:
+            ffmpeg_cmd += ["-t", str((last - first) / fps)]
         ffmpeg_cmd += [
             "-movflags", "+faststart",
             video_out_path,
@@ -235,18 +245,20 @@ class STTNInpainter:
                     output_reader = candidate_reader
                 else:
                     candidate_reader.release()
-            rec_time = (
-                video_length // gap
-                if video_length % gap == 0
-                else video_length // gap + 1
-            )
+            if context_start:
+                if not reader.set(cv2.CAP_PROP_POS_FRAMES, context_start):
+                    raise ValueError("Cannot seek source video for trial")
+                if output_reader is not None and not output_reader.set(
+                    cv2.CAP_PROP_POS_FRAMES, context_start
+                ):
+                    raise ValueError("Cannot seek comparison video for trial")
 
             # Backend instances are shared runtime objects; keep inference
             # serialized until the backend declares a thread-safety contract.
             t_inpaint_start = time.monotonic()
-            output_decoded = 0
+            output_decoded = context_start
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                for i in range(rec_time):
+                for i in range(first_segment, last_segment):
                     start_f = i * gap
                     end_f = min((i + 1) * gap, video_length)
                     print(f"Processing frames {start_f + 1}-{end_f}/{video_length}")
@@ -292,6 +304,8 @@ class STTNInpainter:
                             output_decoded += 1
                         else:
                             frame_ori = frames_hr[j]
+                        if not first <= start_f + j < last:
+                            continue
                         # Per-frame temporal mask (global index start_f + j) when a
                         # WipePlan supplies one; else the static whole-video mask.
                         if job.frame_mask is not None:
@@ -322,7 +336,7 @@ class STTNInpainter:
                         pipe.stdin.write(frame.tobytes())
 
                     if job.progress is not None:
-                        job.progress(end_f, video_length)
+                        job.progress(min(end_f, last) - first, last - first)
 
             pipe.stdin.close()
             stdin_closed = True

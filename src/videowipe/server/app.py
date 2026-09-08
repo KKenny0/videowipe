@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+import uuid
 import os
 import threading
 import time
@@ -10,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, StrictInt
+from pydantic import BaseModel, Field, StrictInt
 
 from videowipe.api import ProgressEvent, WipeRequest
 from videowipe.engine import WipeEngine
@@ -43,6 +45,11 @@ class ConfirmRequest(BaseModel):
     bbox_overrides: dict[
         str, tuple[StrictInt, StrictInt, StrictInt, StrictInt]
     ] | None = None
+
+
+class TrialRequest(ConfirmRequest):
+    start_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
+    duration_seconds: float = Field(default=3, gt=0, le=5, allow_inf_nan=False)
 
 
 def _jobs_root() -> str:
@@ -226,6 +233,8 @@ def preview(job_id: str):
         "state": snapshot["state"],
         "candidates": candidates,
         "tracks": _load_tracks(job),
+        "source": load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME), load_masks=False).source.to_dict(),
+        "trial": snapshot["trial"],
         "preview_url": f"/jobs/{job.id}/preview-image",
         "editable_preview_url": f"/jobs/{job.id}/editable-preview-image",
         "default_selected_ids": snapshot["default_selected_ids"],
@@ -254,6 +263,84 @@ def editable_preview_image(job_id: str):
     return FileResponse(path, media_type="image/jpeg")
 
 
+def _reviewed_plan(job: Job, body: ConfirmRequest):
+    try:
+        plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
+    except (InvalidInputError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="job plan is invalid") from exc
+    selected_ids = (
+        list(body.selected_ids)
+        if body.selected_ids is not None
+        else [track.id for track in plan.remove_tracks]
+    )
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="select at least one target")
+    known_ids = {track.id for track in plan.tracks}
+    unknown_ids = sorted(set(selected_ids) - known_ids)
+    if unknown_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown candidate id: {', '.join(unknown_ids)}",
+        )
+    selected = set(selected_ids)
+    overrides = body.bbox_overrides or {}
+    unknown_override_ids = sorted(set(overrides) - known_ids)
+    if unknown_override_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown bbox override id: {', '.join(unknown_override_ids)}",
+        )
+    unselected_override_ids = sorted(set(overrides) - selected)
+    if unselected_override_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "bbox override requires selected target: "
+                f"{', '.join(unselected_override_ids)}"
+            ),
+        )
+    validated_overrides: dict[str, tuple[int, int, int, int]] = {}
+    for track_id, bbox in overrides.items():
+        x1, y1, x2, y2 = bbox
+        if x2 < x1 or y2 < y1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"bbox override for {track_id} is inverted or empty",
+            )
+        if x2 - x1 + 1 < 2 or y2 - y1 + 1 < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"bbox override for {track_id} must be at least 2x2 pixels",
+            )
+        if x1 < 0 or y1 < 0 or x2 >= plan.source.width or y2 >= plan.source.height:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"bbox override for {track_id} exceeds source "
+                    f"{plan.source.width}x{plan.source.height}"
+                ),
+            )
+        validated_overrides[track_id] = (x1, y1, x2, y2)
+
+    for track in plan.tracks:
+        track.action = "remove" if track.id in selected else "keep"
+        track.decision_reason = f"user-confirm:{track.action}"
+        if track.id in validated_overrides:
+            x1, y1, x2, y2 = validated_overrides[track.id]
+            mask = np.zeros(
+                (plan.source.height, plan.source.width), dtype=np.uint8
+            )
+            mask[y1:y2 + 1, x1:x2 + 1] = 1
+            track.bbox = (x1, y1, x2, y2)
+            track.mask = mask
+            track.decision_reason = "user-confirm:remove:bbox-override"
+    try:
+        validate_plan(plan, require_remove=True)
+    except InvalidInputError as exc:
+        raise HTTPException(status_code=409, detail="job plan is invalid") from exc
+    return plan, selected_ids
+
+
 @app.post("/jobs/{job_id}/confirm")
 def confirm(job_id: str, body: ConfirmRequest):
     job = get_job(job_id)
@@ -262,87 +349,102 @@ def confirm(job_id: str, body: ConfirmRequest):
     with job.lock:
         if job.state != "preview_ready":
             raise HTTPException(status_code=409, detail=f"job is {job.state}")
-        try:
-            plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
-        except (InvalidInputError, OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail="job plan is invalid") from exc
-        selected_ids = (
-            list(body.selected_ids)
-            if body.selected_ids is not None
-            else [track.id for track in plan.remove_tracks]
-        )
-        if not selected_ids:
-            raise HTTPException(status_code=400, detail="select at least one target")
-        known_ids = {track.id for track in plan.tracks}
-        unknown_ids = sorted(set(selected_ids) - known_ids)
-        if unknown_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=f"unknown candidate id: {', '.join(unknown_ids)}",
-            )
-        selected = set(selected_ids)
-        overrides = body.bbox_overrides or {}
-        unknown_override_ids = sorted(set(overrides) - known_ids)
-        if unknown_override_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=f"unknown bbox override id: {', '.join(unknown_override_ids)}",
-            )
-        unselected_override_ids = sorted(set(overrides) - selected)
-        if unselected_override_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "bbox override requires selected target: "
-                    f"{', '.join(unselected_override_ids)}"
-                ),
-            )
-        validated_overrides: dict[str, tuple[int, int, int, int]] = {}
-        for track_id, bbox in overrides.items():
-            x1, y1, x2, y2 = bbox
-            if x2 < x1 or y2 < y1:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"bbox override for {track_id} is inverted or empty",
-                )
-            if x2 - x1 + 1 < 2 or y2 - y1 + 1 < 2:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"bbox override for {track_id} must be at least 2x2 pixels",
-                )
-            if x1 < 0 or y1 < 0 or x2 >= plan.source.width or y2 >= plan.source.height:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"bbox override for {track_id} exceeds source "
-                        f"{plan.source.width}x{plan.source.height}"
-                    ),
-                )
-            validated_overrides[track_id] = (x1, y1, x2, y2)
-
-        for track in plan.tracks:
-            track.action = "remove" if track.id in selected else "keep"
-            track.decision_reason = f"user-confirm:{track.action}"
-            if track.id in validated_overrides:
-                x1, y1, x2, y2 = validated_overrides[track.id]
-                mask = np.zeros(
-                    (plan.source.height, plan.source.width), dtype=np.uint8
-                )
-                mask[y1:y2 + 1, x1:x2 + 1] = 1
-                track.bbox = (x1, y1, x2, y2)
-                track.mask = mask
-                track.decision_reason = "user-confirm:remove:bbox-override"
-        try:
-            validate_plan(plan, require_remove=True)
-        except InvalidInputError as exc:
-            raise HTTPException(status_code=409, detail="job plan is invalid") from exc
+        plan, selected_ids = _reviewed_plan(job, body)
         save_wipe_plan(plan, job.output_dir)
         job.selected_ids = selected_ids
+        job.error = None
+        job.trial = None
+        job.trial_path = None
         job.progress = 0.0
         job.phase = "prepare"
         job.state = "running"
     threading.Thread(target=_run_inpaint, args=(job,), daemon=True).start()
     return job.snapshot()
+
+
+def _run_trial(job: Job, plan, frame_range: tuple[int, int], trial_dir: Path) -> None:
+    started = time.perf_counter()
+    try:
+        save_wipe_plan(plan, str(trial_dir))
+        result = _get_engine().run(
+            WipeRequest(
+                video=job.video_path, output_dir=str(trial_dir),
+                plan=str(trial_dir / JSON_FILENAME), trial_range=frame_range,
+            ),
+            on_progress=lambda event: _update_progress(job, event),
+        )
+        with job.lock:
+            job.trial_path = result.output_path
+            job.trial["ready"] = True
+            job.trial["elapsed_s"] = round(time.perf_counter() - started, 3)
+            job.trial["backend"] = result.backend
+            job.warnings = list(result.warnings)
+            job.progress = 1.0
+    except Exception as exc:
+        with job.lock:
+            job.error = str(exc)
+            job.trial = None
+            job.trial_path = None
+    finally:
+        with job.lock:
+            job.state = "preview_ready"
+            job.phase = "preview"
+
+
+@app.post("/jobs/{job_id}/trial")
+def trial(job_id: str, body: TrialRequest):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    with job.lock:
+        if job.state != "preview_ready":
+            raise HTTPException(status_code=409, detail=f"job is {job.state}")
+        plan, _selected_ids = _reviewed_plan(job, body)
+        fps = plan.source.fps
+        if body.start_seconds >= plan.source.frame_count / fps:
+            raise HTTPException(status_code=400, detail="trial starts outside the video")
+        first = math.floor(body.start_seconds * fps)
+        last = min(plan.source.frame_count, math.ceil(
+            (body.start_seconds + body.duration_seconds) * fps
+        ))
+        if not 0 <= first < last <= plan.source.frame_count:
+            raise HTTPException(status_code=400, detail="trial starts outside the video")
+        if not any(
+            any(segment.start < last and segment.end > first for segment in track.segments)
+            for track in plan.remove_tracks
+        ):
+            raise HTTPException(status_code=400, detail="No selected target is active in this interval")
+        trial_id = uuid.uuid4().hex
+        trial_dir = Path(job.output_dir) / "trials" / trial_id
+        job.trial = {
+            "id": trial_id, "ready": False, "request": body.model_dump(),
+            "frame_range": [first, last], "start_seconds": first / fps,
+            "duration_seconds": (last - first) / fps,
+        }
+        job.trial_path = None
+        job.error = None
+        job.progress = 0.0
+        job.phase = "trial"
+        job.state = "trial_running"
+    threading.Thread(
+        target=_run_trial, args=(job, plan, (first, last), trial_dir), daemon=True,
+    ).start()
+    return job.snapshot()
+
+
+@app.get("/jobs/{job_id}/trial-video")
+def trial_video(job_id: str, trial_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    with job.lock:
+        if (not job.trial or not job.trial["ready"]
+                or job.trial["id"] != trial_id or not job.trial_path):
+            raise HTTPException(status_code=409, detail="trial is not available")
+        path = job.trial_path
+    if not Path(path).is_file():
+        raise HTTPException(status_code=404, detail="trial video not found")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/jobs/{job_id}/progress")
@@ -355,7 +457,7 @@ def progress_sse(job_id: str):
         while True:
             snapshot = job.snapshot()
             yield f"data: {json.dumps(snapshot)}\n\n"
-            if snapshot["state"] in {"done", "error", "cancelled"}:
+            if snapshot["state"] in {"done", "error", "cancelled", "preview_ready"}:
                 break
             time.sleep(0.5)
 

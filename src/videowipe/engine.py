@@ -248,6 +248,7 @@ class WipeEngine:
                 ocr=request.ocr,
                 progress=legacy_progress,
                 plan=request.plan,
+                trial_range=request.trial_range,
             )
             result = self._build_result(request, output_path, artifact_before)
             # A final notification cannot retroactively cancel a successful run.
@@ -436,7 +437,7 @@ class WipeEngine:
                 detect_mode: str | None = None,
                 ocr: str | None = None,
                 progress=None,
-                plan=None) -> str:
+                plan=None, trial_range=None) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -446,6 +447,8 @@ class WipeEngine:
             detector: Override the text detector for auto-mask generation.
             plan: A :class:`WipePlan` or path to ``wipe_plan.json``. Mutually
                 exclusive with *mask*; only supported for the ``clean`` task.
+            trial_range: Optional half-open source-frame interval. STTN emits
+                original-above/cleaned-below comparison using full-run context.
         """
         self._check_cancelled()
         video = os.fspath(video)
@@ -456,6 +459,13 @@ class WipeEngine:
             raise InvalidInputError("mask and plan are mutually exclusive")
         if plan is not None and self.task != "clean":
             raise InvalidInputError("plan is only supported for the clean task")
+        if trial_range is not None:
+            if (not isinstance(trial_range, (tuple, list)) or len(trial_range) != 2
+                    or any(type(value) is not int for value in trial_range)
+                    or not 0 <= trial_range[0] < trial_range[1]):
+                raise InvalidInputError("trial_range must be integer frames [start, end), 0 <= start < end")
+            if self._model != "sttn" or self._external_command or preview:
+                raise InvalidInputError("trial_range requires STTN execution, not detection preview")
         self._last_warnings = []
         self._active_plan: Optional[WipePlan] = None
         frame_mask = None
@@ -575,6 +585,10 @@ class WipeEngine:
                 "frame_count": frame_info["len"],
                 "fps": round(frame_info["fps"], 2),
             })
+            if trial_range is not None:
+                if trial_range[1] > frame_info["len"]:
+                    raise InvalidInputError("trial_range exceeds the source video")
+                bm["trial_range"] = list(trial_range)
             validate_mask_shape(mask_arr, frame_info)
             mask_pixels = float(np.sum(mask_arr > 0))
             total_pixels = frame_info["H_ori"] * frame_info["W_ori"]
@@ -582,6 +596,8 @@ class WipeEngine:
             self._task_impl._bm = bm
             self._task_impl.mask_path = mask_path_saved
             process_kwargs = {"video_path": video}
+            if trial_range is not None:
+                process_kwargs["trial_range"] = trial_range
             if progress is not None:
                 process_kwargs["progress"] = progress
             if frame_mask is not None:

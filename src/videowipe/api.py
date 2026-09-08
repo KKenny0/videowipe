@@ -32,6 +32,8 @@ class WipeRequest:
     detect_mode: Optional[str] = None
     ocr: Optional[str] = None
     plan: Any = None  # a WipePlan, a path to wipe_plan.json, or None; mutually exclusive with mask
+    # STTN-only comparison trial, half-open source-frame interval [start, end).
+    trial_range: Optional[tuple[int, int]] = None
 
 
 @dataclass(frozen=True)
