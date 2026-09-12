@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import json
 import math
+import mimetypes
 import uuid
 import os
+import subprocess
 import threading
 import time
+import unicodedata
 from pathlib import Path
+from fractions import Fraction
 
+import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, StrictInt
 
 from videowipe.api import ProgressEvent, WipeRequest
@@ -91,18 +96,83 @@ def _load_candidates(job: Job) -> list[dict]:
         return json.load(fh).get("candidates", [])
 
 
-def _load_tracks(job: Job) -> list[dict]:
-    """Return validated metadata-only tracks from the job's WipePlan."""
-    path = Path(job.output_dir) / JSON_FILENAME
-    if not path.exists():
-        return []
-    plan = load_wipe_plan(str(path), load_masks=False)
-    return [track.to_dict() for track in plan.tracks]
+def _display_filename(name: str | None) -> str:
+    name = (name or "input.mp4").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in name if not unicodedata.category(c).startswith("C"))
+    return name.strip(" .")[:120].encode("utf-8")[:180].decode("utf-8", errors="ignore") or "input.mp4"
+
+
+def _job_path(job: Job, path: str | Path) -> Path:
+    root = Path(job.output_dir).resolve()
+    resolved = Path(path).resolve()
+    if not root.is_relative_to(Path(_jobs_root()).resolve()) or not resolved.is_relative_to(root):
+        raise HTTPException(status_code=409, detail="media path escapes the job")
+    return resolved
+
+
+def _job_file(job: Job, path: str | Path) -> Path:
+    resolved = _job_path(job, path)
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="media file not found")
+    return resolved
+
+
+def _trial_range(plan, start: float, duration: float) -> tuple[int, int]:
+    fps = plan.source.fps
+    if start >= plan.source.frame_count / fps:
+        raise HTTPException(status_code=400, detail="trial starts outside the video")
+    first = math.floor(start * fps)
+    last = min(plan.source.frame_count, math.ceil((start + duration) * fps))
+    if not 0 <= first < last <= plan.source.frame_count:
+        raise HTTPException(status_code=400, detail="trial starts outside the video")
+    if not any(
+        track.mask is not None and track.mask.any()
+        and any(s.start < last and s.end > first for s in track.segments)
+        for track in plan.remove_tracks
+    ):
+        raise HTTPException(status_code=400, detail="No selected target is active in this interval")
+    return first, last
+
+
+def _recommended_trial(plan) -> dict | None:
+    intervals = sorted(
+        (s.start, s.end) for track in plan.remove_tracks
+        if track.mask is not None and track.mask.any() for s in track.segments
+    )
+    merged: list[list[int]] = []
+    for first, last in intervals:
+        if merged and first <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], last)
+        else:
+            merged.append([first, last])
+    if not merged:
+        return None
+    first, last = min(merged, key=lambda row: (-(row[1] - row[0]), row[0]))
+    fps = plan.source.fps
+    duration = min(3.0, plan.source.frame_count / fps)
+    start = max(0.0, min(plan.source.frame_count / fps - duration,
+                         (first + last) / (2 * fps) - duration / 2))
+    frame_range = _trial_range(plan, start, duration)
+    return {"start_seconds": start, "duration_seconds": duration,
+            "frame_range": list(frame_range)}
 
 
 def _run_preview(job: Job, intent: str | None) -> None:
     try:
         started = time.perf_counter()
+        try:
+            probe = json.loads(subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                "stream=color_transfer,r_frame_rate,avg_frame_rate", "-of", "json", job.video_path,
+            ], timeout=30, stderr=subprocess.DEVNULL))["streams"][0]
+            if probe.get("color_transfer") in {"smpte2084", "arib-std-b67"}:
+                job.input_warnings.append("HDR 视频不在本次 SDR 清理验收范围内，请检查导出颜色。")
+            nominal = float(Fraction(probe.get("r_frame_rate", "0")))
+            average = float(Fraction(probe.get("avg_frame_rate", "0")))
+            if nominal and average and not math.isclose(nominal, average, rel_tol=0.001):
+                job.input_warnings.append("视频帧率可能不恒定；精确时间定位只对恒定帧率视频验收。")
+        except (OSError, ValueError, KeyError, IndexError, ZeroDivisionError, subprocess.SubprocessError):
+            job.input_warnings.append("未能核实视频帧率与色彩信息，请检查试擦和导出效果。")
         plan = _get_engine().plan(
             WipeRequest(
                 video=job.video_path,
@@ -118,30 +188,31 @@ def _run_preview(job: Job, intent: str | None) -> None:
             job.selected_ids = list(default_selected)
             job.progress = 0.0
             job.phase = "preview"
-            job.warnings = list(plan.warnings)
+            job.warnings = job.input_warnings + list(plan.warnings)
             job.timings["plan_s"] = time.perf_counter() - started
             job.state = "preview_ready"
     except Exception as exc:
         _set_error(job, exc)
 
 
-def _run_inpaint(job: Job) -> None:
+def _run_inpaint(job: Job, run_dir: Path) -> None:
     try:
-        plan_path = str(Path(job.output_dir) / JSON_FILENAME)
+        plan_path = str(run_dir / JSON_FILENAME)
         started = time.perf_counter()
         result = _get_engine().run(
             WipeRequest(
                 video=job.video_path,
-                output_dir=job.output_dir,
+                output_dir=str(run_dir),
                 plan=plan_path,
             ),
             on_progress=lambda event: _update_progress(job, event),
         )
+        _job_file(job, result.output_path)
         with job.lock:
             job.result_path = result.output_path
             job.progress = 1.0
             job.phase = "complete"
-            job.warnings = list(result.warnings)
+            job.warnings = job.input_warnings + list(result.warnings)
             job.timings.update(result.timings)
             job.timings["run_wall_s"] = time.perf_counter() - started
             job.state = "done"
@@ -166,7 +237,10 @@ async def create(
     except JobBusy:
         raise HTTPException(status_code=409, detail="server busy, wait for current job")
 
-    suffix = Path(video.filename or "").suffix or ".mp4"
+    original_filename = _display_filename(video.filename)
+    suffix = Path(original_filename).suffix.lower()
+    if not suffix[1:].isascii() or not suffix[1:].isalnum() or len(suffix) > 10:
+        suffix = ".mp4"
     input_path = Path(job.output_dir) / f"input{suffix}"
     try:
         started = time.perf_counter()
@@ -178,6 +252,7 @@ async def create(
                 fh.write(chunk)
         with job.lock:
             job.video_path = str(input_path)
+            job.original_filename = original_filename
             job.phase = "plan"
             job.timings["upload_s"] = time.perf_counter() - started
         threading.Thread(target=_run_preview, args=(job, intent), daemon=True).start()
@@ -220,20 +295,36 @@ def preview(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     snapshot = job.snapshot()
-    if snapshot["state"] == "error":
+    if snapshot["state"] == "error" and not (Path(job.output_dir) / JSON_FILENAME).exists():
         raise HTTPException(status_code=409, detail=snapshot["error"])
-    if snapshot["state"] != "preview_ready":
+    if snapshot["state"] == "pending":
         raise HTTPException(status_code=409, detail="preview is not ready")
     try:
         candidates = _load_candidates(job)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME))
+    by_id = {candidate["id"]: candidate for candidate in candidates}
+    tracks = []
+    for track in plan.tracks:
+        evidence = sorted(n for n in by_id.get(track.id, {}).get("presence_frames", [])
+                          if type(n) is int and 0 <= n < plan.source.frame_count)
+        row = track.to_dict()
+        row["has_mask"] = bool(track.mask is not None and track.mask.any())
+        row["evidence_frame"] = evidence[0] if evidence else 0
+        row["evidence_kind"] = "observed" if evidence else "position_reference"
+        row["evidence_url"] = f"/jobs/{job.id}/frame?frame_index={row['evidence_frame']}"
+        tracks.append(row)
     return {
         "id": job.id,
         "state": snapshot["state"],
         "candidates": candidates,
-        "tracks": _load_tracks(job),
-        "source": load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME), load_masks=False).source.to_dict(),
+        "tracks": tracks,
+        "source": plan.source.to_dict(),
+        "original_filename": snapshot["original_filename"],
+        "source_url": f"/jobs/{job.id}/source-video",
+        "recommended_trial": _recommended_trial(plan),
+        "confirmed_review": snapshot["confirmed_review"],
         "trial": snapshot["trial"],
         "preview_url": f"/jobs/{job.id}/preview-image",
         "editable_preview_url": f"/jobs/{job.id}/editable-preview-image",
@@ -350,15 +441,17 @@ def confirm(job_id: str, body: ConfirmRequest):
         if job.state != "preview_ready":
             raise HTTPException(status_code=409, detail=f"job is {job.state}")
         plan, selected_ids = _reviewed_plan(job, body)
-        save_wipe_plan(plan, job.output_dir)
+        run_dir = _job_path(job, Path(job.output_dir) / "runs" / uuid.uuid4().hex)
+        save_wipe_plan(plan, str(run_dir))
         job.selected_ids = selected_ids
+        job.confirmed_review = {"selected_ids": selected_ids, "bbox_overrides": body.bbox_overrides or {}}
         job.error = None
         job.trial = None
         job.trial_path = None
         job.progress = 0.0
         job.phase = "prepare"
         job.state = "running"
-    threading.Thread(target=_run_inpaint, args=(job,), daemon=True).start()
+    threading.Thread(target=_run_inpaint, args=(job, run_dir), daemon=True).start()
     return job.snapshot()
 
 
@@ -378,7 +471,7 @@ def _run_trial(job: Job, plan, frame_range: tuple[int, int], trial_dir: Path) ->
             job.trial["ready"] = True
             job.trial["elapsed_s"] = round(time.perf_counter() - started, 3)
             job.trial["backend"] = result.backend
-            job.warnings = list(result.warnings)
+            job.warnings = job.input_warnings + list(result.warnings)
             job.progress = 1.0
     except Exception as exc:
         with job.lock:
@@ -401,21 +494,9 @@ def trial(job_id: str, body: TrialRequest):
             raise HTTPException(status_code=409, detail=f"job is {job.state}")
         plan, _selected_ids = _reviewed_plan(job, body)
         fps = plan.source.fps
-        if body.start_seconds >= plan.source.frame_count / fps:
-            raise HTTPException(status_code=400, detail="trial starts outside the video")
-        first = math.floor(body.start_seconds * fps)
-        last = min(plan.source.frame_count, math.ceil(
-            (body.start_seconds + body.duration_seconds) * fps
-        ))
-        if not 0 <= first < last <= plan.source.frame_count:
-            raise HTTPException(status_code=400, detail="trial starts outside the video")
-        if not any(
-            any(segment.start < last and segment.end > first for segment in track.segments)
-            for track in plan.remove_tracks
-        ):
-            raise HTTPException(status_code=400, detail="No selected target is active in this interval")
+        first, last = _trial_range(plan, body.start_seconds, body.duration_seconds)
         trial_id = uuid.uuid4().hex
-        trial_dir = Path(job.output_dir) / "trials" / trial_id
+        trial_dir = _job_path(job, Path(job.output_dir) / "trials" / trial_id)
         job.trial = {
             "id": trial_id, "ready": False, "request": body.model_dump(),
             "frame_range": [first, last], "start_seconds": first / fps,
@@ -442,9 +523,7 @@ def trial_video(job_id: str, trial_id: str):
                 or job.trial["id"] != trial_id or not job.trial_path):
             raise HTTPException(status_code=409, detail="trial is not available")
         path = job.trial_path
-    if not Path(path).is_file():
-        raise HTTPException(status_code=404, detail="trial video not found")
-    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-store"})
+    return FileResponse(_job_file(job, path), media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/jobs/{job_id}/progress")
@@ -469,17 +548,83 @@ def download(job_id: str):
     job = get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
+    return FileResponse(
+        _result_file(job), media_type="video/mp4",
+        filename=f"{Path(job.original_filename).stem}_clean.mp4",
+    )
+
+
+def _result_file(job: Job) -> Path:
     snapshot = job.snapshot()
     if snapshot["state"] != "done":
         raise HTTPException(status_code=409, detail="job is not done")
     result_path = snapshot["result_path"]
-    if not result_path or not os.path.exists(result_path):
-        matches = sorted(Path(job.output_dir).glob("*_clean.mp4"))
-        result_path = str(matches[-1]) if matches else None
-    if not result_path or not os.path.exists(result_path):
+    if not result_path:
         raise HTTPException(status_code=404, detail="result video not found")
-    return FileResponse(
-        result_path,
-        media_type="video/mp4",
-        filename=Path(result_path).name,
-    )
+    return _job_file(job, result_path)
+
+
+@app.get("/jobs/{job_id}/source-video")
+def source_video(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    path = _job_file(job, job.video_path)
+    media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    if not media_type.startswith("video/"):
+        media_type = "application/octet-stream"
+    return FileResponse(path, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/jobs/{job_id}/result-video")
+def result_video(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return FileResponse(_result_file(job), media_type="video/mp4")
+
+
+@app.get("/jobs/{job_id}/frame")
+def source_frame(job_id: str, frame_index: int = Query(ge=0)):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    source = _job_file(job, job.video_path)
+    if not (Path(job.output_dir) / JSON_FILENAME).is_file():
+        raise HTTPException(status_code=409, detail="preview is not ready")
+    plan = load_wipe_plan(str(Path(job.output_dir) / JSON_FILENAME), load_masks=False)
+    if frame_index >= plan.source.frame_count:
+        raise HTTPException(status_code=400, detail="frame is outside the video")
+    # Only evidence frames are cached: a free scrub must not fill the disk.
+    evidence_frames = {0}
+    for candidate in _load_candidates(job):
+        present = [n for n in candidate.get("presence_frames", [])
+                   if type(n) is int and 0 <= n < plan.source.frame_count]
+        if present:
+            evidence_frames.add(min(present))
+    with job.media_lock:
+        cache = Path(job.output_dir) / f"evidence-{frame_index}.jpg"
+        if frame_index in evidence_frames and cache.exists():
+            return FileResponse(_job_file(job, cache), media_type="image/jpeg")
+        reader = cv2.VideoCapture(str(source))
+        try:
+            # ponytail: decode from zero for exact frame identity; index keyframes if long-video evidence becomes slow.
+            for _ in range(frame_index):
+                if not reader.grab():
+                    raise HTTPException(status_code=422, detail="cannot decode requested frame")
+            ok, frame = reader.read()
+            if not ok:
+                raise HTTPException(status_code=422, detail="cannot decode requested frame")
+        finally:
+            reader.release()
+        ok, encoded = cv2.imencode(".jpg", frame)
+        if not ok:
+            raise HTTPException(status_code=422, detail="cannot encode requested frame")
+        if frame_index in evidence_frames:
+            if cache.is_symlink():
+                raise HTTPException(status_code=409, detail="unsafe evidence cache")
+            temporary = cache.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            temporary.write_bytes(encoded.tobytes())
+            temporary.replace(cache)
+            return FileResponse(cache, media_type="image/jpeg")
+        return Response(encoded.tobytes(), media_type="image/jpeg")

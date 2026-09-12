@@ -438,27 +438,6 @@ def test_confirm_rejects_corrupt_plan_without_starting_job(client, tmp_path):
     assert test_client.get(f"/jobs/{job_id}").json()["state"] == "preview_ready"
 
 
-def test_web_page_contains_refresh_recovery_contract(client):
-    test_client, _ = client
-
-    page = test_client.get("/").text.replace("\r\n", "\n")
-
-    assert 'sessionStorage.getItem(jobStorageKey)' in page
-    assert 'fetch("/jobs/current")' in page
-    assert 'fetch(`/jobs/${storedId}`)' in page
-    assert "async function restoreJob()" in page
-    assert "startProgressStream(status.id)" in page
-    assert 'status.state === "preview_ready") {\n        submitBtn.disabled = true;' in page
-    assert 'status.state === "running") {\n        submitBtn.disabled = true;' in page
-    assert "renderTracks(preview.tracks || [])" in page
-    assert "preview.candidates.map" not in page
-    assert "preview.editable_preview_url || preview.preview_url" in page
-    assert "function transformBBox(" in page
-    assert 'sessionStorage.setItem(bboxStorageKey(currentJobId)' in page
-    assert "bbox_overrides: overrides" in page
-    assert '["n", "ne", "e", "se", "s", "sw", "w", "nw"]' in page
-
-
 def test_confirm_toggles_remove_on_all_keep_default_plan(client, tmp_path):
     """An all-keep default plan (e.g. a video whose only overlay is a
     safety-kept logo) must still let the user toggle a track to remove and run.
@@ -670,52 +649,220 @@ def test_trial_serializes_work_and_rejects_inactive_interval(client, tmp_path, m
     _wait_for_state(test_client, job_id, "preview_ready")
 
 
-@pytest.mark.skipif(not shutil.which("node"), reason="browser JavaScript check requires node")
-@pytest.mark.parametrize("state", ["running", "done", "preview_ready"])
-def test_trial_restore_handles_other_tabs_and_box_drafts(state):
-    """Execute the actual UI functions against server states missed between polls."""
-    html = server_app._web_index().read_text()
-    functions = html.split("    async function loadPreview(jobId) {", 1)[1].split(
-        "    function showDone(jobId) {", 1
-    )[0]
-    script = "async function loadPreview(jobId) {" + functions
+
+@pytest.mark.parametrize("intervals,expected", [
+    ([(300, 500)], 14.5),  # first subtitle at 12s, never recommend the empty intro
+    ([(10, 20)], 0.0),  # less than three seconds
+    ([(495, 500)], 17.0),  # clip end
+    ([(50, 100), (150, 200)], 1.5),  # earliest interval wins ties
+    ([(0, 50), (40, 125), (200, 250)], 1.0),  # merge overlaps first
+])
+def test_recommended_trial_contains_real_execution_mask(intervals, expected):
+    from videowipe.plan import Segment
+    track = SimpleNamespace(segments=[Segment(a, b) for a, b in intervals], mask=np.ones((2, 2)))
+    plan = SimpleNamespace(source=SimpleNamespace(fps=25, frame_count=500), remove_tracks=[track])
+    recommendation = server_app._recommended_trial(plan)
+    assert recommendation["start_seconds"] == expected
+    assert recommendation["frame_range"] == list(server_app._trial_range(plan, expected, 3))
+    track.mask[:] = 0
+    assert server_app._recommended_trial(plan) is None
+    with pytest.raises(server_app.HTTPException):
+        server_app._trial_range(plan, expected, 3)
+    plan.remove_tracks = []
+    assert server_app._recommended_trial(plan) is None
+
+
+def test_media_is_job_bound_and_evidence_uses_observed_frame(client, tmp_path):
+    test_client, _ = client
+    video = tmp_path / "source.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 4, (96, 64))
+    for i in range(8):
+        writer.write(np.full((64, 96, 3), i * 28, dtype=np.uint8))
+    writer.release()
+    with video.open("rb") as fh:
+        created = test_client.post("/jobs", files={"video": ("C:\\假目录\\中文片段.mp4", fh, "video/mp4")}).json()
+    job_id = created["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    assert job.original_filename == "中文片段.mp4"
+    assert Path(job.video_path).name == "input.mp4"
+    candidates_path = Path(job.output_dir) / "clean_candidates.json"
+    candidates = json.loads(candidates_path.read_text())
+    candidates["candidates"][0]["presence_frames"] = [5, 3, 7]
+    candidates_path.write_text(json.dumps(candidates))
+    preview = test_client.get(f"/jobs/{job_id}/preview").json()
+    first, fallback = preview["tracks"]
+    assert (first["evidence_frame"], first["evidence_kind"]) == (3, "observed")
+    assert fallback["evidence_kind"] == "position_reference"
+    assert first["has_mask"] is True
+    frame_response = test_client.get(first["evidence_url"])
+    image = cv2.imdecode(np.frombuffer(frame_response.content, np.uint8), cv2.IMREAD_COLOR)
+    assert abs(float(image.mean()) - 84) < 8
+    cache = Path(job.output_dir) / "evidence-3.jpg"
+    stamp = cache.stat().st_mtime_ns
+    assert test_client.get(first["evidence_url"]).content == frame_response.content
+    assert cache.stat().st_mtime_ns == stamp
+    for frame, code in [("-1", 422), ("3.5", 422), ("8", 400)]:
+        assert test_client.get(f"/jobs/{job_id}/frame?frame_index={frame}").status_code == code
+    original = test_client.get(f"/jobs/{job_id}/source-video", headers={"Range": "bytes=0-15"})
+    assert original.status_code == 206 and original.content == video.read_bytes()[:16]
+    assert test_client.get(f"/jobs/{job_id}/result-video").status_code == 409
+    test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]})
+    _wait_for_state(test_client, job_id, "done")
+    assert "/runs/" in job.result_path
+    assert test_client.get(f"/jobs/{job_id}/preview").json()["confirmed_review"] == {"selected_ids": ["c1"], "bbox_overrides": {}}
+    assert test_client.get(f"/jobs/{job_id}/result-video", headers={"Range": "bytes=0-15"}).status_code == 206
+    download = test_client.get(f"/jobs/{job_id}/download")
+    from urllib.parse import unquote
+    assert "中文片段_clean.mp4" in unquote(download.headers["content-disposition"])
+    # Never select an arbitrary glob match or read another job's/symlinked media.
+    job.result_path = None
+    assert test_client.get(f"/jobs/{job_id}/download").status_code == 404
+    job.result_path = str(video)
+    assert test_client.get(f"/jobs/{job_id}/result-video").status_code == 409
+    outside = Path(job.output_dir) / "outside.mp4"
+    outside.symlink_to(video)
+    job.result_path = str(outside)
+    assert test_client.get(f"/jobs/{job_id}/result-video").status_code == 409
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("../片段.mp4", "片段.mp4"), ("a\\b\\片段.mp4", "片段.mp4"),
+    ("\r\n\x00", "input.mp4"), ("x" * 200, "x" * 120),
+])
+def test_display_name_is_not_a_storage_path(name, expected):
+    assert server_app._display_filename(name) == expected
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires node")
+def test_workspace_recommendation_and_stale_trial_state():
+    page = server_app._web_index().read_text()
+    recommendation = page.split("    function recommend() {", 1)[1].split("    function invalidateTrial()", 1)[0]
+    transition = page.split("    async function applyStatus(data) {", 1)[1].split("    async function showDone", 1)[0]
+    signature = page.split("    function signature(request) {", 1)[1].split("    function saveReview()", 1)[0]
     harness = r'''
 const assert = require("node:assert/strict");
-const state = process.argv[1];
-const events = [];
-let bboxDrafts = {};
-const trialPanel = {}, trialStart = {}, trialDuration = {}, trialHint = {};
-const previewImage = {}, previewMedia = {}, previewEmpty = {style: {}};
-const confirmBtn = {style: {}};
-const sessionStorage = {getItem: () => null};
-const candidateList = {querySelectorAll: () => []};
-const loadBBoxDrafts = () => {};
-const saveBBoxDrafts = () => {};
-const renderTracks = () => events.push(["render", {...bboxDrafts}]);
-const setReviewBusy = () => {};
-const sanitizeBBoxDrafts = () => {};
-const renderOverlays = () => {};
-const displayTrial = () => {};
-const setProgress = () => {};
-const setOutput = () => {};
-const setStep = () => {};
-const setStatus = () => {};
-const showDone = id => events.push(["done", id]);
-const startProgressStream = id => events.push(["running", id]);
-const sleep = () => {throw new Error("unexpected continued polling");};
-const preview = {source: {frame_count: 20, fps: 4}, tracks: [],
-    trial: {request: {bbox_overrides: {c1: [1, 2, 3, 4]}, selected_ids: ["c1"],
-                     start_seconds: 0, duration_seconds: 3}}};
-const fetch = async url => ({ok: true, json: async () => url.endsWith("/preview") ? preview : {state}});
+const nodes = {start:{value:0},duration:{value:3}};
+const $ = id => nodes[id] ||= {classList:{},removeAttribute(){}};
+const source = {fps:25,frame_count:500};
+const duration = () => 20;
+let mask=true; const bboxDrafts={};
+const selectedTracks = () => [{id:"c1",has_mask:mask,segments:[[300,500]]}];
+let currentJobId="job", state="trial_running", latestState, reviewLoaded=false, trial=null;
+let events=[];
+const renderActions=()=>{}, renderTargets=()=>{}, renderTimeline=()=>{}, renderOverlays=()=>{};
+const closeStream=()=>events.push("closed"), notify=(text)=>events.push(text), showWarnings=()=>{};
+const loadPreview=async()=>{reviewLoaded=true;events.push("preview");};
+const showDone=async()=>events.push("done"), setMedia=()=>events.push("media"), storageSet=()=>{};
+const reviewRequest=()=>({selected_ids:["c1"],start_seconds:14.5,duration_seconds:3});
 '''
     assertions = r'''
-(async () => {
-    await waitForPreview("job");
-    if (state === "preview_ready") {
-        assert.deepEqual(events[0], ["render", {c1: [1, 2, 3, 4]}]);
-    } else {
-        assert.deepEqual(events, [[state, "job"]]);
-    }
-})().catch(error => {console.error(error); process.exitCode = 1;});
+(async()=>{
+recommend();assert.equal(nodes.start.value,"14.5");
+mask=false;nodes.start.value="0";recommend();assert.equal(nodes.start.value,"0");
+bboxDrafts.c1=[1,1,5,5];recommend();assert.equal(nodes.start.value,"14.5");
+await applyStatus({id:"other",state:"done"});assert.deepEqual(events,[]);
+await applyStatus({id:"job",state:"preview_ready",trial:{ready:true,request:{selected_ids:["c2"]}}});
+assert.deepEqual(events,["closed","preview"]);assert.equal(trial,null);
+events=[];await applyStatus({id:"job",state:"done"});assert.deepEqual(events,["closed","done"]);
+events=[];await applyStatus({id:"job",state:"preview_ready",error:"encode failure"});
+assert.equal(state,"preview_ready");assert.equal(trial,null);assert(events[1].includes("可以重试"));
+})().catch(error=>{console.error(error);process.exitCode=1;});
 '''
-    subprocess.run(["node", "-e", harness + script + assertions, state], check=True)
+    subprocess.run(["node", "-e", harness + "function signature(request) {" + signature
+                    + "function recommend() {" + recommendation
+                    + "async function applyStatus(data) {" + transition + assertions], check=True)
+
+
+def test_review_and_evidence_paths_reject_symlink_escape(client, tmp_path):
+    test_client, _ = client
+    video = tmp_path / "source.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (Path(job.output_dir) / "runs").symlink_to(outside, target_is_directory=True)
+    assert test_client.post(f"/jobs/{job_id}/confirm", json={}).status_code == 409
+    assert job.state == "preview_ready" and not list(outside.iterdir())
+    (Path(job.output_dir) / "evidence-0.jpg").symlink_to(video)
+    assert test_client.get(f"/jobs/{job_id}/frame?frame_index=0").status_code == 409
+    assert len(server_app._display_filename("中" * 200).encode("utf-8")) <= 180
+    plan_path = Path(job.output_dir) / "wipe_plan.json"
+    plan_path.rename(plan_path.with_suffix(".bak"))
+    assert test_client.get(f"/jobs/{job_id}/frame?frame_index=0").status_code == 409
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires node")
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_restored_edited_trial_still_loads_source_video(confirmed):
+    html = server_app._web_index().read_text()
+    function = html.split("    async function loadPreview(jobId) {", 1)[1].split("    function closeStream()", 1)[0]
+    harness = r'''
+const assert=require("node:assert/strict");
+const preview={source:{fps:25,width:100,height:100,frame_count:500},original_filename:"clip.mp4",
+tracks:[{id:"c1",bbox:[1,1,50,50],action:"remove",evidence_frame:300}],
+trial:{ready:true,request:{selected_ids:["c1"],bbox_overrides:{},start_seconds:12,duration_seconds:3}}};
+const saved={selected_ids:["c1"],bbox_overrides:{c1:[2,2,51,51]},start_seconds:12,duration_seconds:3};
+let source,tracks,selectedIds,bboxDrafts,manualTime,reviewLoaded,activeTrackId;
+let currentJobId="job",state="preview_ready";
+const nodes={};const $=id=>nodes[id]||=( {} );
+const request=async()=>preview;
+const storageGet=key=>key.includes("review")?JSON.stringify(saved):"13";
+const signature=JSON.stringify,reviewRequest=()=>saved;
+const recommend=()=>{},updateMeta=()=>{},renderTargets=()=>{},renderTimeline=()=>{},renderOverlays=()=>{};
+const events=[];const setMedia=(view,at)=>events.push([view,at]);
+'''
+    assertions = r'''
+(async()=>{await loadPreview("job");assert.deepEqual(events,[["source",13]]);assert.deepEqual(bboxDrafts,saved.bbox_overrides);})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    if confirmed:
+        harness += "preview.confirmed_review={...saved,bbox_overrides:{c1:[3,3,52,52]}};"
+        assertions = assertions.replace("saved.bbox_overrides", "preview.confirmed_review.bbox_overrides")
+    subprocess.run(["node", "-e", harness + "async function loadPreview(jobId) {" + function + assertions], check=True)
+
+
+@pytest.mark.parametrize("suffix", ["html", "svg"])
+def test_source_media_never_serves_active_document(client, tmp_path, suffix):
+    test_client, _ = client
+    video = tmp_path / "source.mp4"
+    _write_test_video(video)
+    created = test_client.post("/jobs", files={
+        "video": (f"clip.{suffix}", video.read_bytes(), "application/octet-stream"),
+    }).json()
+    _wait_for_state(test_client, created["id"], "preview_ready")
+    response = test_client.get(f"/jobs/{created['id']}/source-video")
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires node")
+def test_workspace_media_identity_transitions():
+    html = server_app._web_index().read_text()
+    pick = html.split("    async function pickFile(file) {", 1)[1].split("    async function submit()", 1)[0]
+    inspect = html.split("    function inspect(id) {", 1)[1].split("    function imageMetrics()", 1)[0]
+    visibility = html.split("    function updateOverlayVisibility() {", 1)[1].split("    function renderOverlays()", 1)[0]
+    declarations = html.split('    const busyStates = ', 1)[1].split('    const evidenceImages', 1)[0]
+    script = r'''
+const assert=require("node:assert/strict");
+const events=[];sourceSupported=false;
+const busy=()=>busyStates.has(state);
+const renderTargets=()=>{},setMedia=(view,at)=>events.push([view,at]);
+const position=()=>29/25;
+const box={dataset:{trackId:"c1"},hidden:true};const $=()=>({children:[box]});
+'''
+    assertions = r'''
+(async()=>{
+await pickFile({name:"other.mp4"});assert.equal(selectedFile,null);
+source={fps:25};tracks=[{id:"c1",evidence_frame:29,segments:[[29,30]]}];
+inspect("c1");assert.deepEqual(events,[["source",29/25]]);
+updateOverlayVisibility();assert.equal(box.hidden,false);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    # Exercise the source-supported branch separately for the seconds/frame round-trip.
+    assertions = assertions.replace('updateOverlayVisibility();', 'sourceSupported=true;updateOverlayVisibility();')
+    subprocess.run(["node", "-e", "const busyStates = " + declarations + script
+                    + "async function pickFile(file) {" + pick
+                    + "function inspect(id) {" + inspect
+                    + "function updateOverlayVisibility() {" + visibility + assertions], check=True)

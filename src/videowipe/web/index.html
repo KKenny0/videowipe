@@ -1,475 +1,168 @@
 <!doctype html>
-<html lang="en">
+<!-- Local cleanup workspace; native HTML/JS, no remote assets. -->
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VideoWipe</title>
+  <meta name="color-scheme" content="light dark">
+  <title>VideoWipe · 本地视频清理</title>
   <style>
-    :root {
-      --bg: #f4f1ea;
-      --paper: #fffdfa;
-      --panel: #ffffff;
-      --ink: #171513;
-      --muted: #6f675e;
-      --quiet: #948a7d;
-      --line: #ded6ca;
-      --line-strong: #b8aa9a;
-      --dark: #1e1d1a;
-      --dark-2: #292720;
-      --accent: #ff6b35;
-      --accent-dark: #b94720;
-      --green: #167864;
-      --blue: #244c9b;
-      --soft: #f3ebe3;
-      --soft-green: #e6f2ee;
-      --danger: #b42318;
-      --radius: 8px;
-      --shadow: 0 20px 50px rgba(42, 35, 25, 0.13);
-      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    :root { color-scheme: light; --bg:#f4f1ea; --paper:#fffdfa; --panel:#fff; --ink:#171513; --muted:#6f675e; --line:#ded6ca; --accent:#ff6b35; --accent-dark:#b94720; --green:#167864; --soft-green:#e6f2ee; --soft:#f3ebe3; --danger:#b42318; --stage:#191b19; --radius:8px; --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; --mono:"SFMono-Regular",Consolas,monospace; }
+    :root[data-theme="dark"] { color-scheme:dark; --bg:#181b19; --paper:#202421; --panel:#252b27; --ink:#eceee8; --muted:#b4bcb3; --line:#3b443d; --accent:#ff956e; --accent-dark:#ffad8b; --green:#71c9ae; --soft-green:#243e33; --soft:#33342e; --danger:#ffb2a5; --stage:#101310; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 var(--font); -webkit-font-smoothing:antialiased; }
+    button,input,select,a { font:inherit; }
+    button,a,label[for="file"] { -webkit-tap-highlight-color:transparent; }
+    button,select { cursor:pointer; }
+    button:disabled { opacity:.48; cursor:default; }
+    button { color:var(--ink); }
+    button,a,input,select { border-radius:6px; }
+    button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    [hidden] { display:none !important; }
+    .prototype { padding:8px 28px; background:var(--soft); display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--line); font-size:12px; }
+    .prototype strong { font-weight:600; color:var(--accent-dark); white-space:nowrap; }
+    .prototype label { display:flex; align-items:center; gap:8px; }
+    .prototype select { color:var(--ink); background:transparent; border:0; padding:4px 24px 4px 6px; min-height:28px; }
+    .prototype .notice { color:var(--muted); margin-left:auto; }
+    .shell { max-width:1440px; margin:auto; padding:0 28px 20px; }
+    .topbar { height:60px; display:flex; align-items:center; gap:12px; }
+    .logo { width:33px; height:33px; flex:none; }
+    .brand { font-size:21px; font-weight:780; letter-spacing:-.6px; }
+    .brand span { font-size:12px; color:var(--muted); font-weight:400; letter-spacing:0; margin-left:15px; border-left:1px solid var(--line); padding-left:15px; }
+    .topbar .spacer { flex:1; }
+    .quiet,.ghost { background:transparent; border:1px solid var(--line); padding:0 13px; height:36px; display:inline-flex; align-items:center; justify-content:center; gap:7px; text-decoration:none; color:var(--ink); }
+    .quiet:hover,.ghost:hover { background:var(--soft); }
+    .subtle { border:0; background:transparent; color:var(--muted); padding:8px; }
+    .projectline { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; }
+    .filename { display:flex; align-items:center; gap:10px; min-width:0; }
+    .filemark { color:var(--green); border:1px solid var(--line); border-radius:4px; padding:6px 7px; font:10px var(--mono); }
+    h1 { font-size:16px; font-weight:650; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .filemeta { color:var(--muted); font:11px/1.6 var(--mono); margin:3px 0 0; }
+    .status { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--green); flex:none; }
+    .status::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 304px; grid-template-areas:"viewer targets" "actions targets"; gap:16px; align-items:start; }
+    .viewer { grid-area:viewer; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+    .stage { position:relative; width:min(100%,calc(36vh * var(--ratio,1.777778))); margin:auto; aspect-ratio:var(--ratio,1.777778); display:flex; justify-content:center; align-items:center; background:var(--stage); overflow:hidden; }
+    .stage.is-comparison { width:min(100%,calc(36vh * var(--ratio,.888889))); aspect-ratio:var(--ratio,.888889); }
+    video { display:block; width:100%; height:100%; object-fit:contain; }
+    .stage .view-label { position:absolute; top:14px; left:14px; padding:4px 9px; border-radius:4px; color:#fff; background:#171b1bd9; font-size:11px; pointer-events:none; }
+    .compare-labels { position:absolute; inset:0; pointer-events:none; display:grid; grid-template-rows:1fr 1fr; }
+    .compare-labels span { align-self:start; justify-self:start; margin:10px 14px; padding:3px 7px; font-size:10px; color:#fff; background:#121714cf; border-radius:3px; }
+    #overlays { position:absolute; inset:0; pointer-events:none; }
+    .target-box { position:absolute; border:1.5px solid #a8e4ce; background:#65c7a210; border-radius:3px; pointer-events:auto; padding:0; min-height:16px; transition:border-color .12s; }
+    .target-box[data-active="true"] { border-color:var(--accent); border-width:2px; background:#ff6b3510; }
+    .target-box[data-remove="false"] { border-style:dashed; border-color:#d4d9d4; background:transparent; }
+    .target-box .box-label { position:absolute; left:-1px; top:-23px; background:#192c24ed; color:#dcf4e9; font-size:10px; padding:2px 6px; white-space:nowrap; border-radius:3px 3px 0 0; }
+    .target-box[data-active="true"] .box-label { background:#f47a48; color:#151713; }
+    .stage-message { position:absolute; inset:0; background:#131916d9; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:24px; text-align:center; }
+    .stage-message strong { font-size:18px; font-weight:600; }
+    .stage-message p { max-width:360px; color:#c6d4cb; margin:0; font-size:13px; }
+    .stage-message progress { width:180px; height:5px; accent-color:#7cceab; }
+    .playbar { min-height:49px; display:flex; align-items:center; gap:13px; padding:7px 14px; border-bottom:1px solid var(--line); }
+    .play { background:transparent; border:0; width:33px; height:32px; font-size:17px; padding:0; }
+    .time { font:11px var(--mono); color:var(--muted); white-space:nowrap; }
+    .view-buttons { margin-left:auto; display:flex; gap:4px; padding:3px; background:var(--soft); border-radius:5px; }
+    .view-buttons button { border:0; padding:4px 9px; color:var(--muted); background:transparent; font-size:11px; }
+    .view-buttons button[aria-pressed="true"] { background:var(--paper); color:var(--ink); box-shadow:0 1px 3px #0001; }
+    .timeline { padding:11px 17px 10px; }
+    .timeline-top { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:10px; }
+    .timeline-top span:last-child { margin-left:auto; }
+    .ruler { position:relative; height:34px; margin-top:5px; }
+    .ruler-track { position:absolute; top:10px; left:0; right:0; height:8px; border-radius:3px; background:var(--soft); }
+    .presence { position:absolute; top:0; height:8px; background:var(--green); opacity:.35; border-radius:2px; }
+    .trial-window { position:absolute; top:4px; height:21px; border:1px solid var(--accent); background:#ff6b3519; border-radius:3px; pointer-events:none; }
+    #seek { position:absolute; inset:0; width:100%; height:27px; margin:0; background:transparent; appearance:none; accent-color:var(--accent); }
+    #seek::-webkit-slider-runnable-track { background:transparent; height:25px; }
+    #seek::-webkit-slider-thumb { appearance:none; width:3px; height:25px; background:var(--ink); border:0; border-radius:1px; }
+    #seek::-moz-range-track { background:transparent; }
+    .ticks { display:flex; justify-content:space-between; font:10px var(--mono); color:var(--muted); margin-top:-2px; }
+    .targets { grid-area:targets; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+    .section-head { display:flex; align-items:center; justify-content:space-between; padding:16px 16px 12px; }
+    h2 { margin:0; font-size:14px; font-weight:650; }
+    .section-head span { font-size:11px; color:var(--muted); }
+    .summary { margin:0 16px 12px; color:var(--muted); font-size:12px; line-height:1.75; }
+    .target { padding:13px 15px; display:grid; grid-template-columns:19px 1fr; column-gap:10px; border-top:1px solid var(--line); }
+    .target.is-active { background:var(--soft-green); }
+    .target input { width:16px; height:16px; margin:3px 0 0; accent-color:var(--green); }
+    .target-inspect { background:transparent; border:0; padding:0; display:grid; gap:6px; min-width:0; text-align:left; }
+    .target-title { font-weight:600; font-size:12px; display:flex; justify-content:space-between; gap:5px; align-items:center; }
+    .target-title small { font-weight:400; font-size:10px; color:var(--muted); }
+    .target-meta { color:var(--muted); font:10px var(--mono); }
+    .target img { width:100%; height:42px; object-fit:contain; object-position:center; background:#202521; border-radius:4px; }
+    .target-note { font-size:11px; color:var(--muted); grid-column:2; margin-top:7px; }
+    .hint { color:var(--muted); font-size:11px; line-height:1.7; margin:12px 16px 16px; }
+    .editor { margin:0 15px 14px; padding:12px 0 0; border-top:1px solid var(--line); }
+    .editor-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
+    .editor-heading button { font-size:10px; padding:5px; border:0; background:transparent; color:var(--green); }
+    .editor label { display:grid; grid-template-columns:40px 1fr 28px; align-items:center; gap:8px; font-size:11px; margin:10px 0; color:var(--muted); }
+    .editor input { width:100%; accent-color:var(--green); min-width:0; }
+    .actions { grid-area:actions; padding:15px 17px; border:1px solid var(--line); border-radius:var(--radius); background:var(--paper); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .action-copy { flex:1; min-width:180px; }
+    .action-copy strong { display:block; font-size:13px; font-weight:650; }
+    .action-copy p { color:var(--muted); font-size:11px; line-height:1.7; margin:3px 0 0; }
+    .buttons { display:flex; align-items:center; gap:10px; }
+    .primary { min-height:42px; padding:10px 20px; border:0; border-radius:6px; background:var(--green); color:#fff; font-size:12px; font-weight:650; white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:10px; }
+    [data-theme="dark"] .primary { color:#122319; }
+    .primary:hover:not(:disabled) { filter:brightness(1.08); }
+    .action-extra { width:100%; border-top:1px solid var(--line); padding-top:10px; display:flex; align-items:center; gap:12px; color:var(--muted); font-size:11px; }
+    details { position:relative; }
+    summary { cursor:pointer; }
+    .time-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 0 2px; }
+    .time-controls label { display:flex; gap:7px; align-items:center; }
+    .time-controls input,.time-controls select { background:var(--paper); color:var(--ink); border:1px solid var(--line); padding:6px; width:75px; }
+    .link-button { border:0; background:transparent; color:var(--green); padding:6px 0; font-size:11px; }
+    .minor { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:13px; color:var(--muted); font-size:10px; }
+    .minor p { margin:0; }
+    .notice-box { border:1px solid var(--line); background:var(--soft); border-radius:6px; padding:10px 13px; margin:0 0 14px; color:var(--muted); font-size:12px; }
+    .notice-box[data-tone="error"] { color:var(--danger); }
+    .empty-targets { padding:25px 16px; color:var(--muted); font-size:12px; line-height:1.8; border-top:1px solid var(--line); }
+    .intro { padding:40px 20px; text-align:center; border:1px solid var(--line); background:var(--paper); border-radius:8px; margin:25px auto; max-width:700px; }
+    .intro h1 { font-size:26px; max-width:none; }
+    .intro p { color:var(--muted); }
+    .intro input { padding:8px; border:1px solid var(--line); background:var(--paper); color:var(--ink); max-width:100%; }
+    #fallbackFrame { width:100%; height:100%; object-fit:contain; position:absolute; inset:0; }
+    .stage.is-seeking video { visibility:hidden; }
+    .stage.is-seeking::after { content:"正在定位画面…"; position:absolute; color:#ddd; }
+    .target canvas { width:100%; height:44px; object-fit:contain; background:#202521; border-radius:4px; }
+    .screen-reader { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+    @media (prefers-reduced-motion:reduce) { * { transition:none !important; animation:none !important; } }
+    @media (max-width:760px) {
+      .prototype { padding:8px 14px; gap:8px; flex-wrap:wrap; font-size:10px; }
+      .prototype .notice { display:none; }
+      .prototype label { margin-left:auto; gap:2px; }
+      .prototype select { font-size:11px; max-width:166px; }
+      .shell { padding:0 12px 20px; }
+      .topbar { height:66px; gap:8px; }
+      .brand { font-size:19px; }
+      .brand span { display:none; }
+      .topbar .quiet { height:40px; padding:0 9px; font-size:11px; }
+      .topbar .logo { width:29px; height:29px; }
+      .projectline { margin-bottom:12px; align-items:start; }
+      .filemark { display:none; }
+      h1 { font-size:14px; max-width:225px; }
+      .status { font-size:10px; margin-top:3px; }
+      .filemeta { font-size:10px; }
+      .workspace { grid-template-columns:1fr; grid-template-areas:"viewer" "actions" "targets"; gap:12px; }
+      .stage { width:100%; }
+      .stage.is-comparison { width:min(100%,calc(34vh * var(--ratio,.888889))); }
+      .playbar { gap:7px; padding:5px 10px; flex-wrap:wrap; }
+      .view-buttons button { padding:7px; min-height:33px; }
+      .actions { padding:13px; gap:12px; }
+      .action-copy { flex-basis:100%; }
+      .buttons { width:100%; }
+      .primary { flex:1; min-height:44px; }
+      .ghost { min-height:44px; }
+      .target { padding:14px; }
+      .target-inspect { min-height:44px; }
+      .target input { width:20px; height:20px; }
+      .target-title { font-size:13px; }
+      .target-meta { font-size:11px; }
+      .target img { height:50px; }
+      .editor input { min-height:32px; }
+      .link-button,.subtle { min-height:44px; }
+      .minor { align-items:start; font-size:10px; }
+      .minor .shortcut { display:none; }
     }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.18) 44%, rgba(255,255,255,0.36)),
-        var(--bg);
-      color: var(--ink);
-      font-family: var(--font);
-      -webkit-font-smoothing: antialiased;
-    }
-
-    button, input { font: inherit; }
-
-    .app {
-      width: min(1180px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 24px 0 36px;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-
-    .brand {
-      display: grid;
-      grid-template-columns: 44px minmax(0, 1fr);
-      gap: 12px;
-      align-items: center;
-      min-width: 0;
-    }
-
-    .brand-logo {
-      width: 44px;
-      height: 44px;
-      border-radius: 10px;
-      background: var(--paper);
-      box-shadow: 0 8px 24px rgba(38, 31, 23, 0.12);
-    }
-
-    .brand-name {
-      margin: 0;
-      font-size: 25px;
-      line-height: 1;
-      font-weight: 800;
-      letter-spacing: 0;
-    }
-
-    .brand-subtitle {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .status {
-      min-height: 34px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 0 12px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: rgba(255,255,255,0.72);
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .status::before {
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--quiet);
-    }
-
-    .status[data-tone="error"] {
-      color: var(--danger);
-      border-color: rgba(180,35,24,0.24);
-      background: #fff4f2;
-    }
-
-    .status[data-tone="error"]::before { background: var(--danger); }
-
-    .status[data-tone="ok"] {
-      color: var(--green);
-      border-color: rgba(22,120,100,0.24);
-      background: var(--soft-green);
-    }
-
-    .status[data-tone="ok"]::before { background: var(--green); }
-
-    .intro {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 20px;
-      align-items: end;
-      margin-bottom: 18px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background:
-        linear-gradient(135deg, rgba(255,107,53,0.11), transparent 36%),
-        rgba(255,253,250,0.74);
-    }
-
-    .eyebrow {
-      margin: 0 0 7px;
-      color: var(--accent-dark);
-      font-family: var(--mono);
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .intro h2 {
-      margin: 0;
-      max-width: 760px;
-      font-size: clamp(28px, 4vw, 46px);
-      line-height: 1.04;
-      font-weight: 850;
-      letter-spacing: 0;
-    }
-
-    .intro-lead {
-      margin: 12px 0 0;
-      max-width: 680px;
-      color: var(--muted);
-      font-size: 15px;
-      line-height: 1.6;
-    }
-
-    .proofs {
-      display: grid;
-      gap: 8px;
-      min-width: 180px;
-    }
-
-    .proof {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 30px;
-      padding: 0 10px;
-      border: 1px solid rgba(23,21,19,0.09);
-      border-radius: 999px;
-      background: rgba(255,255,255,0.74);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .proof::before {
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-    }
-
-    .steps {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin: 0 0 18px;
-      padding: 0;
-      list-style: none;
-    }
-
-    .step {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-height: 48px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: rgba(255,255,255,0.68);
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 800;
-    }
-
-    .step-num {
-      display: grid;
-      place-items: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: var(--soft);
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px;
-    }
-
-    .step.is-active {
-      border-color: rgba(255,107,53,0.45);
-      background: #fff7f2;
-      color: var(--ink);
-    }
-
-    .step.is-active .step-num {
-      background: var(--accent);
-      color: #fff;
-    }
-
-    .layout {
-      display: grid;
-      grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: start;
-    }
-
-    .panel {
-      background: rgba(255,255,255,0.94);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-    }
-
-    .controls {
-      padding: 18px;
-      display: grid;
-      gap: 16px;
-    }
-
-    .panel-heading {
-      display: flex;
-      align-items: start;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 2px;
-    }
-
-    .panel-heading h3 {
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.2;
-      font-weight: 850;
-    }
-
-    .panel-heading p {
-      margin: 5px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.4;
-    }
-
-    .mini-badge {
-      padding: 4px 8px;
-      border-radius: 999px;
-      background: var(--soft-green);
-      color: var(--green);
-      font-size: 11px;
-      font-weight: 850;
-      white-space: nowrap;
-    }
-
-    .dropzone {
-      min-height: 174px;
-      display: grid;
-      place-items: center;
-      padding: 18px;
-      border: 1px dashed var(--line-strong);
-      border-radius: var(--radius);
-      background: #fbfaf7;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s, transform 0.15s;
-    }
-
-    .dropzone:hover,
-    .dropzone.is-dragging {
-      border-color: var(--accent);
-      background: #fff8f3;
-    }
-
-    .dropzone:active { transform: translateY(1px); }
-
-    .drop-inner {
-      display: grid;
-      gap: 10px;
-      justify-items: center;
-      text-align: center;
-    }
-
-    .film {
-      width: 58px;
-      height: 42px;
-      border: 2px solid var(--ink);
-      border-radius: 6px;
-      position: relative;
-      background: linear-gradient(90deg, #fff 0 18%, #e9eee9 18% 82%, #fff 82%);
-    }
-
-    .film::before,
-    .film::after {
-      content: "";
-      position: absolute;
-      top: 6px;
-      bottom: 6px;
-      width: 4px;
-      background: repeating-linear-gradient(
-        to bottom,
-        var(--ink) 0 3px,
-        transparent 3px 7px
-      );
-    }
-
-    .film::before { left: 6px; }
-    .film::after { right: 6px; }
-
-    .drop-title {
-      font-weight: 850;
-      font-size: 16px;
-    }
-
-    .file-name {
-      width: 100%;
-      max-width: 280px;
-      color: var(--muted);
-      font-size: 13px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .field {
-      display: grid;
-      gap: 8px;
-    }
-
-    label {
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 750;
-    }
-
-    input[type="text"] {
-      width: 100%;
-      height: 44px;
-      padding: 0 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
-      outline: none;
-    }
-
-    input[type="text"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(255,107,53,0.14);
-    }
-
-    .field-hint {
-      color: var(--quiet);
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    .primary,
-    .secondary {
-      height: 44px;
-      border-radius: 6px;
-      border: 1px solid transparent;
-      cursor: pointer;
-      font-weight: 850;
-      transition: opacity 0.15s, transform 0.15s, background 0.15s;
-    }
-
-    .primary {
-      background: var(--green);
-      color: #fff;
-    }
-
-    .primary:hover:not(:disabled) { background: #126a57; }
-
-    .secondary {
-      background: #fff;
-      color: var(--ink);
-      border-color: var(--line);
-    }
-
-    button:disabled {
-      opacity: 0.46;
-      cursor: not-allowed;
-    }
-
-    button:not(:disabled):active { transform: translateY(1px); }
-
-    .workspace {
-      min-height: 620px;
-      overflow: hidden;
-    }
-
-    .preview {
-      display: grid;
-      grid-template-rows: minmax(320px, auto) auto;
-    }
-
-    .preview-stage {
-      min-height: 420px;
-      display: grid;
-      place-items: center;
-      background:
-        linear-gradient(135deg, rgba(255,107,53,0.12), transparent 34%),
-        linear-gradient(45deg, rgba(22,120,100,0.12), transparent 46%),
-        var(--dark);
-      border-bottom: 1px solid var(--line);
-      position: relative;
-    }
-
-    .preview-media {
-      position: absolute;
-      inset: 0;
-      display: none;
-    }
-
-    .preview-stage img {
-      width: 100%;
-      height: 100%;
-      max-height: 560px;
-      object-fit: contain;
-      display: block;
-      background: #111;
-    }
-
-    .bbox-layer {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-
     .bbox-box {
       position: absolute;
       min-width: 2px;
@@ -525,752 +218,212 @@
     .bbox-handle[data-edge="sw"] { left: -12px; bottom: -12px; cursor: nesw-resize; }
     .bbox-handle[data-edge="se"] { right: -12px; bottom: -12px; cursor: nwse-resize; }
 
-    .preview-empty {
-      display: grid;
-      justify-items: center;
-      gap: 12px;
-      max-width: 380px;
-      color: #efe8dc;
-      padding: 24px;
-      text-align: center;
-    }
-
-    .empty-logo {
-      width: 76px;
-      height: 76px;
-      opacity: 0.92;
-      filter: drop-shadow(0 12px 24px rgba(0,0,0,0.25));
-    }
-
-    .preview-empty strong {
-      font-size: 16px;
-      line-height: 1.25;
-    }
-
-    .preview-empty span {
-      color: #bdb5a9;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .review {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(230px, 280px);
-      gap: 0;
-      min-height: 210px;
-    }
-
-    .candidates,
-    .run {
-      padding: 16px;
-    }
-
-    .candidates {
-      border-right: 1px solid var(--line);
-    }
-
-    .section-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin: 0 0 12px;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 850;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-
-    .section-title span {
-      color: var(--quiet);
-      font-family: var(--mono);
-      font-size: 11px;
-      text-transform: none;
-      font-weight: 700;
-    }
-
-    .candidate-list {
-      display: grid;
-      gap: 8px;
-      max-height: 220px;
-      overflow: auto;
-    }
-
-    .empty-list {
-      color: var(--quiet);
-      font-size: 13px;
-      line-height: 1.5;
-      padding: 11px 0;
-    }
-
-    .candidate {
-      display: grid;
-      grid-template-columns: 20px minmax(0, 1fr) auto auto;
-      gap: 10px;
-      align-items: center;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-    }
-
-    .candidate input {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--green);
-    }
-
-    .candidate.is-active {
-      border-color: var(--accent);
-      background: #fff8f3;
-    }
-
-    .candidate-main {
-      border: 0;
-      padding: 0;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-      cursor: pointer;
-    }
-
-    .candidate-main:disabled { cursor: default; }
-
-    .candidate-reset {
-      min-height: 30px;
-      padding: 0 8px;
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      background: #fff;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 800;
-      cursor: pointer;
-    }
-
-    .candidate-main {
-      display: grid;
-      gap: 2px;
-      min-width: 0;
-    }
-
-    .candidate-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 14px;
-      font-weight: 800;
-    }
-
-    .candidate-meta {
-      display: block;
-      margin-top: 2px;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px;
-    }
-
-    .pill {
-      border-radius: 999px;
-      background: #f1f0ec;
-      color: var(--muted);
-      padding: 4px 8px;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    progress {
-      width: 100%;
-      height: 12px;
-      accent-color: var(--green);
-    }
-
-    .run {
-      display: grid;
-      align-content: start;
-      gap: 14px;
-    }
-
-    .output-state {
-      min-height: 54px;
-      display: grid;
-      align-content: center;
-      gap: 3px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fbfaf7;
-    }
-
-    .output-state strong {
-      font-size: 14px;
-      line-height: 1.25;
-    }
-
-    .output-state span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.35;
-    }
-
-    .progress-row {
-      display: grid;
-      gap: 7px;
-    }
-
-    .progress-label {
-      display: flex;
-      justify-content: space-between;
-      color: var(--quiet);
-      font-family: var(--mono);
-      font-size: 11px;
-    }
-
-    .download {
-      display: none;
-      min-height: 44px;
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-      background: var(--blue);
-      color: #fff;
-      font-weight: 850;
-      text-decoration: none;
-    }
-
-    .hidden-file { display: none; }
-
-    @media (max-width: 900px) {
-      .intro {
-        grid-template-columns: 1fr;
-        align-items: start;
-      }
-
-      .proofs {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }
-
-      .proof {
-        justify-content: center;
-      }
-
-      .layout,
-      .review {
-        grid-template-columns: 1fr;
-      }
-
-      .candidates {
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .preview-stage {
-        min-height: 320px;
-      }
-
-      .workspace {
-        min-height: auto;
-      }
-    }
-
-    @media (max-width: 560px) {
-      .app {
-        width: min(100vw - 20px, 1180px);
-        padding-top: 14px;
-      }
-
-      .topbar {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-
-      .brand {
-        grid-template-columns: 38px minmax(0, 1fr);
-      }
-
-      .brand-logo {
-        width: 38px;
-        height: 38px;
-      }
-
-      .brand-name {
-        font-size: 23px;
-      }
-
-      .intro {
-        padding: 14px;
-      }
-
-      .intro h2 {
-        font-size: 30px;
-      }
-
-      .proofs {
-        grid-template-columns: 1fr;
-      }
-
-      .steps {
-        grid-template-columns: 1fr;
-      }
-
-      .step {
-        min-height: 42px;
-      }
-    }
-    .trial-panel { padding: 20px; border-top: 1px solid var(--line); }
-    .trial-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
-    .trial-controls label { display: grid; gap: 6px; font-size: 12px; }
-    .trial-controls input, .trial-controls select { width: 130px; padding: 10px; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 4px; }
-    .trial-controls button { width: auto; padding: 12px 18px; }
-    .trial-panel p, .trial-panel figcaption { font-size: 12px; line-height: 1.6; }
-    .trial-panel figure { margin: 12px 0 0; }
-    .trial-panel video { display: block; width: 100%; max-height: 600px; background: #000; }
-    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <main class="app">
+  <main class="shell" data-screen-label="清理工作区">
     <header class="topbar">
-      <div class="brand">
-        <svg class="brand-logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect x="7" y="10" width="50" height="44" rx="4" stroke="#1a1a1a" stroke-width="1.6"/>
-          <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="#1a1a1a" opacity="0.18"/>
-          <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="#1a1a1a" opacity="0.18"/>
-          <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <div>
-          <h1 class="brand-name">VideoWipe</h1>
-          <div class="brand-subtitle">Local video cleanup studio</div>
-        </div>
-      </div>
-      <div id="status" class="status">Ready</div>
+      <svg class="logo" viewBox="0 0 64 64" fill="none" aria-hidden="true"><rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"></rect><path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <div class="brand">VideoWipe<span>本地视频清理</span></div>
+      <div class="spacer"></div>
+      <button class="quiet" id="restart" type="button">换一个视频</button>
+      <button class="quiet" id="theme" type="button" aria-label="切换明暗配色">深色</button>
     </header>
-
-    <section class="intro" aria-label="VideoWipe overview">
-      <div>
-        <p class="eyebrow">Local first web UI</p>
-        <h2>Remove subtitles, watermarks, and text overlays locally.</h2>
-        <p class="intro-lead">Upload a clip, review the detected targets, then download a cleaned MP4 with the original audio kept intact.</p>
-      </div>
-      <div class="proofs" aria-label="Key promises">
-        <span class="proof">Local files</span>
-        <span class="proof">Preview first</span>
-        <span class="proof">Keeps audio</span>
-      </div>
+    <section id="intro" class="intro">
+      <h1>先看效果，再清理全片。</h1><p>选择本地视频，确认目标后试擦一小段。原视频始终保留。</p>
+      <input id="fileInput" type="file" accept="video/*" class="screen-reader" tabindex="-1" aria-label="选择本地视频">
+      <button id="choose" class="primary" type="button">选择视频</button>
+      <p class="hint">MP4、MOV、WebM · 文件仅复制到本机服务</p>
+      <label for="intent">清理要求（可选） <input id="intent" placeholder="例如：移除底部字幕"></label>
     </section>
-
-    <ol id="steps" class="steps" aria-label="Workflow steps">
-      <li class="step is-active" data-step="upload"><span class="step-num">1</span><span>Upload</span></li>
-      <li class="step" data-step="preview"><span class="step-num">2</span><span>Preview</span></li>
-      <li class="step" data-step="download"><span class="step-num">3</span><span>Download</span></li>
-    </ol>
-
-    <div class="layout">
-      <section class="panel controls">
-        <div class="panel-heading">
-          <div>
-            <h3>Start a cleanup</h3>
-            <p>Choose a video and describe what should disappear.</p>
-          </div>
-          <span class="mini-badge">private</span>
-        </div>
-
-        <input id="fileInput" class="hidden-file" type="file" accept="video/*">
-        <button id="dropzone" class="dropzone" type="button">
-          <span class="drop-inner">
-            <span class="film" aria-hidden="true"></span>
-            <span class="drop-title">Choose video</span>
-            <span id="fileName" class="file-name">MP4, MOV, or WebM</span>
-          </span>
-        </button>
-
-        <div class="field">
-          <label for="intent">Intent</label>
-          <input id="intent" type="text" placeholder="Remove bottom subtitles">
-          <span class="field-hint">Examples: bottom subtitles, top-right logo, timestamp.</span>
-        </div>
-
-        <button id="submitBtn" class="primary" type="button">Detect targets</button>
-        <button id="resetBtn" class="secondary" type="button">Reset</button>
-      </section>
-
-      <section class="panel workspace">
-        <div class="preview">
-          <div class="preview-stage">
-            <div id="previewMedia" class="preview-media">
-              <img id="previewImage" alt="Editable representative video frame">
-              <div id="bboxLayer" class="bbox-layer" aria-label="Editable cleanup regions"></div>
-            </div>
-            <div id="previewEmpty" class="preview-empty">
-              <svg class="empty-logo" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-                <rect x="7" y="10" width="50" height="44" rx="4" stroke="#efe8dc" stroke-width="1.6"/>
-                <rect x="13" y="36" width="14" height="2.6" rx="1.3" fill="#efe8dc" opacity="0.25"/>
-                <rect x="13" y="41" width="10" height="2.6" rx="1.3" fill="#efe8dc" opacity="0.25"/>
-                <path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <strong>Preview appears here after detection</strong>
-              <span>Selected targets will be highlighted before any cleaning starts.</span>
-            </div>
-          </div>
-
-          <section id="trialPanel" class="trial-panel" hidden aria-label="Try a short cleanup">
-            <div class="trial-controls">
-              <label>Start (seconds)<input id="trialStart" type="number" required min="0" step="0.1" value="0"></label>
-              <label>Length<select id="trialDuration"><option value="3">3 seconds</option><option value="5">5 seconds</option></select></label>
-              <button id="trialBtn" class="primary" type="button">Try cleanup</button>
-            </div>
-            <p id="trialHint" aria-live="polite">Test a short section before cleaning the whole video.</p>
-            <figure id="trialResult" hidden>
-              <figcaption id="trialCaption">Original above · Cleaned below</figcaption>
-              <video id="trialVideo" controls playsinline preload="metadata" aria-label="Original above, cleaned below"></video>
-            </figure>
-          </section>
-          <div class="review">
-            <div class="candidates">
-              <p class="section-title">Targets <span id="candidateCount">0 found</span></p>
-              <div id="candidateList" class="candidate-list">
-                <div class="empty-list">Detected regions will appear here for review.</div>
-              </div>
-            </div>
-            <div class="run">
-              <p class="section-title">Output <span id="progressText">0%</span></p>
-              <div id="outputState" class="output-state">
-                <strong>Waiting for preview</strong>
-                <span>Run cleanup after targets are detected.</span>
-              </div>
-              <div class="progress-row">
-                <progress id="progressBar" value="0" max="100"></progress>
-              </div>
-              <button id="confirmBtn" class="primary" type="button" disabled>Clean video</button>
-              <a id="downloadLink" class="download" href="#">Download MP4</a>
-            </div>
-          </div>
-        </div>
-      </section>
+    <div class="projectline" id="projectline" hidden>
+      <div class="filename"><span class="filemark" aria-hidden="true">MP4</span><div><h1 id="filename">未选择视频</h1><p class="filemeta" id="filemeta"></p></div></div>
+      <div class="status" id="status" role="status">等待检测</div>
     </div>
+    <div class="notice-box" id="message" role="status" hidden></div>
+    <div class="workspace" id="workspace" hidden>
+      <section class="viewer" aria-label="视频与时间轴">
+        <div class="stage" id="stage">
+          <video id="video" preload="metadata" playsinline aria-label="视频预览"></video>
+          <img id="fallbackFrame" alt="目标对应的原片画面" hidden><span class="view-label" id="viewLabel">原片</span>
+          <div class="compare-labels" id="compareLabels" hidden><span>原片</span><span>清理后</span></div>
+          <div id="overlays"></div>
+          <div class="stage-message" id="busy" hidden><strong id="busyTitle">正在检测目标</strong><p id="busyHint">正在准备视频</p><progress id="progress" max="100" value="0" aria-label="当前阶段进度"></progress></div>
+        </div>
+        <div class="playbar">
+          <button class="play" id="play" aria-label="播放" type="button">▶</button>
+          <span class="time"><span id="currentTime">00:00</span> / <span id="totalTime">00:00</span></span>
+          <div class="view-buttons" id="viewButtons" aria-label="画面来源"><button type="button" data-view="source" aria-pressed="true">原片</button><button type="button" data-view="trial" aria-pressed="false" disabled>试擦对比</button><button type="button" data-view="clean" aria-pressed="false" hidden>结果</button></div>
+          <button class="play" id="mute" type="button" aria-label="静音">♪</button>
+        </div>
+        <div class="timeline">
+          <div class="timeline-top"><span id="rangeLabel">拖动时间轴查看原片</span><span id="windowLabel"></span></div>
+          <div class="ruler"><div class="ruler-track" id="presenceTrack"></div><div class="trial-window" id="trialWindow" hidden></div><input id="seek" type="range" min="0" max="1" step="0.04" value="0" aria-label="播放位置（秒）"></div>
+          <div class="ticks"><span>00:00</span><span id="midTick">00:10</span><span id="endTick">00:20</span></div>
+        </div>
+      </section>
+      <section class="actions" aria-label="清理操作">
+        <div class="action-copy"><strong id="actionTitle">先确认要清理的内容</strong><p id="actionHint">视频已载入，检测后可以先试擦一小段。</p></div>
+        <div class="buttons"><button class="primary" id="primary" type="button">检测目标 <span aria-hidden="true">→</span></button><a id="download" class="primary" hidden>下载成片</a></div>
+        <div class="action-extra" id="extra" hidden>
+          <details id="timeDetails"><summary>调整试擦时间</summary><div class="time-controls"><label for="start">从 <input id="start" type="number" min="0" step="0.04" value="0" required> 秒</label><label for="duration">时长 <select id="duration"><option value="3">3 秒</option><option value="5">5 秒</option></select></label><button id="recommend" class="link-button" type="button">用推荐片段</button></div></details>
+          <button class="link-button" id="direct" type="button">直接处理全片</button>
+        </div>
+      </section>
+      <aside class="targets" aria-label="检测目标">
+        <div class="section-head"><h2>清理目标</h2><span id="targetCount">等待检测</span></div>
+        <p class="summary" id="selectionSummary">你可以先播放视频，再决定清理什么。</p>
+        <div id="targetList"><div class="empty-targets">检测后，目标会以画面和时间呈现。<br>勾选需要移除的内容。</div></div>
+        <div class="editor" id="editor" hidden><div class="editor-heading"><strong id="editorTitle">调整区域框</strong><button id="resetBox" type="button">恢复原框</button></div><label for="boxWidth">宽度<input id="boxWidth" type="range" min="10" max="95" step="1"><output id="widthValue"></output></label><label for="boxY">位置<input id="boxY" type="range" min="2" max="88" step="1"><output id="yValue"></output></label><p class="hint" style="margin:8px 0 0">可拖动区域框和边缘，也可用方向键微调。调整后需要重新试擦。</p></div>
+        <p class="hint" id="targetHint" hidden>点目标查看它出现的画面。未勾选的目标仍可查看。</p>
+      </aside>
+    </div>
+    <footer class="minor"><p>本地处理 · 原视频保留 · 试擦只代表所选片段</p><span class="shortcut">空格 播放 / 暂停 · 方向键 微调时间</span></footer>
   </main>
-
   <script>
-    const fileInput = document.querySelector("#fileInput");
-    const dropzone = document.querySelector("#dropzone");
-    const fileName = document.querySelector("#fileName");
-    const intent = document.querySelector("#intent");
-    const submitBtn = document.querySelector("#submitBtn");
-    const resetBtn = document.querySelector("#resetBtn");
-    const confirmBtn = document.querySelector("#confirmBtn");
-    const statusEl = document.querySelector("#status");
-    const previewMedia = document.querySelector("#previewMedia");
-    const previewImage = document.querySelector("#previewImage");
-    const bboxLayer = document.querySelector("#bboxLayer");
-    const previewEmpty = document.querySelector("#previewEmpty");
-    const candidateList = document.querySelector("#candidateList");
-    const candidateCount = document.querySelector("#candidateCount");
-    const outputState = document.querySelector("#outputState");
-    const progressBar = document.querySelector("#progressBar");
-    const progressText = document.querySelector("#progressText");
-    const downloadLink = document.querySelector("#downloadLink");
-    const trialPanel = document.querySelector("#trialPanel");
-    const trialStart = document.querySelector("#trialStart");
-    const trialDuration = document.querySelector("#trialDuration");
-    const trialBtn = document.querySelector("#trialBtn");
-    const trialHint = document.querySelector("#trialHint");
-    const trialResult = document.querySelector("#trialResult");
-    const trialVideo = document.querySelector("#trialVideo");
-    const trialCaption = document.querySelector("#trialCaption");
-    let trialBusy = false;
-    let trialSignature = null;
-    const steps = Array.from(document.querySelectorAll(".step"));
-
-    let selectedFile = null;
-    let currentJobId = null;
-    let stream = null;
-    let currentTracks = [];
-    let activeTrackId = null;
-    let bboxDrafts = {};
+    "use strict";
+    const $ = id => document.getElementById(id);
+    const video = $("video");
     const jobStorageKey = "videowipe.currentJobId";
-    const bboxStoragePrefix = "videowipe.bboxDrafts.";
-
-    function bboxStorageKey(jobId) {
-      return `${bboxStoragePrefix}${jobId}`;
+    const busyStates = new Set(["restoring", "uploading", "pending", "trial_running", "running"]);
+    let selectedFile = null, localURL = null, currentJobId = null, stream = null;
+    let source = null, tracks = [], selectedIds = [], bboxDrafts = {}, activeTrackId = null;
+    let state = "restoring", view = "source", trial = null, manualTime = false, mediaEpoch = 0, seeking = false;
+    let sourceSupported = true, reviewLoaded = false;
+    const evidenceImages = new Map();
+    const fmt = (value, decimal=false) => { const t=Math.max(0,Number(value)||0); return String(Math.floor(t/60)).padStart(2,"0")+":"+(decimal?(t%60).toFixed(2).padStart(5,"0"):String(Math.floor(t%60)).padStart(2,"0")); };
+    const duration = () => source ? source.frame_count / source.fps : 0;
+    const busy = () => busyStates.has(state);
+    const selectedTracks = () => tracks.filter(t => selectedIds.includes(t.id));
+    const position = () => video.currentTime + (view === "trial" && trial ? trial.start_seconds : 0);
+    const effectiveBBox = track => bboxDrafts[track.id] || track.bbox;
+    function trackName(track) {
+      const label=({"bottom subtitle":"底部字幕","top watermark":"顶部水印","top logo":"顶部标记"}[track.label] || track.label || {subtitle:"字幕",watermark:"水印",logo:"标记",text:"文字"}[track.type] || "画面文字");
+      const same=tracks.filter(t=>t.label===track.label).sort((a,b)=>a.bbox[1]-b.bbox[1]);
+      return same.length===2?label+" · "+(same[0].id===track.id?"上行":"下行"):label;
     }
-
-    function loadBBoxDrafts(jobId) {
-      try {
-        const parsed = JSON.parse(sessionStorage.getItem(bboxStorageKey(jobId)) || "{}");
-        bboxDrafts = parsed && typeof parsed === "object" ? parsed : {};
-      } catch (_) {
-        bboxDrafts = {};
-      }
-    }
-
-    function saveBBoxDrafts() {
-      if (!currentJobId) return;
-      if (Object.keys(bboxDrafts).length) {
-        sessionStorage.setItem(bboxStorageKey(currentJobId), JSON.stringify(bboxDrafts));
-      } else {
-        sessionStorage.removeItem(bboxStorageKey(currentJobId));
-      }
-    }
-
-    function clearBBoxDrafts(jobId = currentJobId) {
-      if (jobId) sessionStorage.removeItem(bboxStorageKey(jobId));
-      bboxDrafts = {};
-    }
-
-    function rememberJob(jobId) {
-      currentJobId = jobId;
-      if (jobId) {
-        sessionStorage.setItem(jobStorageKey, jobId);
-      } else {
-        sessionStorage.removeItem(jobStorageKey);
-      }
-    }
-
+    function storageGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
+    function storageSet(key, value) { try { if(value===null)sessionStorage.removeItem(key); else sessionStorage.setItem(key,value); } catch {} }
+    function notify(text, tone="info") { $("message").textContent=text; $("message").dataset.tone=tone; $("message").hidden=!text; }
+    function showWarnings(warnings=[]) { if(warnings.length)notify("需留意："+warnings.join("；")); }
     function reviewRequest() {
-      const selectedIds = selectedCandidateIds();
-      return {
-        selected_ids: selectedIds,
-        bbox_overrides: Object.fromEntries(
-          Object.entries(bboxDrafts).filter(([id]) => selectedIds.includes(id)),
-        ),
-        start_seconds: Number(trialStart.value),
-        duration_seconds: Number(trialDuration.value),
-      };
+      return {selected_ids:[...selectedIds], bbox_overrides:Object.fromEntries(Object.entries(bboxDrafts).filter(([id])=>selectedIds.includes(id))),
+        start_seconds:Number($("start").value), duration_seconds:Number($("duration").value)};
     }
-
     function signature(request) {
-      return JSON.stringify([
-        [...(request.selected_ids || [])].sort(),
-        Object.entries(request.bbox_overrides || {}).sort(([a], [b]) => a.localeCompare(b)),
-        request.start_seconds, request.duration_seconds,
-      ]);
+      return JSON.stringify([...(request.selected_ids || []).slice().sort(),
+        Object.entries(request.bbox_overrides || {}).sort(([a],[b])=>a.localeCompare(b)), request.start_seconds, request.duration_seconds]);
     }
-
+    function saveReview() { if(currentJobId)storageSet(`videowipe.review.${currentJobId}`,JSON.stringify({...reviewRequest(),manualTime})); }
+    function validRange() {
+      if(!source||!$("start").value.trim()||!$("start").validity.valid)return false;
+      const first=Number($("start").value), last=Math.min(duration(),first+Number($("duration").value));
+      return Number.isFinite(first)&&first>=0&&first<last&&selectedTracks().some(t=>(t.has_mask!==false||bboxDrafts[t.id])&&t.segments.some(([a,b])=>a<Math.ceil(last*source.fps)&&b>Math.floor(first*source.fps)));
+    }
+    function recommend() {
+      if(!source)return;
+      const merged=[];
+      for(const row of selectedTracks().filter(t=>t.has_mask!==false||bboxDrafts[t.id]).flatMap(t=>t.segments).sort((a,b)=>a[0]-b[0])) {
+        const last=merged.at(-1); if(last&&row[0]<=last[1])last[1]=Math.max(last[1],row[1]); else merged.push(row.slice());
+      }
+      merged.sort((a,b)=>(b[1]-b[0])-(a[1]-a[0])||a[0]-b[0]);
+      if(merged.length){const [a,b]=merged[0],length=Math.min(duration(),Number($("duration").value));$("start").value=String(Math.max(0,Math.min(duration()-length,(a+b)/(2*source.fps)-length/2)));}
+    }
     function invalidateTrial() {
-      if (currentJobId) sessionStorage.setItem(`videowipe.review.${currentJobId}`, JSON.stringify(reviewRequest()));
-      if (trialSignature === signature(reviewRequest())) return;
-      trialVideo.pause();
-      trialVideo.removeAttribute("src");
-      trialVideo.load();
-      trialResult.hidden = true;
-      trialSignature = null;
-      trialHint.textContent = "Settings changed. Try cleanup again to see the current result.";
+      if(trial&&signature(trial.request)!==signature(reviewRequest())) { const at=position();trial=null;if(view==="trial")void setMedia("source",at); }
+      saveReview();renderActions();renderTimeline();
     }
-
-    function setReviewBusy(busy) {
-      trialBusy = busy;
-      trialBtn.disabled = busy;
-      trialStart.disabled = busy;
-      trialDuration.disabled = busy;
-      candidateList.inert = busy;
-      bboxLayer.inert = busy;
-      confirmBtn.disabled = busy || !selectedCandidateIds().length;
+    function updateMeta() {
+      if(!source)return;
+      $("filemeta").textContent=`${fmt(duration(),true)} · ${source.width} × ${source.height}${source.provisional?"":` · ${Number(source.fps.toFixed(3))} fps`}`;
+      $("seek").max=duration();$("seek").step=1/source.fps;$("start").max=Math.max(0,(source.frame_count-1)/source.fps);$("start").step="any";
+      $("totalTime").textContent=fmt(duration(),true);$("midTick").textContent=fmt(duration()/2);$("endTick").textContent=fmt(duration());
+      $("stage").style.setProperty("--ratio",source.width/(source.height*(view==="trial"?2:1)));
     }
-
-    function displayTrial(trial) {
-      if (!trial || !trial.ready) return;
-      if (signature(trial.request) !== signature(reviewRequest())) {
-        trialHint.textContent = "Settings changed. Try cleanup again to see the current result.";
-        return;
-      }
-      setProgress(100);
-      trialSignature = signature(trial.request);
-      trialVideo.src = `/jobs/${currentJobId}/trial-video?trial_id=${encodeURIComponent(trial.id)}`;
-      trialResult.hidden = false;
-      trialCaption.textContent = `Original above · Cleaned below · ${trial.start_seconds.toFixed(2)}–${(trial.start_seconds + trial.duration_seconds).toFixed(2)}s`;
-      trialHint.textContent = `Trial ready in ${trial.elapsed_s}s. This section does not guarantee the quality of the whole video.`;
+    function mediaEvent(event) {
+      return new Promise((resolve,reject)=>{const done=error=>{clearTimeout(timer);video.removeEventListener(event,ok);video.removeEventListener("error",bad);error?reject(error):resolve();};const ok=()=>done();const bad=()=>done(new Error("此格式暂不能在浏览器预览"));const timer=setTimeout(()=>done(new Error("视频定位超时，请重试")),15000);video.addEventListener(event,ok,{once:true});video.addEventListener("error",bad,{once:true});});
     }
-
-    async function runTrial() {
-      if (!currentJobId || trialBusy) return;
-      if (!selectedCandidateIds().length) { setStatus("Select at least one target", "error"); return; }
-      if (!trialStart.reportValidity()) return;
-      trialSignature = null;
-      invalidateTrial();
-      setReviewBusy(true);
-      setProgress(0);
-      trialHint.textContent = "Trying cleanup with the selected targets…";
-      setStatus("Trying cleanup");
-      setOutput("Trying a short cleanup", "The full video will wait for your confirmation.");
+    async function setMedia(next, at=position()) {
+      const epoch=++mediaEpoch;video.pause();view=next;seeking=true;$("stage").classList.add("is-seeking");$("overlays").replaceChildren();
+      $("stage").classList.toggle("is-comparison",next==="trial");$("compareLabels").hidden=next!=="trial";$("viewLabel").hidden=next==="trial";$("viewLabel").textContent=next==="clean"?"清理结果":"原片";
+      $("fallbackFrame").hidden=true;updateMeta();renderActions();
+      const url=next==="trial"?`/jobs/${currentJobId}/trial-video?trial_id=${encodeURIComponent(trial.id)}`:next==="clean"?`/jobs/${currentJobId}/result-video`:localURL||`/jobs/${currentJobId}/source-video`;
       try {
-        await postJson(`/jobs/${currentJobId}/trial`, reviewRequest());
-        startProgressStream(currentJobId);
-      } catch (error) {
-        setReviewBusy(false);
-        trialHint.textContent = error.message;
-        setStatus("Trial stopped", "error");
+        if(video.getAttribute("src")!==url){const loaded=mediaEvent("loadedmetadata");video.src=url;video.load();await loaded;}
+        else if(video.readyState<1)await mediaEvent("loadedmetadata");
+        if(epoch!==mediaEpoch)return;
+        if(!source&&next==="source")source={width:video.videoWidth,height:video.videoHeight,fps:25,frame_count:video.duration*25,provisional:true};
+        let target=Math.max(0,Math.min(video.duration-(1/(source?.fps||25)),at-(next==="trial"?trial.start_seconds:0)));
+        if(Math.abs(video.currentTime-target)>0.00001||video.readyState<2){const settled=mediaEvent("seeked");video.currentTime=target;await settled;}
+        if(epoch!==mediaEpoch)return;
+        if(next==="source")sourceSupported=true;
+        updateMeta();updatePlayback();
+      } catch(error) {
+        if(epoch!==mediaEpoch)return;
+        if(next==="source"){sourceSupported=false;notify(`${error.message}，仍可检测并使用目标画面查看。`);showEvidenceFrame();}
+        else notify(error.message,"error");
+      } finally { if(epoch===mediaEpoch){seeking=false;$("stage").classList.remove("is-seeking");renderOverlays();renderActions();} }
+    }
+    function showEvidenceFrame() {
+      const track=tracks.find(t=>t.id===activeTrackId)||tracks[0];
+      if(track){$("fallbackFrame").src=track.evidence_url;$("fallbackFrame").hidden=false;}
+    }
+    function updatePlayback() {
+      $("currentTime").textContent=fmt(position(),true);$("seek").value=position();
+      if(currentJobId&&view!=="trial"&&!seeking&&video.readyState>=2)storageSet(`videowipe.position.${currentJobId}`,String(position()));
+    }
+    function renderTimeline() {
+      $("presenceTrack").replaceChildren(); if(!source)return;
+      for(const track of selectedTracks())for(const [a,b] of track.segments){const span=document.createElement("span");span.className="presence";span.style.left=a/source.frame_count*100+"%";span.style.width=(b-a)/source.frame_count*100+"%";$("presenceTrack").append(span);}
+      const start=Number($("start").value),end=Math.min(duration(),start+Number($("duration").value));
+      $("trialWindow").hidden=!reviewLoaded||!validRange();$("trialWindow").style.left=start/duration()*100+"%";$("trialWindow").style.width=(end-start)/duration()*100+"%";
+      $("windowLabel").textContent=reviewLoaded&&validRange()?`试擦 ${fmt(start,true)}–${fmt(end,true)}`:"";
+      $("rangeLabel").textContent=reviewLoaded?"绿色为目标出现时间 · 橙色为试擦范围":"拖动时间轴查看原片";
+    }
+    function renderActions() {
+      const isBusy=busy(), trialReady=trial?.ready&&signature(trial.request)===signature(reviewRequest());
+      $("intro").hidden=Boolean(selectedFile||currentJobId);$("workspace").hidden=$("projectline").hidden=!selectedFile&&!currentJobId;
+      $("choose").disabled=isBusy;$("restart").disabled=isBusy;$("busy").hidden=!isBusy;$("primary").hidden=state==="done";$("download").hidden=state!=="done";
+      $("primary").disabled=isBusy||(state==="ready"?!selectedFile:state!=="preview_ready"||!validRange());
+      $("extra").hidden=!reviewLoaded||state==="done";$("direct").hidden=Boolean(trialReady);$("direct").disabled=isBusy||!selectedIds.length||state!=="preview_ready";
+      for(const id of ["start","duration","recommend","boxWidth","boxY","resetBox"])$(id).disabled=isBusy||state==="done";
+      $("targetList").inert=isBusy;$("overlays").inert=isBusy||state==="done";
+      document.querySelector('[data-view="trial"]').disabled=!trialReady||isBusy;
+      document.querySelector('[data-view="clean"]').hidden=state!=="done";
+      for(const button of document.querySelectorAll('[data-view]'))button.setAttribute("aria-pressed",String(button.dataset.view===view));
+      $("play").disabled=isBusy||seeking||(view==="source"&&!sourceSupported);$("seek").disabled=seeking||(view==="source"&&!sourceSupported);
+      const labels={ready:["等待检测","先确认要清理的内容","可以先播放视频，再开始检测。","检测目标 →"],uploading:["正在复制视频","正在复制视频","文件保存在本机。","正在复制…"],pending:["正在检测","正在寻找清理目标","检测结束后可先试擦一小段。","正在检测…"],preview_ready:trialReady?["试擦已就绪","这段效果满意吗？","仅代表所选片段，可以调整目标后重新试擦。","满意，处理全片 →"]:["可以试擦","先看一小段，再决定",validRange()?"已推荐包含目标的片段，也可以手动调整时间。":selectedIds.length?"所选时间没有有效目标，请使用推荐片段。":"尚未选择清理目标。",`先看这 ${Math.min(duration()||3,Number($("duration").value))} 秒效果 →`],trial_running:["正在试擦","正在修复所选片段","全片处理等待你确认。","正在试擦…"],running:["正在处理","正在清理全片","完成后可在这里播放、检查和下载。","正在处理…"],done:["处理完成","先检查，再带走","暂停后切换原片与结果，检查画面和声音。",""],error:["处理停止","本次处理未完成","原视频保留，可换片重新开始。","处理停止"],cancelled:["已取消","任务已取消","可以换一个视频重新开始。","已取消"]};
+      const text=labels[state]||labels.ready;$("status").textContent=text[0];$("busyTitle").textContent=text[0];$("actionTitle").textContent=text[1];$("actionHint").textContent=text[2];$("primary").textContent=text[3];
+      if(currentJobId)$("download").href=`/jobs/${currentJobId}/download`;
+    }
+    function renderTargets() {
+      $("targetList").replaceChildren();$("targetCount").textContent=reviewLoaded?`${selectedIds.length} / ${tracks.length} 项待清理`:"等待检测";
+      $("selectionSummary").textContent=selectedIds.length?"将移除已勾选的目标。":"勾选需要清理的内容；未勾选的目标仍可查看。";
+      if(!tracks.length){const empty=document.createElement("p");empty.className="hint";empty.textContent=reviewLoaded?"没有发现可清理目标。":"检测后将在这里显示目标画面和出现时间。";$("targetList").append(empty);}
+      for(const track of tracks){
+        const row=document.createElement("div");row.className="target"+(track.id===activeTrackId?" is-active":"");row.dataset.trackId=track.id;
+        const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedIds.includes(track.id);checkbox.disabled=busy()||state==="done";checkbox.setAttribute("aria-label","移除"+trackName(track));
+        checkbox.addEventListener("change",()=>{selectedIds=checkbox.checked?[...selectedIds,track.id]:selectedIds.filter(id=>id!==track.id);if(!manualTime)recommend();invalidateTrial();renderTargets();renderOverlays();});
+        const button=document.createElement("button");button.className="target-inspect";button.type="button";button.setAttribute("aria-label","定位"+trackName(track));button.addEventListener("click",()=>inspect(track.id));
+        const title=document.createElement("span");title.className="target-title";title.textContent=trackName(track);const badge=document.createElement("small");badge.textContent=checkbox.checked?"移除":"保留";title.append(badge);
+        const meta=document.createElement("span");meta.className="target-meta";meta.textContent=track.segments.length?track.segments.map(([a,b])=>`${fmt(a/source.fps,true)}–${fmt(b/source.fps,true)}`).join("、"):"无有效时间";
+        if(track.evidence_kind!=="observed")meta.textContent+=" · 位置参考";
+        const canvas=document.createElement("canvas");canvas.setAttribute("role","img");canvas.setAttribute("aria-label",trackName(track)+"原片裁剪");
+        button.append(title,meta,canvas);row.append(checkbox,button);$("targetList").append(row);
+        if(!evidenceImages.has(track.evidence_url))evidenceImages.set(track.evidence_url,new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error("目标画面未能载入"));img.src=track.evidence_url;}));
+        evidenceImages.get(track.evidence_url).then(img=>{if(!canvas.isConnected)return;const [x,y,x2,y2]=track.bbox,w=x2-x+1,h=y2-y+1;canvas.width=Math.min(640,w);canvas.height=Math.max(1,Math.round(h*canvas.width/w));canvas.getContext("2d").drawImage(img,x,y,w,h,0,0,canvas.width,canvas.height);}).catch(()=>{canvas.replaceWith(document.createTextNode("目标画面未能载入，请重新定位"));});
       }
+      updateEditor();$("targetHint").hidden=!tracks.length;renderActions();
     }
-
-    function setStatus(text, tone = "") {
-      statusEl.textContent = text;
-      statusEl.dataset.tone = tone;
+    function updateEditor() {
+      const track=tracks.find(t=>t.id===activeTrackId);$("editor").hidden=!track||!selectedIds.includes(track.id)||state==="done";
+      if(!track)return;const [x,y,x2]=effectiveBBox(track);$("editorTitle").textContent=trackName(track)+" · 区域框";$("boxWidth").value=(x2-x+1)/source.width*100;$("boxY").value=y/source.height*100;$("widthValue").textContent=Math.round((x2-x+1)/source.width*100)+"%";$("yValue").textContent=Math.round(y/source.height*100)+"%";
     }
-
-    function setStep(stepName) {
-      steps.forEach((step) => {
-        step.classList.toggle("is-active", step.dataset.step === stepName);
-      });
-    }
-
-    function setOutput(title, detail) {
-      outputState.innerHTML = "";
-      const strong = document.createElement("strong");
-      strong.textContent = title;
-      const span = document.createElement("span");
-      span.textContent = detail;
-      outputState.append(strong, span);
-    }
-
-    function setProgress(value) {
-      const rounded = Math.max(0, Math.min(100, Math.round(value)));
-      progressBar.value = rounded;
-      progressText.textContent = `${rounded}%`;
-    }
-
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    async function cancelCurrentJob() {
-      const response = await fetch("/jobs/current", { method: "DELETE" });
-      if (response.ok) {
-        return true;
-      }
-      let message = "Current job cannot be reset yet.";
-      try {
-        const payload = await response.json();
-        message = payload.detail || message;
-      } catch (_) {
-        message = response.statusText || message;
-      }
-      throw new Error(message);
-    }
-
-    async function reset() {
-      try {
-        resetBtn.disabled = true;
-        await cancelCurrentJob();
-      } catch (error) {
-        setOutput("Reset paused", error.message);
-        setStatus(error.message, "error");
-        return;
-      } finally {
-        resetBtn.disabled = false;
-      }
-      if (stream) {
-        stream.close();
-        stream = null;
-      }
-      trialSignature = null;
-      invalidateTrial();
-      trialPanel.hidden = true;
-      if (currentJobId) sessionStorage.removeItem(`videowipe.review.${currentJobId}`);
-      trialStart.value = "0";
-      setReviewBusy(false);
-      clearBBoxDrafts();
-      rememberJob(null);
-      selectedFile = null;
-      fileInput.value = "";
-      fileName.textContent = "MP4, MOV, or WebM";
-      candidateList.innerHTML = '<div class="empty-list">Detected regions will appear here for review.</div>';
-      candidateCount.textContent = "0 found";
-      previewImage.removeAttribute("src");
-      previewMedia.style.display = "none";
-      bboxLayer.innerHTML = "";
-      currentTracks = [];
-      activeTrackId = null;
-      previewEmpty.style.display = "grid";
-      setProgress(0);
-      setOutput("Waiting for preview", "Run cleanup after targets are detected.");
-      confirmBtn.disabled = true;
-      confirmBtn.style.display = "";
-      submitBtn.disabled = false;
-      downloadLink.style.display = "none";
-      downloadLink.removeAttribute("href");
-      setStep("upload");
-      setStatus("Ready");
-    }
-
-    function pickFile(file) {
-      selectedFile = file || null;
-      fileName.textContent = selectedFile ? selectedFile.name : "MP4, MOV, or WebM";
-      if (selectedFile) {
-        setStatus("File ready");
-        setStep("upload");
-      }
-    }
-
-    function formatSegments(segments) {
-      if (!segments || !segments.length) return "no time range";
-      // Segments are half-open [start, end); show the inclusive frame range.
-      return segments.map((s) => `frames ${s[0]}-${s[1] - 1}`).join(", ");
-    }
-
-    function selectedCandidateIds() {
-      return Array.from(candidateList.querySelectorAll('input[type="checkbox"]:checked'))
-        .map((input) => input.value);
-    }
-
-    function trackById(trackId) {
-      return currentTracks.find((track) => track.id === trackId);
-    }
-
-    function effectiveBBox(track) {
-      return bboxDrafts[track.id] || track.bbox;
-    }
-
-    function sameBBox(a, b) {
-      return a.length === b.length && a.every((value, index) => value === b[index]);
-    }
-
-    function setActiveTrack(trackId) {
-      activeTrackId = selectedCandidateIds().includes(trackId) ? trackId : null;
-      candidateList.querySelectorAll(".candidate").forEach((row) => {
-        row.classList.toggle("is-active", row.dataset.trackId === activeTrackId);
-      });
-      bboxLayer.querySelectorAll(".bbox-box").forEach((box) => {
-        box.classList.toggle("is-active", box.dataset.trackId === activeTrackId);
-      });
-    }
-
+    function inspect(id) { activeTrackId=id;const track=tracks.find(t=>t.id===id);renderTargets();void setMedia("source",track.evidence_frame/source.fps); }
     function imageMetrics() {
-      if (!previewImage.naturalWidth || !previewImage.naturalHeight) return null;
-      const rect = previewImage.getBoundingClientRect();
-      const scale = Math.min(
-        rect.width / previewImage.naturalWidth,
-        rect.height / previewImage.naturalHeight,
-      );
-      const width = previewImage.naturalWidth * scale;
-      const height = previewImage.naturalHeight * scale;
-      return {
-        scale,
-        left: (rect.width - width) / 2,
-        top: (rect.height - height) / 2,
-        sourceWidth: previewImage.naturalWidth,
-        sourceHeight: previewImage.naturalHeight,
-      };
+      if(!source)return null;const rect=$("stage").getBoundingClientRect();const scale=Math.min(rect.width/source.width,rect.height/source.height);
+      return {scale,left:(rect.width-source.width*scale)/2,top:(rect.height-source.height*scale)/2,sourceWidth:source.width,sourceHeight:source.height};
     }
-
-    function positionOverlay(box, bbox, metrics) {
-      const [x1, y1, x2, y2] = bbox;
-      box.style.left = `${metrics.left + x1 * metrics.scale}px`;
-      box.style.top = `${metrics.top + y1 * metrics.scale}px`;
-      box.style.width = `${(x2 - x1 + 1) * metrics.scale}px`;
-      box.style.height = `${(y2 - y1 + 1) * metrics.scale}px`;
-      box.setAttribute("aria-label", `Edit ${box.dataset.trackId} region, ${x1}, ${y1}, ${x2}, ${y2}`);
-    }
-
-    function updateOverlayPositions() {
-      const metrics = imageMetrics();
-      if (!metrics) return;
-      bboxLayer.querySelectorAll(".bbox-box").forEach((box) => {
-        const track = trackById(box.dataset.trackId);
-        if (track) positionOverlay(box, effectiveBBox(track), metrics);
-      });
-    }
-
     function transformBBox(start, edge, dx, dy, width, height) {
       let [x1, y1, x2, y2] = start;
       if (edge === "move") {
@@ -1285,21 +438,8 @@
       return [x1, y1, x2, y2];
     }
 
-    function storeDraft(track, bbox) {
-      if (trialBusy) return;
-      if (sameBBox(bbox, track.bbox)) delete bboxDrafts[track.id];
-      else bboxDrafts[track.id] = bbox;
-      saveBBoxDrafts();
-      invalidateTrial();
-      const row = candidateList.querySelector(`[data-track-id="${CSS.escape(track.id)}"]`);
-      if (row) {
-        row.classList.toggle("is-edited", Boolean(bboxDrafts[track.id]));
-        row.querySelector(".candidate-reset").disabled = !bboxDrafts[track.id];
-      }
-      updateOverlayPositions();
-    }
-
     function beginPointerEdit(event, track, edge) {
+      if (busy() || state === "done") return;
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -1327,6 +467,7 @@
     }
 
     function keyboardEdit(event, track, edge) {
+      if (busy() || state === "done") return;
       const deltas = {
         ArrowLeft: [-1, 0], ArrowRight: [1, 0],
         ArrowUp: [0, -1], ArrowDown: [0, 1],
@@ -1345,416 +486,136 @@
       ));
     }
 
+    function setActiveTrack(id) {
+      activeTrackId=id;for(const row of $("targetList").children)row.classList.toggle("is-active",row.dataset.trackId===id);
+      for(const box of $("overlays").children)box.classList.toggle("is-active",box.dataset.trackId===id);updateEditor();
+    }
+    function storeDraft(track, bbox) {
+      if(busy()||state!=="preview_ready"||!selectedIds.includes(track.id))return;
+      if(bbox.every((n,i)=>n===track.bbox[i]))delete bboxDrafts[track.id];else bboxDrafts[track.id]=bbox;
+      invalidateTrial();updateEditor();updateOverlayPositions();
+    }
+    function updateOverlayPositions() {
+      const metrics=imageMetrics();if(!metrics)return;
+      for(const box of $("overlays").children){const track=tracks.find(t=>t.id===box.dataset.trackId);if(!track)continue;const [x,y,x2,y2]=effectiveBBox(track);Object.assign(box.style,{left:metrics.left+x*metrics.scale+"px",top:metrics.top+y*metrics.scale+"px",width:(x2-x+1)*metrics.scale+"px",height:(y2-y+1)*metrics.scale+"px"});}
+    }
+    function updateOverlayVisibility() {
+      const frame=sourceSupported?Math.floor(position()*(source?.fps||25)+1e-7):(tracks.find(t=>t.id===activeTrackId)?.evidence_frame||0);
+      for(const box of $("overlays").children){const track=tracks.find(t=>t.id===box.dataset.trackId);box.hidden=!track.segments.some(([a,b])=>a<=frame&&frame<b);}
+    }
     function renderOverlays() {
-      bboxLayer.innerHTML = "";
-      const selected = new Set(selectedCandidateIds());
-      const metrics = imageMetrics();
-      if (!metrics) return;
-      currentTracks.filter((track) => selected.has(track.id)).forEach((track) => {
-        const box = document.createElement("div");
-        box.className = "bbox-box";
-        box.dataset.trackId = track.id;
-        box.tabIndex = 0;
-        box.setAttribute("role", "group");
-        box.addEventListener("pointerdown", (event) => beginPointerEdit(event, track, "move"));
-        box.addEventListener("keydown", (event) => keyboardEdit(event, track, "move"));
-        ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach((edge) => {
-          const handle = document.createElement("button");
-          handle.type = "button";
-          handle.className = "bbox-handle";
-          handle.dataset.edge = edge;
-          handle.setAttribute("aria-label", `Resize ${track.id} from ${edge}`);
-          handle.addEventListener("pointerdown", (event) => beginPointerEdit(event, track, edge));
-          handle.addEventListener("keydown", (event) => keyboardEdit(event, track, edge));
-          box.append(handle);
-        });
-        positionOverlay(box, effectiveBBox(track), metrics);
-        bboxLayer.append(box);
-      });
-      setActiveTrack(activeTrackId || selected.values().next().value || null);
-    }
-
-    function sanitizeBBoxDrafts() {
-      const known = new Map(currentTracks.map((track) => [track.id, track]));
-      const width = previewImage.naturalWidth;
-      const height = previewImage.naturalHeight;
-      Object.entries(bboxDrafts).forEach(([trackId, bbox]) => {
-        const valid = known.has(trackId)
-          && Array.isArray(bbox)
-          && bbox.length === 4
-          && bbox.every(Number.isInteger)
-          && bbox[0] >= 0 && bbox[1] >= 0
-          && bbox[2] > bbox[0] && bbox[3] > bbox[1]
-          && bbox[2] < width && bbox[3] < height;
-        if (!valid || sameBBox(bbox, known.get(trackId).bbox)) delete bboxDrafts[trackId];
-      });
-      saveBBoxDrafts();
-    }
-
-    function renderTracks(tracks) {
-      currentTracks = tracks;
-      candidateList.innerHTML = "";
-      candidateCount.textContent = `${tracks.length} track${tracks.length === 1 ? "" : "s"}`;
-      if (!tracks.length) {
-        candidateList.innerHTML = '<div class="empty-list">No targets were detected in this preview.</div>';
-        confirmBtn.disabled = true;
-        return;
+      $("overlays").replaceChildren();if(view!=="source"||busy()||seeking||!reviewLoaded||state==="done")return;
+      for(const track of tracks){
+        const selected=selectedIds.includes(track.id),box=document.createElement("div");box.dataset.trackId=track.id;box.className="bbox-box"+(track.id===activeTrackId?" is-active":"");box.tabIndex=0;box.setAttribute("role","group");box.setAttribute("aria-label",`${selected?"调整":"查看"}${trackName(track)}区域`);
+        if(selected){box.addEventListener("pointerdown",e=>{video.pause();beginPointerEdit(e,track,"move");});box.addEventListener("keydown",e=>{video.pause();keyboardEdit(e,track,"move");});
+          for(const edge of ["n", "ne", "e", "se", "s", "sw", "w", "nw"]){const handle=document.createElement("button");handle.type="button";handle.className="bbox-handle";handle.dataset.edge=edge;handle.setAttribute("aria-label",`调整${trackName(track)} ${edge} 边缘`);handle.addEventListener("pointerdown",e=>beginPointerEdit(e,track,edge));handle.addEventListener("keydown",e=>keyboardEdit(e,track,edge));box.append(handle);}
+        }else{box.style.borderStyle="dashed";box.addEventListener("click",()=>inspect(track.id));box.addEventListener("keydown",e=>{if(e.key==="Enter")inspect(track.id);});}
+        $("overlays").append(box);
       }
-      tracks.forEach((track) => {
-        const row = document.createElement("div");
-        row.className = "candidate";
-        row.dataset.trackId = track.id;
-
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.value = track.id;
-        checkbox.setAttribute("aria-label", `Remove ${track.label || track.id}`);
-        checkbox.checked = track.action === "remove";
-
-        const main = document.createElement("button");
-        main.type = "button";
-        main.className = "candidate-main";
-        main.disabled = !checkbox.checked;
-
-        const name = document.createElement("span");
-        name.className = "candidate-name";
-        name.textContent = `${track.id} - ${track.label || track.type}`;
-
-        const meta = document.createElement("span");
-        meta.className = "candidate-meta";
-        meta.textContent = formatSegments(track.segments);
-
-        const pill = document.createElement("span");
-        pill.className = "pill";
-        pill.textContent = track.type;
-
-        const resetBox = document.createElement("button");
-        resetBox.type = "button";
-        resetBox.className = "candidate-reset";
-        resetBox.textContent = "Reset";
-        resetBox.disabled = !bboxDrafts[track.id];
-        resetBox.addEventListener("click", () => {
-          delete bboxDrafts[track.id];
-          saveBBoxDrafts();
-          invalidateTrial();
-          resetBox.disabled = true;
-          row.classList.remove("is-edited");
-          updateOverlayPositions();
-        });
-        main.addEventListener("click", () => setActiveTrack(track.id));
-        checkbox.addEventListener("change", () => {
-          invalidateTrial();
-          confirmBtn.disabled = !selectedCandidateIds().length;
-          main.disabled = !checkbox.checked;
-          if (!checkbox.checked && activeTrackId === track.id) activeTrackId = null;
-          renderOverlays();
-        });
-
-        main.append(name, meta);
-        row.append(checkbox, main, pill, resetBox);
-        candidateList.append(row);
-      });
-      confirmBtn.disabled = false;
+      updateOverlayPositions();updateOverlayVisibility();
     }
-
-    async function postJson(url, data) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || response.statusText);
-      }
-      return response.json();
+    async function request(url, options) {
+      const response=await fetch(url,options);const payload=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(typeof payload.detail==="string"?payload.detail:`请求未完成 (${response.status})`);
+      return payload;
     }
-
+    const postJson=(url,body)=>request(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    function rememberJob(id){currentJobId=id;storageSet(jobStorageKey,id);}
     async function loadPreview(jobId) {
-      const response = await fetch(`/jobs/${jobId}/preview`);
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || "Preview failed");
-      }
-      const preview = await response.json();
-      loadBBoxDrafts(jobId);
-      trialPanel.hidden = false;
-      trialStart.max = String(Math.max(0, (preview.source.frame_count - 1) / preview.source.fps));
-      let savedReview = null;
-      try { savedReview = JSON.parse(sessionStorage.getItem(`videowipe.review.${jobId}`)); } catch (_) {}
-      const restoredReview = savedReview || (preview.trial && preview.trial.request);
-      if (restoredReview) {
-        const request = restoredReview;
-        bboxDrafts = request.bbox_overrides || {};
-        saveBBoxDrafts();
-        trialStart.value = request.start_seconds;
-        trialDuration.value = request.duration_seconds;
-      }
-      renderTracks(preview.tracks || []);
-      if (restoredReview) {
-        const request = restoredReview;
-        candidateList.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-          input.checked = (request.selected_ids || []).includes(input.value);
-          input.closest(".candidate").querySelector(".candidate-main").disabled = !input.checked;
-        });
-      }
-      setReviewBusy(false);
-      previewImage.onload = () => {
-        sanitizeBBoxDrafts();
-        previewMedia.style.display = "block";
-        renderOverlays();
-        displayTrial(preview.trial);
-      };
-      previewImage.src = `${preview.editable_preview_url || preview.preview_url}?t=${Date.now()}`;
-      previewEmpty.style.display = "none";
-      setProgress(0);
-      setOutput("Ready to clean", "Review targets, then start video cleanup.");
-      confirmBtn.style.display = "";
-      setStep("preview");
-      setStatus("Preview ready", "ok");
-      const statusResponse = await fetch(`/jobs/${jobId}`);
-      if (statusResponse.ok) {
-        const status = await statusResponse.json();
-        if (status.error) trialHint.textContent = `Trial stopped: ${status.error}. Try again.`;
-      }
+      let preview;
+      try{preview=await request(`/jobs/${jobId}/preview`);}catch(error){const status=await request(`/jobs/${jobId}`);if(status.state!=="preview_ready")return applyStatus(status);throw error;}
+      if(jobId!==currentJobId)return;
+      source=preview.source;tracks=preview.tracks||[];selectedIds=tracks.filter(t=>t.action==="remove").map(t=>t.id);bboxDrafts={};manualTime=false;
+      let saved=null;try{saved=JSON.parse(storageGet(`videowipe.review.${jobId}`));}catch{}
+      saved=preview.confirmed_review||saved||preview.trial?.request;
+      if(saved){selectedIds=Array.isArray(saved.selected_ids)?saved.selected_ids.filter(id=>tracks.some(t=>t.id===id)):selectedIds;
+        for(const [id,box] of Object.entries(saved.bbox_overrides||{}))if(tracks.some(t=>t.id===id)&&Array.isArray(box)&&box.length===4&&box.every(Number.isInteger)&&box[0]>=0&&box[1]>=0&&box[2]>box[0]&&box[3]>box[1]&&box[2]<source.width&&box[3]<source.height)bboxDrafts[id]=box;
+        manualTime=saved.manualTime??true;$("start").value=Number.isFinite(saved.start_seconds)?saved.start_seconds:0;$("duration").value=saved.duration_seconds===5?"5":"3";
+      }else if(preview.recommended_trial){$("start").value=preview.recommended_trial.start_seconds;$("duration").value="3";}
+      if(!saved&&!preview.recommended_trial)recommend();
+      reviewLoaded=true;activeTrackId=tracks[0]?.id||null;$("filename").textContent=preview.original_filename;updateMeta();renderTargets();renderTimeline();renderOverlays();
+      if(state==="preview_ready"&&!(preview.trial?.ready&&signature(preview.trial.request)===signature(reviewRequest()))){const stored=Number(storageGet(`videowipe.position.${jobId}`));void setMedia("source",stored||((tracks[0]?.evidence_frame||0)/source.fps));}
     }
-
-    async function waitForPreview(jobId) {
-      while (true) {
-        const response = await fetch(`/jobs/${jobId}`);
-        if (!response.ok) throw new Error("Preview job was not found");
-        const status = await response.json();
-        if (status.state === "error" || status.state === "cancelled") {
-          throw new Error(status.error || "Preview stopped");
-        }
-        if (status.state === "preview_ready") {
-          return loadPreview(jobId);
-        }
-        if (status.state === "done") return showDone(jobId);
-        if (status.state === "running") {
-          setReviewBusy(true);
-          setStep("download");
-          setOutput("Cleaning video", "Full cleanup was started in another tab.");
-          return startProgressStream(jobId);
-        }
-        setProgress((status.progress || 0) * 100);
-        await sleep(900);
-      }
+    function closeStream(){if(stream){stream.close();stream=null;}}
+    async function applyStatus(data) {
+      if(data.id!==currentJobId)return;
+      state=data.state;$("filename").textContent=data.original_filename||$("filename").textContent;renderActions();
+      const phaseNames={upload:"复制视频",plan:"准备检测",prepare:"准备处理",detect:"检测目标",refine:"确认出现时间",persist:"保存计划",inpaint:"修复画面",encode:"编码视频",complete:"已完成",trial:"准备试擦",preview:"等待审阅"};
+      $("busyHint").textContent=(phaseNames[data.phase]||"正在处理")+(data.progress>0?` · 当前阶段 ${Math.round(data.progress*100)}%`:"");
+      if(data.progress>0)$("progress").value=data.progress*100;else $("progress").removeAttribute("value");
+      if(data.state==="preview_ready"||data.state==="done"){
+        closeStream();if(!reviewLoaded)await loadPreview(data.id);if(data.id!==currentJobId)return;
+        if(data.state==="done"){await showDone(data.id);showWarnings(data.warnings);return;}
+        if(data.error){trial=null;notify(`试擦未完成：${data.error}。视频和选择已保留，可以重试。`,"error");}
+        else if(data.trial?.ready&&signature(data.trial.request)===signature(reviewRequest())){trial=data.trial;storageSet(`videowipe.trialStart.${data.id}`,String(trial.start_seconds));void setMedia("trial",trial.start_seconds);notify(`试擦已就绪，用时 ${trial.elapsed_s} 秒。上下画面同步，仅代表这段效果。`);}
+        else showWarnings(data.warnings);
+        renderTargets();renderActions();renderTimeline();renderOverlays();
+      }else if(data.state==="error"||data.state==="cancelled"){closeStream();notify(data.error||"处理已停止","error");renderActions();}
     }
-
-    function showDone(jobId) {
-      trialPanel.hidden = true;
-      setReviewBusy(true);
-      setProgress(100);
-      downloadLink.href = `/jobs/${jobId}/download`;
-      downloadLink.style.display = "flex";
-      confirmBtn.style.display = "none";
-      setStep("download");
-      setOutput("Cleaned MP4 ready", "Download includes the original audio track.");
-      setStatus("Done", "ok");
+    async function showDone(jobId) {
+      state="done";trial=null;renderTargets();renderActions();
+      const at=Number(storageGet(`videowipe.trialStart.${jobId}`)||storageGet(`videowipe.position.${jobId}`)||0);
+      await setMedia("clean",at);
     }
-
-    function showFailure(data) {
-      const message = data.error || "Processing failed";
-      setOutput(data.state === "cancelled" ? "Job cancelled" : "Cleanup stopped", message);
-      setStatus(message, "error");
-      confirmBtn.disabled = data.state !== "preview_ready";
-    }
-
     function startProgressStream(jobId) {
-      if (stream) stream.close();
-      stream = new EventSource(`/jobs/${jobId}/progress`);
-      stream.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        setProgress((data.progress || 0) * 100);
-        if (data.state === "done") {
-          stream.close();
-          stream = null;
-          showDone(jobId);
-        } else if (data.state === "preview_ready") {
-          stream.close();
-          stream = null;
-          setReviewBusy(false);
-          if (data.error) {
-            trialHint.textContent = `Trial stopped: ${data.error}. Adjust settings or try again.`;
-            setStatus("Trial stopped", "error");
-          } else {
-            displayTrial(data.trial);
-            setStatus("Trial ready", "ok");
-            setOutput("Ready to clean", "Review the trial, adjust targets, or clean the full video.");
-          }
-        } else if (data.state === "error" || data.state === "cancelled") {
-          stream.close();
-          stream = null;
-          showFailure(data);
-        }
-      };
-      stream.onerror = () => {
-        if (stream) {
-          stream.close();
-          stream = null;
-        }
-        setOutput("Connection closed", "Progress updates stopped before completion.");
-        setStatus("Progress stream closed", "error");
-      };
+      closeStream();stream=new EventSource(`/jobs/${jobId}/progress`);
+      stream.onmessage=event=>{void applyStatus(JSON.parse(event.data)).catch(error=>notify(error.message,"error"));};
+      stream.onerror=()=>{closeStream();notify("进度连接已断开。刷新页面可恢复当前任务；后台处理仍在继续。","error");};
     }
-
     async function restoreJob() {
-      let status = null;
-      const storedId = sessionStorage.getItem(jobStorageKey);
-      if (storedId) {
-        const response = await fetch(`/jobs/${storedId}`);
-        if (response.ok) status = await response.json();
-        else sessionStorage.removeItem(jobStorageKey);
-      }
-      if (!status) {
-        const response = await fetch("/jobs/current");
-        if (response.ok) status = await response.json();
-      }
-      if (!status || status.state === "idle") return;
-
-      rememberJob(status.id);
-      setProgress((status.progress || 0) * 100);
-      if (status.state === "pending") {
-        submitBtn.disabled = true;
-        confirmBtn.disabled = true;
-        setStep("preview");
-        setOutput("Detecting targets", "Restored the active preview job.");
-        setStatus("Detecting");
-        await waitForPreview(status.id);
-      } else if (status.state === "preview_ready") {
-        submitBtn.disabled = true;
-        await loadPreview(status.id);
-      } else if (status.state === "trial_running") {
-        submitBtn.disabled = true;
-        setReviewBusy(true);
-        trialPanel.hidden = false;
-        setStatus("Trying cleanup");
-        // Restore the reviewed controls after the running trial finishes.
-        await waitForPreview(status.id);
-      } else if (status.state === "running") {
-        submitBtn.disabled = true;
-        confirmBtn.disabled = true;
-        setStep("download");
-        setOutput("Cleaning video", "Restored the active cleanup job.");
-        setStatus("Processing");
-        startProgressStream(status.id);
-      } else if (status.state === "done") {
-        showDone(status.id);
-      } else {
-        showFailure(status);
-      }
+      let data=null;const storedId=storageGet(jobStorageKey);
+      if(storedId){try{data=await request(`/jobs/${encodeURIComponent(storedId)}`);}catch{storageSet(jobStorageKey,null);}}
+      if(!data)data=await request("/jobs/current");if(!data||data.state==="idle")return;
+      rememberJob(data.id);state=data.state;renderActions();
+      if(data.state!=="pending"){try{await loadPreview(data.id);}catch{}}
+      if(busyStates.has(data.state)){void setMedia("source",Number(storageGet(`videowipe.position.${data.id}`)||0));startProgressStream(data.id);}
+      await applyStatus(data);
     }
-
+    async function reset() {
+      if(busy())return;
+      try{const current=await request("/jobs/current");if(current.id===currentJobId)await request("/jobs/current",{method:"DELETE"});}
+      catch(error){notify(error.message,"error");return;}
+      closeStream();video.pause();++mediaEpoch;if(localURL)URL.revokeObjectURL(localURL);localURL=null;
+      video.removeAttribute("src");video.load();$("fallbackFrame").hidden=true;$("stage").classList.remove("is-seeking");
+      rememberJob(null);selectedFile=null;source=null;tracks=[];selectedIds=[];bboxDrafts={};trial=null;activeTrackId=null;manualTime=false;reviewLoaded=false;sourceSupported=true;seeking=false;state="ready";view="source";evidenceImages.clear();$("fileInput").value="";$("start").value=0;$("duration").value="3";notify("");renderTargets();renderActions();renderOverlays();
+    }
+    async function pickFile(file) {
+      if(!file||busy())return;
+      if(currentJobId){await reset();if(currentJobId)return;}
+      if(localURL)URL.revokeObjectURL(localURL);selectedFile=file;source=null;sourceSupported=true;state="ready";view="source";localURL=URL.createObjectURL(file);$("filename").textContent=file.name;notify("");renderActions();await setMedia("source",0);
+    }
     async function submit() {
-      if (!selectedFile) {
-        setStatus("Choose a video first", "error");
-        return;
-      }
-      submitBtn.disabled = true;
-      confirmBtn.disabled = true;
-      confirmBtn.style.display = "";
-      downloadLink.style.display = "none";
-      setProgress(0);
-      setOutput("Detecting targets", "Sampling frames and preparing a preview.");
-      setStep("preview");
-      setStatus("Detecting");
-
-      const form = new FormData();
-      form.append("video", selectedFile);
-      if (intent.value.trim()) {
-        form.append("intent", intent.value.trim());
-      }
-
-      try {
-        const response = await fetch("/jobs", { method: "POST", body: form });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.detail || response.statusText);
-        }
-        const job = await response.json();
-        rememberJob(job.id);
-        await waitForPreview(currentJobId);
-      } catch (error) {
-        const isBusy = error.message.includes("server busy");
-        setStatus(error.message, "error");
-        setOutput(
-          isBusy ? "Another video is waiting" : "Detection stopped",
-          isBusy ? "Click Reset to release a preview that is no longer needed." : error.message,
-        );
-        submitBtn.disabled = false;
-        setStep("upload");
-      }
+      if(!selectedFile||busy())return;state="uploading";renderActions();notify("");
+      const form=new FormData();form.append("video",selectedFile);if($("intent").value.trim())form.append("intent",$("intent").value.trim());
+      try{const data=await request("/jobs",{method:"POST",body:form});rememberJob(data.id);state=data.state;await applyStatus(data);if(busy())startProgressStream(data.id);}
+      catch(error){state="ready";notify(error.message,"error");renderActions();}
     }
-
+    async function runTrial() {
+      if(state!=="preview_ready"||!validRange())return;saveReview();const body=reviewRequest();trial=null;state="trial_running";renderActions();notify("");
+      try{const data=await postJson(`/jobs/${currentJobId}/trial`,body);await applyStatus(data);if(busy())startProgressStream(currentJobId);}
+      catch(error){state="preview_ready";notify(`试擦未完成：${error.message}。可以调整或重试。`,"error");renderActions();}
+    }
     async function confirmRun() {
-      if (!currentJobId) {
-        return;
-      }
-      const selectedIds = selectedCandidateIds();
-      if (!selectedIds.length) {
-        setStatus("Select at least one target", "error");
-        return;
-      }
-      trialSignature = null;
-      invalidateTrial();
-      setReviewBusy(true);
-      downloadLink.style.display = "none";
-      setStatus("Processing");
-      setStep("download");
-      setProgress(0);
-      setOutput("Cleaning video", "This can take a while on CPU.");
-      try {
-        const overrides = Object.fromEntries(
-          Object.entries(bboxDrafts).filter(([trackId]) => selectedIds.includes(trackId)),
-        );
-        await postJson(`/jobs/${currentJobId}/confirm`, {
-          selected_ids: selectedIds,
-          bbox_overrides: overrides,
-        });
-        clearBBoxDrafts();
-        startProgressStream(currentJobId);
-      } catch (error) {
-        setOutput("Cleanup stopped", error.message);
-        setStatus(error.message, "error");
-        setReviewBusy(false);
-      }
+      if(state!=="preview_ready"||!selectedIds.length)return;saveReview();state="running";renderActions();notify("");
+      const body=reviewRequest();try{const data=await postJson(`/jobs/${currentJobId}/confirm`,{selected_ids:body.selected_ids,bbox_overrides:body.bbox_overrides});await applyStatus(data);if(busy())startProgressStream(currentJobId);}
+      catch(error){state="preview_ready";notify(error.message,"error");renderActions();}
     }
+    $("primary").addEventListener("click",()=>{if(state==="ready")void submit();else if(trial?.ready&&signature(trial.request)===signature(reviewRequest()))void confirmRun();else void runTrial();});
+    $("direct").addEventListener("click",confirmRun);$("restart").addEventListener("click",reset);$("choose").addEventListener("click",()=>$("fileInput").click());$("fileInput").addEventListener("change",()=>void pickFile($("fileInput").files[0]));
+    $("intro").addEventListener("dragover",event=>event.preventDefault());$("intro").addEventListener("drop",event=>{event.preventDefault();void pickFile(event.dataTransfer.files[0]);});
+    $("start").addEventListener("input",()=>{manualTime=true;invalidateTrial();});$("duration").addEventListener("change",()=>{if(!manualTime)recommend();invalidateTrial();});$("recommend").addEventListener("click",()=>{manualTime=false;recommend();invalidateTrial();});
+    for(const [id,part] of [["boxWidth",2],["boxY",1]])$(id).addEventListener("input",()=>{const track=tracks.find(t=>t.id===activeTrackId);if(!track)return;let [x,y,x2,y2]=effectiveBBox(track);const value=Number($(id).value)/100;if(part===2)x2=Math.min(source.width-1,Math.max(x+1,x+Math.round(value*source.width)-1));else{const h=y2-y;y=Math.max(0,Math.min(source.height-1-h,Math.round(value*source.height)));y2=y+h;}storeDraft(track,[x,y,x2,y2]);});
+    $("resetBox").addEventListener("click",()=>{delete bboxDrafts[activeTrackId];invalidateTrial();updateEditor();updateOverlayPositions();});
+    async function togglePlay(){if(busy()||seeking)return;if(video.paused){try{await video.play();}catch{notify("浏览器无法播放此视频，可使用目标画面查看。","error");}}else video.pause();}
+    $("play").addEventListener("click",togglePlay);$("mute").addEventListener("click",()=>{video.muted=!video.muted;$("mute").textContent=video.muted?"×":"♪";$("mute").setAttribute("aria-label",video.muted?"取消静音":"静音");});
+    video.addEventListener("play",()=>{$("play").textContent="Ⅱ";$("play").setAttribute("aria-label","暂停");});video.addEventListener("pause",()=>{$("play").textContent="▶";$("play").setAttribute("aria-label","播放");});
+    video.addEventListener("timeupdate",()=>{updatePlayback();updateOverlayVisibility();});
+    $("seek").addEventListener("change",()=>void setMedia(view,Number($("seek").value)));
+    $("viewButtons").addEventListener("click",event=>{const button=event.target.closest('[data-view]');if(button&&!button.disabled)void setMedia(button.dataset.view,position());});
+    document.addEventListener("keydown",event=>{if(event.target.closest("input,select,button,a,summary,[role=group]"))return;if(event.code==="Space"){event.preventDefault();void togglePlay();}if(["ArrowLeft","ArrowRight"].includes(event.code)){event.preventDefault();void setMedia(view,position()+(event.code==="ArrowRight"?1:-1)/(source?.fps||25));}});
+    window.addEventListener("resize",updateOverlayPositions);window.addEventListener("beforeunload",()=>{if(localURL)URL.revokeObjectURL(localURL);});
+    let dark=storageGet("videowipe.theme")==="dark";function applyTheme(){document.documentElement.dataset.theme=dark?"dark":"light";$("theme").textContent=dark?"浅色":"深色";}$("theme").addEventListener("click",()=>{dark=!dark;applyTheme();storageSet("videowipe.theme",dark?"dark":"light");});applyTheme();renderActions();void restoreJob().catch(error=>notify(error.message,"error")).finally(()=>{if(state==="restoring")state="ready";renderActions();});
 
-    dropzone.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", () => pickFile(fileInput.files[0]));
-    submitBtn.addEventListener("click", submit);
-    confirmBtn.addEventListener("click", confirmRun);
-    resetBtn.addEventListener("click", reset);
-    trialBtn.addEventListener("click", runTrial);
-    trialStart.addEventListener("input", invalidateTrial);
-    trialDuration.addEventListener("change", invalidateTrial);
-    window.addEventListener("resize", updateOverlayPositions);
-    restoreJob().catch((error) => {
-      setOutput("Restore stopped", error.message);
-      setStatus(error.message, "error");
-    });
-
-    ["dragenter", "dragover"].forEach((eventName) => {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        dropzone.classList.add("is-dragging");
-      });
-    });
-
-    ["dragleave", "drop"].forEach((eventName) => {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        dropzone.classList.remove("is-dragging");
-      });
-    });
-
-    dropzone.addEventListener("drop", (event) => {
-      const file = event.dataTransfer.files[0];
-      if (file) {
-        pickFile(file);
-      }
-    });
   </script>
 </body>
 </html>

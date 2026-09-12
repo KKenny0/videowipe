@@ -15,23 +15,29 @@ class Job:
     id: str
     video_path: str
     output_dir: str
+    original_filename: str = "input.mp4"
     state: JobState = "pending"
     progress: float = 0.0
     phase: str = "upload"
     warnings: list[str] = field(default_factory=list)
+    input_warnings: list[str] = field(default_factory=list)
     timings: dict[str, float] = field(default_factory=dict)
     error: Optional[str] = None
     selected_ids: list[str] = field(default_factory=list)
     default_selected_ids: list[str] = field(default_factory=list)
     result_path: Optional[str] = None
+    confirmed_review: Optional[dict] = None
     trial: Optional[dict] = None
     trial_path: Optional[str] = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    media_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict:
         with self.lock:
             return {
                 "id": self.id,
+                "original_filename": self.original_filename,
+                "confirmed_review": self.confirmed_review,
                 "state": self.state,
                 "progress": self.progress,
                 "phase": self.phase,

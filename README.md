@@ -82,16 +82,28 @@ Optional extras: `.[torch]` (PyTorch), `.[ocr]` (OCR text recognition), `.[propa
 
 ### Try a short cleanup first
 
-After detection in the local web UI, choose a start time and try 3 or 5 seconds
-(the interval is shortened at the end of the source). The player shows the
-original above the cleaned result in one synchronized video, with audio from
-that interval. Changing targets, boxes, or time hides the old trial. Retry if
-needed, then use **Clean video** for the full source. Refresh restores the
-current job; restarting the server does not restore in-memory jobs.
+The local workspace plays the selected file immediately. After detection, target
+cards show a frame where each target was observed and its time ranges; unchecked
+targets remain available for inspection. A three-second trial is recommended from
+the longest continuous interval containing selected targets, skipping empty intros.
+You can also choose a manual 3/5-second window or start the full cleanup directly.
+Short clips and windows near the end are shortened to fit.
 
-Trials currently support built-in STTN only and reuse the full-run segment
-context and masks. They demonstrate the selected interval, not the entire
-video's quality. SDK callers can use `WipeRequest(trial_range=(start_frame,
+Trials place the original above the cleaned frames in one synchronized video,
+with the interval's audio. Changing targets, boxes, or time invalidates the trial;
+failed trials can be retried without uploading again. Full cleanup starts only
+when requested. The result plays in the same workspace at the last trial position,
+with paused original/result switching and an original-name `_clean.mp4` download.
+Full runs write to separate directories before publishing a successful result.
+
+The workspace supports narrow screens, keyboard box editing, and light/dark themes.
+Refresh restores the current in-memory job; restarting the server does not.
+If a source codec cannot play in the browser, detection and target-frame inspection
+remain available, without automatic proxy transcoding. Acceptance covers CFR SDR
+video; detected HDR or possibly variable frame rates produce a notice. A successful
+trial does not guarantee the whole video's quality; review the result before export.
+
+Trials use the built-in STTN backend and full-run context. SDK callers can use `WipeRequest(trial_range=(start_frame,
 end_frame), ...)` for a comparison video with a half-open frame interval.
 `preview=True` still means detection-only and cannot be combined with a trial.
 
@@ -139,9 +151,10 @@ Tested with `--detect-mode balanced` (50 sampled frames). Green boxes show regio
 
 ### Local web UI
 
-| Upload | Preview targets | Download |
-|--------|-----------------|----------|
-| <img src="pics/web-ui/01-upload.png" width="260" alt="VideoWipe web UI: upload a video to clean"> | <img src="pics/web-ui/02-preview.png" width="260" alt="VideoWipe web UI: preview detected subtitles and watermarks"> | <img src="pics/web-ui/03-download.png" width="260" alt="VideoWipe web UI: download cleaned MP4 with original audio"> |
+The workspace keeps video, target cards, and the next action together. Choose a
+file, inspect an automatically recommended trial, then play and download the
+full result in place. Target cards use the original frame where each target
+was observed; the player also supports a paused original/result comparison.
 
 ## Who is it for?
 

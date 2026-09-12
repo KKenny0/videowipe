@@ -1,0 +1,22 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "VideoWipe 清理工作区": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-09-12T08:47:35.150Z",
+          "status": "approved",
+          "viewport": {
+            "width": 1280,
+            "height": 800
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-09-12T08:47:35.151Z",
+  "updatedAt": "2026-09-12T09:10:37.367Z"
+}

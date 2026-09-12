@@ -1,0 +1,318 @@
+<!doctype html>
+<!-- Delivery-one prototype. Visual tokens are adapted from src/videowipe/web/index.html.
+     Native HTML/JS follows the approved implementation plan. Processing is simulated;
+     sample output uses pre-rendered fixed masks, never a claimed live inference result. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>VideoWipe · 清理工作区原型</title>
+  <style>
+    :root { color-scheme: light; --bg:#f4f1ea; --paper:#fffdfa; --panel:#fff; --ink:#171513; --muted:#6f675e; --line:#ded6ca; --accent:#ff6b35; --accent-dark:#b94720; --green:#167864; --soft-green:#e6f2ee; --soft:#f3ebe3; --danger:#b42318; --stage:#191b19; --radius:8px; --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; --mono:"SFMono-Regular",Consolas,monospace; }
+    :root[data-theme="dark"] { color-scheme:dark; --bg:#181b19; --paper:#202421; --panel:#252b27; --ink:#eceee8; --muted:#b4bcb3; --line:#3b443d; --accent:#ff956e; --accent-dark:#ffad8b; --green:#71c9ae; --soft-green:#243e33; --soft:#33342e; --danger:#ffb2a5; --stage:#101310; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 var(--font); -webkit-font-smoothing:antialiased; }
+    button,input,select,a { font:inherit; }
+    button,a,label[for="file"] { -webkit-tap-highlight-color:transparent; }
+    button,select { cursor:pointer; }
+    button:disabled { opacity:.48; cursor:default; }
+    button { color:var(--ink); }
+    button,a,input,select { border-radius:6px; }
+    button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    [hidden] { display:none !important; }
+    .prototype { padding:8px 28px; background:var(--soft); display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--line); font-size:12px; }
+    .prototype strong { font-weight:600; color:var(--accent-dark); white-space:nowrap; }
+    .prototype label { display:flex; align-items:center; gap:8px; }
+    .prototype select { color:var(--ink); background:transparent; border:0; padding:4px 24px 4px 6px; min-height:28px; }
+    .prototype .notice { color:var(--muted); margin-left:auto; }
+    .shell { max-width:1440px; margin:auto; padding:0 28px 20px; }
+    .topbar { height:60px; display:flex; align-items:center; gap:12px; }
+    .logo { width:33px; height:33px; flex:none; }
+    .brand { font-size:21px; font-weight:780; letter-spacing:-.6px; }
+    .brand span { font-size:12px; color:var(--muted); font-weight:400; letter-spacing:0; margin-left:15px; border-left:1px solid var(--line); padding-left:15px; }
+    .topbar .spacer { flex:1; }
+    .quiet,.ghost { background:transparent; border:1px solid var(--line); padding:0 13px; height:36px; display:inline-flex; align-items:center; justify-content:center; gap:7px; text-decoration:none; color:var(--ink); }
+    .quiet:hover,.ghost:hover { background:var(--soft); }
+    .subtle { border:0; background:transparent; color:var(--muted); padding:8px; }
+    .projectline { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; }
+    .filename { display:flex; align-items:center; gap:10px; min-width:0; }
+    .filemark { color:var(--green); border:1px solid var(--line); border-radius:4px; padding:6px 7px; font:10px var(--mono); }
+    h1 { font-size:16px; font-weight:650; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .filemeta { color:var(--muted); font:11px/1.6 var(--mono); margin:3px 0 0; }
+    .status { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--green); flex:none; }
+    .status::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 304px; grid-template-areas:"viewer targets" "actions targets"; gap:16px; align-items:start; }
+    .viewer { grid-area:viewer; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+    .stage { position:relative; width:min(100%,calc(36vh * 16 / 9)); margin:auto; aspect-ratio:16/9; display:flex; justify-content:center; align-items:center; background:var(--stage); overflow:hidden; }
+    .stage.is-comparison { width:min(100%,calc(36vh * 8 / 9)); aspect-ratio:8/9; }
+    video { display:block; width:100%; height:100%; object-fit:contain; }
+    .stage .view-label { position:absolute; top:14px; left:14px; padding:4px 9px; border-radius:4px; color:#fff; background:#171b1bd9; font-size:11px; pointer-events:none; }
+    .compare-labels { position:absolute; inset:0; pointer-events:none; display:grid; grid-template-rows:1fr 1fr; }
+    .compare-labels span { align-self:start; justify-self:start; margin:10px 14px; padding:3px 7px; font-size:10px; color:#fff; background:#121714cf; border-radius:3px; }
+    #overlays { position:absolute; inset:0; pointer-events:none; }
+    .target-box { position:absolute; border:1.5px solid #a8e4ce; background:#65c7a210; border-radius:3px; pointer-events:auto; padding:0; min-height:16px; transition:border-color .12s; }
+    .target-box[data-active="true"] { border-color:var(--accent); border-width:2px; background:#ff6b3510; }
+    .target-box[data-remove="false"] { border-style:dashed; border-color:#d4d9d4; background:transparent; }
+    .target-box .box-label { position:absolute; left:-1px; top:-23px; background:#192c24ed; color:#dcf4e9; font-size:10px; padding:2px 6px; white-space:nowrap; border-radius:3px 3px 0 0; }
+    .target-box[data-active="true"] .box-label { background:#f47a48; color:#151713; }
+    .stage-message { position:absolute; inset:0; background:#131916d9; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:24px; text-align:center; }
+    .stage-message strong { font-size:18px; font-weight:600; }
+    .stage-message p { max-width:360px; color:#c6d4cb; margin:0; font-size:13px; }
+    .stage-message progress { width:180px; height:5px; accent-color:#7cceab; }
+    .playbar { min-height:49px; display:flex; align-items:center; gap:13px; padding:7px 14px; border-bottom:1px solid var(--line); }
+    .play { background:transparent; border:0; width:33px; height:32px; font-size:17px; padding:0; }
+    .time { font:11px var(--mono); color:var(--muted); white-space:nowrap; }
+    .view-buttons { margin-left:auto; display:flex; gap:4px; padding:3px; background:var(--soft); border-radius:5px; }
+    .view-buttons button { border:0; padding:4px 9px; color:var(--muted); background:transparent; font-size:11px; }
+    .view-buttons button[aria-pressed="true"] { background:var(--paper); color:var(--ink); box-shadow:0 1px 3px #0001; }
+    .timeline { padding:11px 17px 10px; }
+    .timeline-top { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:10px; }
+    .timeline-top span:last-child { margin-left:auto; }
+    .ruler { position:relative; height:34px; margin-top:5px; }
+    .ruler-track { position:absolute; top:10px; left:0; right:0; height:8px; border-radius:3px; background:var(--soft); }
+    .presence { position:absolute; top:0; height:8px; background:var(--green); opacity:.35; border-radius:2px; }
+    .trial-window { position:absolute; top:4px; height:21px; border:1px solid var(--accent); background:#ff6b3519; border-radius:3px; pointer-events:none; }
+    #seek { position:absolute; inset:0; width:100%; height:27px; margin:0; background:transparent; appearance:none; accent-color:var(--accent); }
+    #seek::-webkit-slider-runnable-track { background:transparent; height:25px; }
+    #seek::-webkit-slider-thumb { appearance:none; width:3px; height:25px; background:var(--ink); border:0; border-radius:1px; }
+    #seek::-moz-range-track { background:transparent; }
+    .ticks { display:flex; justify-content:space-between; font:10px var(--mono); color:var(--muted); margin-top:-2px; }
+    .targets { grid-area:targets; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+    .section-head { display:flex; align-items:center; justify-content:space-between; padding:16px 16px 12px; }
+    h2 { margin:0; font-size:14px; font-weight:650; }
+    .section-head span { font-size:11px; color:var(--muted); }
+    .summary { margin:0 16px 12px; color:var(--muted); font-size:12px; line-height:1.75; }
+    .target { padding:13px 15px; display:grid; grid-template-columns:19px 1fr; column-gap:10px; border-top:1px solid var(--line); }
+    .target.is-active { background:var(--soft-green); }
+    .target input { width:16px; height:16px; margin:3px 0 0; accent-color:var(--green); }
+    .target-inspect { background:transparent; border:0; padding:0; display:grid; gap:6px; min-width:0; text-align:left; }
+    .target-title { font-weight:600; font-size:12px; display:flex; justify-content:space-between; gap:5px; align-items:center; }
+    .target-title small { font-weight:400; font-size:10px; color:var(--muted); }
+    .target-meta { color:var(--muted); font:10px var(--mono); }
+    .target img { width:100%; height:42px; object-fit:contain; object-position:center; background:#202521; border-radius:4px; }
+    .target-note { font-size:11px; color:var(--muted); grid-column:2; margin-top:7px; }
+    .hint { color:var(--muted); font-size:11px; line-height:1.7; margin:12px 16px 16px; }
+    .editor { margin:0 15px 14px; padding:12px 0 0; border-top:1px solid var(--line); }
+    .editor-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; }
+    .editor-heading button { font-size:10px; padding:5px; border:0; background:transparent; color:var(--green); }
+    .editor label { display:grid; grid-template-columns:40px 1fr 28px; align-items:center; gap:8px; font-size:11px; margin:10px 0; color:var(--muted); }
+    .editor input { width:100%; accent-color:var(--green); min-width:0; }
+    .actions { grid-area:actions; padding:15px 17px; border:1px solid var(--line); border-radius:var(--radius); background:var(--paper); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .action-copy { flex:1; min-width:180px; }
+    .action-copy strong { display:block; font-size:13px; font-weight:650; }
+    .action-copy p { color:var(--muted); font-size:11px; line-height:1.7; margin:3px 0 0; }
+    .buttons { display:flex; align-items:center; gap:10px; }
+    .primary { min-height:42px; padding:10px 20px; border:0; border-radius:6px; background:var(--green); color:#fff; font-size:12px; font-weight:650; white-space:nowrap; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:10px; }
+    [data-theme="dark"] .primary { color:#122319; }
+    .primary:hover:not(:disabled) { filter:brightness(1.08); }
+    .action-extra { width:100%; border-top:1px solid var(--line); padding-top:10px; display:flex; align-items:center; gap:12px; color:var(--muted); font-size:11px; }
+    details { position:relative; }
+    summary { cursor:pointer; }
+    .time-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 0 2px; }
+    .time-controls label { display:flex; gap:7px; align-items:center; }
+    .time-controls input,.time-controls select { background:var(--paper); color:var(--ink); border:1px solid var(--line); padding:6px; width:75px; }
+    .link-button { border:0; background:transparent; color:var(--green); padding:6px 0; font-size:11px; }
+    .minor { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:13px; color:var(--muted); font-size:10px; }
+    .minor p { margin:0; }
+    .notice-box { border:1px solid var(--line); background:var(--soft); border-radius:6px; padding:10px 13px; margin:0 0 14px; color:var(--muted); font-size:12px; }
+    .notice-box[data-tone="error"] { color:var(--danger); }
+    .empty-targets { padding:25px 16px; color:var(--muted); font-size:12px; line-height:1.8; border-top:1px solid var(--line); }
+    .screen-reader { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+    @media (prefers-reduced-motion:reduce) { * { transition:none !important; animation:none !important; } }
+    @media (max-width:760px) {
+      .prototype { padding:8px 14px; gap:8px; flex-wrap:wrap; font-size:10px; }
+      .prototype .notice { display:none; }
+      .prototype label { margin-left:auto; gap:2px; }
+      .prototype select { font-size:11px; max-width:166px; }
+      .shell { padding:0 12px 20px; }
+      .topbar { height:66px; gap:8px; }
+      .brand { font-size:19px; }
+      .brand span { display:none; }
+      .topbar .quiet { height:40px; padding:0 9px; font-size:11px; }
+      .topbar .logo { width:29px; height:29px; }
+      .projectline { margin-bottom:12px; align-items:start; }
+      .filemark { display:none; }
+      h1 { font-size:14px; max-width:225px; }
+      .status { font-size:10px; margin-top:3px; }
+      .filemeta { font-size:10px; }
+      .workspace { grid-template-columns:1fr; grid-template-areas:"viewer" "actions" "targets"; gap:12px; }
+      .stage { width:100%; }
+      .stage.is-comparison { width:min(100%,calc(34vh * 8 / 9)); }
+      .playbar { gap:7px; padding:5px 10px; flex-wrap:wrap; }
+      .view-buttons button { padding:7px; min-height:33px; }
+      .actions { padding:13px; gap:12px; }
+      .action-copy { flex-basis:100%; }
+      .buttons { width:100%; }
+      .primary { flex:1; min-height:44px; }
+      .ghost { min-height:44px; }
+      .target { padding:14px; }
+      .target-inspect { min-height:44px; }
+      .target input { width:20px; height:20px; }
+      .target-title { font-size:13px; }
+      .target-meta { font-size:11px; }
+      .target img { height:50px; }
+      .editor input { min-height:32px; }
+      .link-button,.subtle { min-height:44px; }
+      .minor { align-items:start; font-size:10px; }
+      .minor .shortcut { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype">
+    <strong>第一次交付 · 交互原型</strong>
+    <label for="scenario">体验路径
+      <select id="scenario">
+        <option value="normal">普通字幕</option>
+        <option value="delayed">片头无字幕（构造案例）</option>
+        <option value="multiple">多个目标</option>
+        <option value="failure">试擦失败与重试</option>
+      </select>
+    </label>
+    <span class="notice">处理为模拟 · 视频为本地预渲染示例</span>
+  </div>
+  <main class="shell" data-screen-label="清理工作区">
+    <header class="topbar">
+      <svg class="logo" viewBox="0 0 64 64" fill="none" aria-hidden="true"><rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"></rect><path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <div class="brand">VideoWipe<span>本地视频清理</span></div>
+      <div class="spacer"></div>
+      <button class="quiet" id="restart" type="button">重新开始</button>
+      <button class="quiet" id="theme" type="button" aria-label="切换明暗配色">深色</button>
+    </header>
+    <div class="projectline">
+      <div class="filename"><span class="filemark" aria-hidden="true">MP4</span><div><h1 id="filename">对话片段.mp4</h1><p class="filemeta" id="filemeta">00:20.88 · 852 × 480 · 25 fps</p></div></div>
+      <div class="status" id="status" role="status">等待检测</div>
+    </div>
+    <div class="notice-box" id="message" role="status" hidden></div>
+    <div class="workspace">
+      <section class="viewer" aria-label="视频与时间轴">
+        <div class="stage" id="stage">
+          <video id="video" preload="metadata" playsinline poster="assets/english1-poster.jpg" aria-label="视频预览"></video>
+          <span class="view-label" id="viewLabel">原片</span>
+          <div class="compare-labels" id="compareLabels" hidden><span>原片</span><span>预渲染效果示例</span></div>
+          <div id="overlays"></div>
+          <div class="stage-message" id="busy" hidden><strong id="busyTitle">正在检测目标</strong><p>原型正在演示处理过程</p><progress id="progress" max="100" value="0" aria-label="模拟处理进度"></progress></div>
+        </div>
+        <div class="playbar">
+          <button class="play" id="play" aria-label="播放" type="button">▶</button>
+          <span class="time"><span id="currentTime">00:06.24</span> / <span id="totalTime">00:20.88</span></span>
+          <div class="view-buttons" id="viewButtons" aria-label="画面来源"><button type="button" data-view="source" aria-pressed="true">原片</button><button type="button" data-view="trial" aria-pressed="false" disabled>试擦对比</button><button type="button" data-view="clean" aria-pressed="false" hidden>结果</button></div>
+          <button class="play" id="mute" type="button" aria-label="静音">♪</button>
+        </div>
+        <div class="timeline">
+          <div class="timeline-top"><span id="rangeLabel">拖动时间轴查看原片</span><span id="windowLabel"></span></div>
+          <div class="ruler"><div class="ruler-track" id="presenceTrack"></div><div class="trial-window" id="trialWindow" hidden></div><input id="seek" type="range" min="0" max="20.88" step="0.04" value="6.24" aria-label="播放位置（秒）"></div>
+          <div class="ticks"><span>00:00</span><span id="midTick">00:10</span><span id="endTick">00:20</span></div>
+        </div>
+      </section>
+      <section class="actions" aria-label="清理操作">
+        <div class="action-copy"><strong id="actionTitle">先确认要清理的内容</strong><p id="actionHint">视频已载入，检测后可以先试擦一小段。</p></div>
+        <div class="buttons"><button class="ghost" id="returnReview" hidden>继续调整</button><button class="primary" id="primary" type="button">检测目标 <span aria-hidden="true">→</span></button><a id="download" class="primary" hidden>下载示例成片</a></div>
+        <div class="action-extra" id="extra" hidden>
+          <details id="timeDetails"><summary>调整试擦时间</summary><div class="time-controls"><label for="start">从 <input id="start" type="number" min="0" step="0.04" value="0"> 秒</label><label for="duration">时长 <select id="duration"><option value="3">3 秒</option><option value="5">5 秒</option></select></label><button id="recommend" class="link-button" type="button">用推荐片段</button></div></details>
+          <button class="link-button" id="direct" type="button">直接处理全片</button>
+        </div>
+      </section>
+      <aside class="targets" aria-label="检测目标">
+        <div class="section-head"><h2>清理目标</h2><span id="targetCount">等待检测</span></div>
+        <p class="summary" id="selectionSummary">你可以先播放视频，再决定清理什么。</p>
+        <div id="targetList"><div class="empty-targets">检测后，目标会以画面和时间呈现。<br>勾选需要移除的内容。</div></div>
+        <div class="editor" id="editor" hidden><div class="editor-heading"><strong id="editorTitle">调整区域框</strong><button id="resetBox" type="button">恢复原框</button></div><label for="boxWidth">宽度<input id="boxWidth" type="range" min="10" max="95" step="1"><output id="widthValue"></output></label><label for="boxY">位置<input id="boxY" type="range" min="2" max="88" step="1"><output id="yValue"></output></label><p class="hint" style="margin:8px 0 0">调整后需要重新试擦。此原型只演示交互，预渲染样片不会随框重算。</p></div>
+        <p class="hint" id="targetHint" hidden>点目标查看它出现的画面。未勾选的目标仍可查看。</p>
+      </aside>
+    </div>
+    <footer class="minor"><p>原型模式 · 所有处理状态为模拟，固定遮罩样片不代表当前选择的真实结果。</p><span class="shortcut">空格 播放 / 暂停 · 方向键 微调时间</span></footer>
+  </main>
+  <script>
+    "use strict";
+    const $ = (id) => document.getElementById(id);
+    const video = $("video");
+    const fixtures = {
+      normal: {name:"对话片段.mp4",media:"english1",duration:20.88,width:852,height:480,position:6.24,targets:[{id:"sub",name:"底部英文字幕",note:"对话字幕",start:1.2,end:20.4,frame:6.24,box:[.16,.76,.70,.18],image:"english1-target-0.jpg",remove:true}]},
+      delayed: {name:"片头无字幕示例.mp4",media:"english1",source:"delayed-source.mp4",duration:20.88,width:852,height:480,position:0,targets:[{id:"sub",name:"底部英文字幕",note:"从 00:12 起出现",start:12,end:20.4,frame:13.2,box:[.16,.76,.70,.18],image:"delayed-target.jpg",remove:true}]},
+      multiple: {name:"多语歌词片段.mp4",media:"others",duration:20.64,width:1920,height:1080,position:6.2,targets:[{id:"ko",name:"下方韩文歌词",note:"歌词第一行",start:2.2,end:20.2,frame:6.2,box:[.32,.73,.37,.09],image:"others-target-0.jpg",remove:true},{id:"my",name:"底部缅文歌词",note:"歌词第二行",start:2.2,end:20.2,frame:6.2,box:[.24,.87,.54,.09],image:"others-target-1.jpg",remove:true},{id:"logo",name:"右上角标记",note:"默认不移除",start:0,end:20.64,frame:6.2,box:[.85,.05,.12,.07],image:"others-target-2.jpg",remove:false}]},
+      failure: {name:"试擦重试示例.mp4",media:"english1",duration:20.88,width:852,height:480,position:6.24,targets:[{id:"sub",name:"底部英文字幕",note:"对话字幕",start:1.2,end:20.4,frame:6.24,box:[.16,.76,.70,.18],image:"english1-target-0.jpg",remove:true}]}
+    };
+    let fixture,targets=[],phase="ready",view="source",active=null,trialReady=false,manualTime=false,hasFailed=false,timer=null,loadEpoch=0;
+    const fmt = (value,decimal=false) => { const t=Math.max(0,Number(value)||0); return String(Math.floor(t/60)).padStart(2,"0")+":"+(decimal?(t%60).toFixed(2).padStart(5,"0"):String(Math.floor(t%60)).padStart(2,"0")); };
+    const busyPhases = new Set(["detecting","trial-running","cleaning"]);
+    function notify(text,tone="info") { $("message").textContent=text; $("message").dataset.tone=tone; $("message").hidden=!text; }
+    function selected() { return targets.filter(t=>t.remove); }
+    function trialRange() { const first=Number($("start").value); const duration=Number($("duration").value); return {start:first,end:Math.min(fixture.duration,first+duration)}; }
+    function validRange() { const r=trialRange(); return Number.isFinite(r.start)&&r.start>=0&&r.start<r.end&&selected().some(t=>t.start<r.end&&t.end>r.start); }
+    function recommend() {
+      const intervals=selected().map(t=>[t.start,t.end]).sort((a,b)=>a[0]-b[0]); const merged=[];
+      for (const row of intervals) { const last=merged.at(-1); if(last&&row[0]<=last[1])last[1]=Math.max(last[1],row[1]); else merged.push(row.slice()); }
+      merged.sort((a,b)=>(b[1]-b[0])-(a[1]-a[0])||a[0]-b[0]);
+      if(merged.length){const [a,b]=merged[0]; const n=Number($("duration").value); $("start").value=(Math.max(0,Math.min(fixture.duration-n,(a+b-n)/2))).toFixed(2);}
+    }
+    function setMedia(next,at=video.currentTime||0) {
+      const epoch=++loadEpoch; video.pause(); view=next;
+      const name=next==="trial"?fixture.media+"-comparison.mp4":next==="clean"?fixture.media+"-clean.mp4":fixture.source||fixture.media+"-source.mp4";
+      const path="assets/"+name;
+      const seek=()=>{if(epoch!==loadEpoch)return; video.currentTime=Math.min(Math.max(0,at),Math.max(0,fixture.duration-.04));};
+      if(video.getAttribute("src")!==path){video.src=path; video.addEventListener("loadedmetadata",seek,{once:true});}else seek();
+      $("stage").classList.toggle("is-comparison",next==="trial"); $("compareLabels").hidden=next!=="trial"; $("viewLabel").hidden=next==="trial"; $("viewLabel").textContent=next==="clean"?"预渲染结果示例":"原片";
+      for(const button of document.querySelectorAll("[data-view]"))button.setAttribute("aria-pressed",String(button.dataset.view===next));
+      renderOverlays();
+    }
+    function renderTimeline() {
+      $("presenceTrack").replaceChildren();
+      if(phase!=="ready") for(const t of selected()){const span=document.createElement("span");span.className="presence";span.style.left=(t.start/fixture.duration*100)+"%";span.style.width=((t.end-t.start)/fixture.duration*100)+"%";$("presenceTrack").append(span);}
+      const r=trialRange(); $("trialWindow").hidden=phase==="ready"||!validRange(); $("trialWindow").style.left=(r.start/fixture.duration*100)+"%";$("trialWindow").style.width=((r.end-r.start)/fixture.duration*100)+"%";
+      $("windowLabel").textContent=phase!=="ready"&&validRange()?"试擦 "+fmt(r.start)+"–"+fmt(r.end):"";
+      $("rangeLabel").textContent=phase==="ready"?"拖动时间轴查看原片":"绿色为目标出现时间 · 橙色为试擦范围";
+    }
+    function renderOverlays() {
+      $("overlays").replaceChildren(); if(view!=="source"||phase==="ready"||busyPhases.has(phase)||phase==="done")return;
+      for(const t of targets){if(video.currentTime<t.start||video.currentTime>=t.end)continue;const button=document.createElement("button");button.type="button";button.className="target-box";button.setAttribute("aria-label","查看"+t.name);button.dataset.active=String(active===t.id);button.dataset.remove=String(t.remove);const [x,y,w,h]=t.box;Object.assign(button.style,{left:x*100+"%",top:y*100+"%",width:w*100+"%",height:h*100+"%"});const label=document.createElement("span");label.className="box-label";label.textContent=t.name;button.append(label);button.addEventListener("click",()=>inspect(t.id));$("overlays").append(button);}
+    }
+    function inspect(id) { active=id;const t=targets.find(x=>x.id===id); if(!t)return;setMedia("source",t.frame);renderTargets(); }
+    function renderTargets() {
+      if(phase==="ready"||phase==="detecting") {$("targetList").innerHTML='<div class="empty-targets">检测后，目标会以画面和时间呈现。<br>勾选需要移除的内容。</div>';$("targetCount").textContent="等待检测";$("selectionSummary").textContent="你可以先播放视频，再决定清理什么。";$("editor").hidden=true;$("targetHint").hidden=true;return;}
+      $("targetList").replaceChildren();$("targetCount").textContent=selected().length+" / "+targets.length+" 项待清理";$("selectionSummary").textContent=selected().length?"将移除"+selected().map(t=>t.name).join("、")+"。":"尚未选择清理目标，请勾选至少一项。";
+      for(const t of targets){const row=document.createElement("div");row.className="target"+(active===t.id?" is-active":"");const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=t.remove;checkbox.disabled=busyPhases.has(phase)||phase==="done";checkbox.setAttribute("aria-label","移除"+t.name);checkbox.addEventListener("change",()=>{t.remove=checkbox.checked;if(!manualTime)recommend();invalidate();render();});const button=document.createElement("button");button.className="target-inspect";button.type="button";button.setAttribute("aria-label","定位"+t.name);button.disabled=busyPhases.has(phase);const title=document.createElement("span");title.className="target-title";title.textContent=t.name;const badge=document.createElement("small");badge.textContent=t.remove?"移除":"保留";title.append(badge);const meta=document.createElement("span");meta.className="target-meta";meta.textContent=fmt(t.start)+" – "+fmt(t.end);const image=document.createElement("img");image.src="assets/"+t.image;image.alt=t.name+"示例画面";button.append(title,meta,image);button.addEventListener("click",()=>inspect(t.id));row.append(checkbox,button);$("targetList").append(row);}
+      const t=targets.find(x=>x.id===active);$("editor").hidden=!t||!t.remove||phase==="done";$("targetHint").hidden=false;if(t){$("editorTitle").textContent=t.name+" · 区域框";$("boxWidth").value=Math.round(t.box[2]*100);$("boxY").value=Math.round(t.box[1]*100);$("widthValue").textContent=Math.round(t.box[2]*100)+"%";$("yValue").textContent=Math.round(t.box[1]*100)+"%";}
+    }
+    function invalidate() {trialReady=false;if(phase==="trial-ready")phase="review";if(view!=="source")setMedia("source");notify("设置已修改，重新试擦后再确认效果。");}
+    function render() {
+      const busy=busyPhases.has(phase), count=selected().length, range=trialRange();
+      $("busy").hidden=!busy;$("primary").hidden=phase==="done";$("download").hidden=phase!=="done";$("returnReview").hidden=phase!=="done";$("extra").hidden=phase==="ready"||phase==="detecting"||phase==="done";$("direct").hidden=phase==="trial-ready";$("direct").disabled=busy||!count;
+      $("primary").disabled=busy||(phase!=="ready"&&(!count||!validRange()));
+      $("start").disabled=busy;$("duration").disabled=busy;$("recommend").disabled=busy;
+      const labels={ready:["等待检测","先确认要清理的内容","视频已载入，检测后可以先试擦一小段。","检测目标 →"],detecting:["正在检测","正在寻找画面中的目标","这是模拟过程，不会运行真实检测。","正在检测…"],review:["可以试擦","先看一小段，再决定","已选择 "+fmt(range.start)+"–"+fmt(range.end)+"，包含待清理目标。","先看这 "+Number($("duration").value)+" 秒效果 →"],"trial-running":["正在试擦","正在生成同步对比","原型将载入固定遮罩的预渲染样片。","正在试擦…"],"trial-ready":["试擦已就绪","这段效果满意吗？","仅代表所选片段。可以调整目标后重新试擦。","满意，处理全片 →"],cleaning:["正在处理","正在清理全片","模拟过程结束后，可以原地检查示例成片。","正在处理…"],done:["处理完成","先检查，再带走","已回到试擦位置。暂停后可切换原片，检查画面和声音。",""]};
+      const text=labels[phase];$("status").textContent=text[0];$("actionTitle").textContent=text[1];$("actionHint").textContent=count||phase==="ready"||phase==="detecting"?text[2]:"没有待移除目标，请在右侧勾选。";$("primary").textContent=text[3];
+      document.querySelector('[data-view="trial"]').disabled=!trialReady||busy;document.querySelector('[data-view="clean"]').hidden=phase!=="done";
+      $("download").href="assets/"+fixture.media+"-clean.mp4";$("download").download=fixture.name.replace(/\.mp4$/,"_clean.mp4");renderTargets();renderTimeline();renderOverlays();
+    }
+    function simulate(kind,onDone) {phase=kind;video.pause();$("busyTitle").textContent=kind==="detecting"?"正在检测目标":kind==="trial-running"?"正在试擦所选片段":"正在处理全片";$("progress").value=0;render();let p=0;clearInterval(timer);timer=setInterval(()=>{p+=20;$("progress").value=p;if(p>=100){clearInterval(timer);timer=null;onDone();}},160);}
+    function clean() {notify("");simulate("cleaning",()=>{phase="done";trialReady=true;setMedia("clean",trialRange().start);render();notify("已载入固定遮罩预渲染示例。当前勾选和区域框不会改变这份样片。");});}
+    $("primary").addEventListener("click",()=>{
+      notify("");
+      if(phase==="ready") {simulate("detecting",()=>{phase="review";recommend();active=targets[0]?.id;setMedia("source",targets[0]?.frame||0);render();if($("scenario").value==="delayed")notify("这条构造样例前 12 秒无字幕，推荐片段已跳过片头。");});return;}
+      if(phase==="trial-ready"){clean();return;}
+      if(!validRange()){notify("这段时间没有已选目标，请使用推荐片段或调整起点。","error");return;}
+      simulate("trial-running",()=>{if($("scenario").value==="failure"&&!hasFailed){hasFailed=true;phase="review";render();notify("试擦未完成（模拟编码失败）。视频与选择已保留，可以直接重试。","error");$("primary").textContent="重试这段试擦 →";return;}phase="trial-ready";trialReady=true;setMedia("trial",trialRange().start);render();notify("上下画面同步。此处播放固定遮罩预渲染样例，并非刚才模拟操作产生的结果。");});
+    });
+    function loadScenario() {
+      clearInterval(timer);timer=null;fixture=fixtures[$("scenario").value];targets=fixture.targets.map(t=>({...t,box:t.box.slice()}));phase="ready";active=null;trialReady=false;manualTime=false;hasFailed=false;$("filename").textContent=fixture.name;$("filemeta").textContent=fmt(fixture.duration,true)+" · "+fixture.width+" × "+fixture.height+" · 25 fps";$("totalTime").textContent=fmt(fixture.duration,true);$("midTick").textContent=fmt(fixture.duration/2);$("endTick").textContent=fmt(fixture.duration);$("seek").max=fixture.duration;$("start").max=fixture.duration-.04;$("start").value=0;$("duration").value="3";$("timeDetails").open=false;video.poster="assets/"+($("scenario").value==="delayed"?"delayed-poster.jpg":fixture.media+"-poster.jpg");notify("");let position=fixture.position;try{const stored=Number(localStorage.getItem("vw-prototype-position-"+$("scenario").value));if(stored>0&&stored<fixture.duration)position=stored;}catch{}setMedia("source",position);render();
+    }
+    $("scenario").addEventListener("change",loadScenario);$("restart").addEventListener("click",()=>{try{localStorage.removeItem("vw-prototype-position-"+$("scenario").value);}catch{}loadScenario();});
+    $("direct").addEventListener("click",clean);$("returnReview").addEventListener("click",()=>{phase="review";trialReady=false;setMedia("source",trialRange().start);notify("");render();});
+    $("start").addEventListener("change",()=>{manualTime=true;invalidate();render();if(!validRange())notify("所选时间没有目标，请调整起点或使用推荐片段。","error");});
+    $("duration").addEventListener("change",()=>{if(!manualTime)recommend();invalidate();render();});$("recommend").addEventListener("click",()=>{manualTime=false;recommend();invalidate();render();});
+    for(const [id,part] of [["boxWidth",2],["boxY",1]])$(id).addEventListener("input",()=>{const t=targets.find(x=>x.id===active);if(!t)return;const n=Number($(id).value)/100;t.box[part]=Math.min(n,part===2?1-t.box[0]:1-t.box[3]);invalidate();renderOverlays();$(part===2?"widthValue":"yValue").textContent=Math.round(t.box[part]*100)+"%";renderTimeline();$("primary").textContent="重新查看效果 →";document.querySelector('[data-view="trial"]').disabled=true;});
+    $("resetBox").addEventListener("click",()=>{const t=targets.find(x=>x.id===active);if(t)t.box=fixture.targets.find(x=>x.id===active).box.slice();invalidate();render();});
+    async function togglePlay(){if(busyPhases.has(phase))return;if(video.paused){if(view==="trial"&&(video.currentTime<trialRange().start||video.currentTime>=trialRange().end))video.currentTime=trialRange().start;try{await video.play();}catch{notify("浏览器暂不能播放此文件，请尝试重新开始。","error");}}else video.pause();}
+    $("play").addEventListener("click",togglePlay);$("mute").addEventListener("click",()=>{video.muted=!video.muted;$("mute").textContent=video.muted?"×":"♪";$("mute").setAttribute("aria-label",video.muted?"取消静音":"静音");});
+    video.addEventListener("play",()=>{$("play").textContent="Ⅱ";$("play").setAttribute("aria-label","暂停");});video.addEventListener("pause",()=>{$("play").textContent="▶";$("play").setAttribute("aria-label","播放");});
+    video.addEventListener("timeupdate",()=>{$("currentTime").textContent=fmt(video.currentTime,true);$("seek").value=video.currentTime;try{localStorage.setItem("vw-prototype-position-"+$("scenario").value,String(video.currentTime));}catch{}if(view==="trial"&&video.currentTime>=trialRange().end&&!video.paused)video.pause();renderOverlays();});
+    video.addEventListener("error",()=>notify("本地样片无法加载。此原型需要随附 assets 文件夹，并通过本地服务打开。","error"));
+    $("seek").addEventListener("input",()=>{video.pause();video.currentTime=Number($("seek").value);});
+    $("viewButtons").addEventListener("click",(event)=>{const button=event.target.closest("[data-view]");if(!button||button.disabled)return;setMedia(button.dataset.view,video.currentTime);});
+    document.addEventListener("keydown",(event)=>{if(event.target.closest("input,select,button,a,summary"))return;if(event.code==="Space"){event.preventDefault();togglePlay();}if(event.code==="ArrowRight"||event.code==="ArrowLeft"){event.preventDefault();video.pause();video.currentTime=Math.max(0,Math.min(fixture.duration-.04,video.currentTime+(event.code==="ArrowRight"?.04:-.04)));}});
+    let dark=false;try{dark=localStorage.getItem("vw-prototype-theme")==="dark";}catch{}function applyTheme(){document.documentElement.dataset.theme=dark?"dark":"light";$("theme").textContent=dark?"浅色":"深色";}$("theme").addEventListener("click",()=>{dark=!dark;applyTheme();try{localStorage.setItem("vw-prototype-theme",dark?"dark":"light");}catch{}});applyTheme();loadScenario();
+  </script>
+</body>
+</html>
