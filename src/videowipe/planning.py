@@ -349,6 +349,91 @@ def finalize(
     )
 
 
+def _descender_extensions(frame, boxes):
+    """Recover narrow glyph tails supported by contrasting lower-edge pixels.
+
+    Conservative light glyph / dark edge evidence only; other subtitle styles
+    retain their detector geometry. White tails use the existing 20% glyph margin;
+    black tails retain their three-pixel search limit.
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    extra = []
+    for x1, y1, x2, y2 in boxes:
+        top, end = y1, min(gray.shape[0], y2+1+max(3, int(np.ceil((y2-y1+1)*.2))))
+        strip = gray[top:end, x1:x2+1]
+        neutral = np.ptp(frame[top:end, x1:x2+1], axis=2) <= 40
+        light = ((strip >= 180) & neutral).astype(np.uint8)
+        dark = (strip < 16).astype(np.uint8)
+        dark[:max(0, y2-8-top)] = 0
+        dark[y2+4-top:] = 0
+        kernel = np.ones((9,9),np.uint8)
+        # A weak light band connects antialiased edges to the bright glyph;
+        # it cannot qualify without a bright seed and adjacent dark contrast.
+        faint = ((strip >= 128) & neutral).astype(np.uint8)
+        faint &= cv2.dilate(light, np.ones((3,3), np.uint8))
+        contrast = (strip <= 90).astype(np.uint8)
+        candidates = ((dark, cv2.dilate(light, kernel), dark),
+                      (faint, cv2.dilate(contrast, kernel), light))
+        for pixels, support, seed in candidates:
+            count, labels, stats, _ = cv2.connectedComponentsWithStats(pixels)
+            for label in range(1, count):
+                x, y, width, height, _ = stats[label]
+                bottom = top+y+height-1
+                if (top+y > y2 or bottom <= y2
+                        or (pixels is faint and (bottom == end-1 or x == 0 or x+width == strip.shape[1]))
+                        ):
+                    continue
+                component = labels[y:y+height, x:x+width] == label
+                if (not np.any(support[y:y+height, x:x+width][component])
+                        or not np.any(seed[y:y+height, x:x+width][component])):
+                    continue
+                # Neighboring letters may share one outline above the edge; only
+                # measure each disconnected tail below it, not the whole word.
+                tail = component[y2-top+1-y:].astype(np.uint8)
+                _, _, tails, _ = cv2.connectedComponentsWithStats(tail)
+                for tx, ty, tw, th, _ in tails[1:]:
+                    if tw <= y2-y1+1:
+                        extra.append([x1+int(x+tx), y2+1+int(ty),
+                                      x1+int(x+tx+tw)-1, y2+int(ty+th)])
+    return sorted({tuple(box) for box in extra})
+
+
+def _recover_descenders(plan, tracks, video_path, check_cancelled):
+    frames = {t.id: {i: row['boxes'] for row in t.spatial_segments
+                    for i in range(row['start'], row['end'])} for t in tracks}
+    indices = sorted({i for rows in frames.values() for i in rows})
+    if not indices:
+        return
+    reader = cv2.VideoCapture(video_path)
+    try:
+        if not reader.isOpened() or not reader.set(cv2.CAP_PROP_POS_FRAMES, indices[0]):
+            raise ValueError('Cannot read subtitle outline evidence')
+        for i in range(indices[0], indices[-1]+1):
+            if check_cancelled is not None:
+                check_cancelled()
+            ok, frame = reader.read()
+            if not ok:
+                raise ValueError(f'Cannot decode subtitle outline frame {i}')
+            for track in tracks:
+                boxes = frames[track.id].get(i)
+                if boxes is None:
+                    continue
+                extra = _descender_extensions(frame, boxes)
+                if len(boxes)+len(extra) <= 64:
+                    frames[track.id][i] = boxes + [list(b) for b in extra]
+    finally:
+        reader.release()
+    for track in tracks:
+        rows = []
+        for i, boxes in sorted(frames[track.id].items()):
+            if rows and rows[-1]['end'] == i and rows[-1]['boxes'] == boxes:
+                rows[-1]['end'] = i+1
+            else:
+                rows.append(dict(start=i, end=i+1, boxes=boxes))
+        track.spatial_segments = rows
+        track.mask = _spatial_mask(track, (plan.source.height, plan.source.width))
+
+
 def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, check_cancelled=None):
     """Reuse dense detections; absent local evidence never means a full-band wipe."""
     eligible = {c.id for c in result.candidates
@@ -429,6 +514,13 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
         track.spatial_segments = rows
         track.mask = _spatial_mask(track, (h, w))
         plan.schema_version = 3
+
+    if video_path is not None:
+        tracks = [t for t in plan.remove_tracks if t.id in eligible
+                  and 'bbox-override' not in t.decision_reason
+                  and (selected_ids is None or t.id in selected_ids)
+                  and t.spatial_segments is not None]
+        _recover_descenders(plan, tracks, video_path, check_cancelled)
 
 
 def _finalize_result(

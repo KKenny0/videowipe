@@ -141,3 +141,82 @@ def test_interpolated_boundary_frames_are_checked_but_known_empty_frames_stay_em
     mask = execution_masks(plan)[1]
     assert mask(2)[4,5] == 1 and mask(4)[4,5] == 1
     assert not mask(3).any()  # Observed negative evidence is never filled in.
+
+
+
+def test_descender_outline_requires_local_white_glyph_evidence():
+    from videowipe.planning import _descender_extensions
+    frame = np.full((40,80,3), 50, np.uint8)
+    frame[15:25,30:35] = 0  # Narrow black descender crosses lower core y=22.
+    frame[15:20,31:34] = 255
+    frame[15:25,50:55] = 0  # Equally dark background without white glyph.
+    boxes = [[10,10,70,22]]
+    extra = _descender_extensions(frame, boxes)
+    assert extra == [(30,23,34,24)]
+    frame[21:23,20:45] = 0  # Joined letter outlines must not hide a narrow tail.
+    assert _descender_extensions(frame, boxes) == [(30,23,34,24)]
+    frame[15:20,31:34] = 0
+    assert _descender_extensions(frame, boxes) == []
+
+
+def test_descender_evidence_reaches_saved_plan_core(tmp_path):
+    import cv2
+    from videowipe.detect import TextBox
+    from videowipe.planning import _add_spatial_segments
+    video = tmp_path/'outline.avi'
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'FFV1'), 25, (80,40))
+    assert writer.isOpened()
+    frame = np.full((40,80,3), 50, np.uint8)
+    frame[15:25,30:35] = 0
+    frame[15:20,31:34] = 255
+    for _ in range(6):
+        writer.write(frame)
+    writer.release()
+    plan = local_plan(); plan.source = Source('outline.avi','a'*64,80,40,25,6)
+    plan.tracks[0].bbox = (10,10,70,22)
+    box = TextBox(np.array([[30,14],[34,14],[34,18],[30,18]]), .9)
+    evidence = {i:[] for i in range(6)}; evidence[0] = [box]
+    result = SimpleNamespace(frame_shape=(40,80), candidates=[
+        SimpleNamespace(id='c1',type='subtitle',detector_backed=True)],sampled_frame_boxes=evidence)
+    _add_spatial_segments(plan,result,video_path=str(video))
+    save_wipe_plan(plan,str(tmp_path/'plan'))
+    replay = load_wipe_plan(str(tmp_path/'plan/wipe_plan.json'))
+    alpha = execution_masks(replay,4)[1]
+    assert alpha(0)[24,32] == 1
+    assert not alpha(1).any()
+
+
+@pytest.mark.parametrize('color', [(0,255,255), (255,255,0), (0,0,255), (110,110,110)])
+def test_descender_recovery_does_not_treat_colored_text_as_white(color):
+    from videowipe.planning import _descender_extensions
+    frame = np.full((40,80,3),50,np.uint8)
+    frame[15:25,30:35] = 0
+    frame[15:20,31:34] = color
+    assert _descender_extensions(frame, [[10,10,70,22]]) == []
+
+
+def test_white_descender_with_dark_edge_is_not_left_in_feather():
+    from videowipe.planning import _descender_extensions
+    frame = np.full((40,80,3),110,np.uint8)
+    frame[15:25,30:35] = 255
+    frame[22:24,30:35] = 150  # Antialiasing must still connect to the bright body.
+    frame[15:20,29] = 0  # Dark edge supports the connected white tail.
+    extra = _descender_extensions(frame, [[10,10,70,22]])
+    assert any(x1 <= 32 <= x2 and y1 <= 24 <= y2 for x1,y1,x2,y2 in extra)
+    frame[15:20,29] = 110
+    assert _descender_extensions(frame, [[10,10,70,22]]) == []
+    frame[15:25,10:71] = 255  # Broad bright background is not a narrow glyph tail.
+    frame[15:20,10] = 0
+    assert _descender_extensions(frame, [[10,10,70,22]]) == []
+
+
+def test_white_tail_uses_glyph_evidence_above_shrinking_lower_edge():
+    from videowipe.planning import _descender_extensions
+    frame = np.full((80,100,3),110,np.uint8)
+    frame[20:46,40:45] = 255
+    frame[20:26,39] = 0  # Contrast is above the old eight-pixel strip.
+    frame[40:46,45:80] = 150  # Weak background must not absorb the glyph.
+    for bottom in (43,40):
+        extra = _descender_extensions(frame, [[10,10,90,bottom]])
+        assert any(a <= 42 <= c and b <= 45 <= d for a,b,c,d in extra)
+        assert all(c < 50 for a,b,c,d in extra)
