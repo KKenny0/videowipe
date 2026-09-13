@@ -361,7 +361,11 @@ def _descender_extensions(frame, boxes):
     for x1, y1, x2, y2 in boxes:
         top, end = y1, min(gray.shape[0], y2+1+max(3, int(np.ceil((y2-y1+1)*.2))))
         strip = gray[top:end, x1:x2+1]
-        neutral = np.ptp(frame[top:end, x1:x2+1], axis=2) <= 40
+        color = frame[top:end, x1:x2+1]
+        blue, green, red = color[..., 0], color[..., 1], color[..., 2]
+        high = np.maximum(np.maximum(blue, green), red)
+        low = np.minimum(np.minimum(blue, green), red)
+        neutral = high - low <= 40
         light = ((strip >= 180) & neutral).astype(np.uint8)
         dark = (strip < 16).astype(np.uint8)
         dark[:max(0, y2-8-top)] = 0
