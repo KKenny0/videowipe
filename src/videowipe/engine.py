@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import json
 import os
 import platform
 import threading
 import time
 from functools import lru_cache
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import cv2
 import numpy as np
@@ -249,6 +251,7 @@ class WipeEngine:
                 progress=legacy_progress,
                 plan=request.plan,
                 trial_range=request.trial_range,
+                prediction_cache_dir=request.prediction_cache_dir,
             )
             result = self._build_result(request, output_path, artifact_before)
             # A final notification cannot retroactively cancel a successful run.
@@ -437,7 +440,7 @@ class WipeEngine:
                 detect_mode: str | None = None,
                 ocr: str | None = None,
                 progress=None,
-                plan=None, trial_range=None) -> str:
+                plan=None, trial_range=None, prediction_cache_dir=None) -> str:
         """Process a single video. Returns the output file path.
 
         Args:
@@ -459,6 +462,10 @@ class WipeEngine:
             raise InvalidInputError("mask and plan are mutually exclusive")
         if plan is not None and self.task != "clean":
             raise InvalidInputError("plan is only supported for the clean task")
+        if prediction_cache_dir is not None:
+            if self._model != "sttn" or self._external_command or preview:
+                raise InvalidInputError("prediction_cache_dir requires STTN execution")
+            prediction_cache_dir = os.fspath(prediction_cache_dir)
         if trial_range is not None:
             if (not isinstance(trial_range, (tuple, list)) or len(trial_range) != 2
                     or any(type(value) is not int for value in trial_range)
@@ -523,6 +530,8 @@ class WipeEngine:
         # loading the model).
         if self._active_plan is not None:
             validate_plan(self._active_plan, require_remove=True)
+            if not np.any(mask_arr):
+                raise InvalidInputError("没有需要处理的区域")
 
         # Resolve mask file path for external command or normal pipeline
         if mask is not None:
@@ -533,6 +542,8 @@ class WipeEngine:
         file_inpainter = self._resolve_file_inpainter()
         if file_inpainter is not None:
             self._check_cancelled()
+            if self._active_plan is not None and any(t.action == "protect" for t in self._active_plan.tracks):
+                raise InvalidInputError("protect WipePlan v2 is not supported by file-based backends")
             if self._active_plan is not None and is_temporal(self._active_plan):
                 raise InvalidInputError(
                     "temporal WipePlan (per-frame segments) is not supported by "
@@ -596,6 +607,11 @@ class WipeEngine:
             self._task_impl._bm = bm
             self._task_impl.mask_path = mask_path_saved
             process_kwargs = {"video_path": video}
+            if self._active_progress is not None:
+                process_kwargs["phase_progress"] = lambda phase, done, total, message=None: self._emit_progress(
+                    ProgressEvent(phase, done, total, message))
+            if prediction_cache_dir is not None:
+                process_kwargs["prediction_cache_dir"] = prediction_cache_dir
             if trial_range is not None:
                 process_kwargs["trial_range"] = trial_range
             if progress is not None:
@@ -685,6 +701,7 @@ class WipeEngine:
         request: WipeRequest,
         on_progress: Optional[ProgressCallback] = None,
         cancellation: Optional[CancellationToken] = None,
+        on_candidates: Optional[Callable[[dict], None]] = None,
     ) -> WipePlan:
         """Detect, build, and persist a :class:`WipePlan` without loading the model.
 
@@ -693,11 +710,17 @@ class WipeEngine:
         resolved remove/keep action per track, including the top-overlay safety
         default. Re-running with this plan (via ``WipeRequest(plan=...)``)
         reproduces the same mask deterministically.
+
+        ``on_candidates`` receives independent JSON-compatible metadata after
+        candidate artifacts exist, before temporal refinement. It is a review
+        snapshot, not an executable plan. Callback exceptions propagate.
         """
         if not isinstance(request, WipeRequest):
             raise InvalidInputError("request must be a WipeRequest instance")
         if on_progress is not None and not callable(on_progress):
             raise InvalidInputError("on_progress must be callable")
+        if on_candidates is not None and not callable(on_candidates):
+            raise InvalidInputError("on_candidates must be callable")
         if cancellation is not None and not isinstance(cancellation, CancellationToken):
             raise InvalidInputError("cancellation must be a CancellationToken")
         if isinstance(request.targets, (str, bytes)):
@@ -738,8 +761,16 @@ class WipeEngine:
                 request.intent, request.agent, regions, request.detect_mode,
                 request.ocr, output_dir, request.confirm,
             )
+            if on_candidates is not None:
+                coarse = finalize_clean_plan(draft, refine=False)
+                save_wipe_plan(coarse, os.path.join(output_dir, "coarse"))
+                snapshot = draft.review_snapshot(output_dir)
+                snapshot["default_selected_ids"] = sorted(track.id for track in coarse.remove_tracks)
+                on_candidates(snapshot)
             wipe_plan = self._finalize_clean_draft(draft)
             self._emit_progress(ProgressEvent("persist", 0, 1))
+            if on_candidates is not None:
+                draft.save_refinement_evidence(output_dir)
             self._write_clean_artifacts(
                 draft, {track.id for track in wipe_plan.remove_tracks}, output_dir,
             )
@@ -760,6 +791,62 @@ class WipeEngine:
         finally:
             self._active_cancellation = None
             self._active_progress = None
+            self._run_lock.release()
+
+    def _refine_review(self, video, machine_plan, reviewed_plan, evidence_path,
+                       on_progress=None, cancellation=None, output_dir=None):
+        """Local web adapter; all detector work uses the engine execution lock."""
+        from videowipe.detect import _default_detector
+        from videowipe.planning import refine_review
+
+        if not self._run_lock.acquire(blocking=False):
+            raise ProcessingError("This WipeEngine is already processing a request",
+                                  code="ENGINE_BUSY", retryable=True)
+        self._active_cancellation = cancellation
+        self._active_progress = on_progress
+        try:
+            self._check_cancelled()
+            if self._detector is None:
+                self._detector = _default_detector()
+            detector = self._detector
+            return refine_review(
+                video, machine_plan, reviewed_plan, evidence_path, detector,
+                progress=lambda done, total: self._emit_progress(
+                    ProgressEvent("refine", done, total)),
+                check_cancelled=self._check_cancelled,
+                output_dir=output_dir,
+            )
+        except _ProgressCallbackError as exc:
+            raise exc.cause
+        finally:
+            self._active_cancellation = None
+            self._active_progress = None
+            self._run_lock.release()
+
+    def _trial_identity(self):
+        """Resolve the loaded runtime before the local web cache can be queried."""
+        if not self._run_lock.acquire(blocking=False):
+            raise ProcessingError("This WipeEngine is already processing a request",
+                                  code="ENGINE_BUSY", retryable=True)
+        try:
+            self._ensure_model()
+            backend = self._task_impl.backend
+            metadata = backend.benchmark_metadata()
+            root = Path(__file__).parent
+            implementation = hashlib.sha256()
+            for name in ("engine.py", "plan.py", "backends.py", "tasks/detext.py",
+                         "inpainters/sttn.py", "models/sttn.py"):
+                implementation.update((root / name).read_bytes())
+            return dict(metadata, backend=type(backend).__name__,
+                        precision="float16-autocast" if str(metadata["device"]).startswith("cuda") else "float32",
+                        gap=self._task_impl.gap,
+                        ref_length=self._task_impl.inpainter.ref_length,
+                        neighbor_stride=self._task_impl.inpainter.neighbor_stride,
+                        feather=self._task_impl.feather_radius,
+                        input_size=[640, 120],
+                        encoding=["libx264", "18", "medium", "yuv420p", "aac", "+faststart", "dual"],
+                        implementation_sha256=implementation.hexdigest())
+        finally:
             self._run_lock.release()
 
     def _resolve_clean_plan(

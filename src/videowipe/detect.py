@@ -188,7 +188,8 @@ class DBNetDetector:
         input_size: ``(width, height)`` — both should be multiples of 32.
         bin_thresh: Threshold for binarising the probability map.
         box_thresh: Minimum mean probability inside a contour.
-        unclip_ratio: Factor to expand each detected box.
+        unclip_ratio: Box expansion ratio. The manual fallback applies the
+            short-side expansion equally to both axes.
         mean: Channel means for normalisation (ImageNet defaults).
         scale: Pixel-scale factor (``1/255`` normalises to ``[0, 1]``).
     """
@@ -338,6 +339,8 @@ class DBNetDetector:
         if prob.max() > 1.0 or prob.min() < 0.0:
             prob = 1.0 / (1.0 + np.exp(-prob))
 
+        # Undo letterboxing before projecting detections into source coordinates.
+        prob = cv2.resize(prob, (iw, ih))[:new_h, :new_w]
         prob = cv2.resize(prob, (w, h))
 
         binary = (prob > self._bin_thresh).astype(np.uint8)
@@ -360,10 +363,13 @@ class DBNetDetector:
             if score < self._box_thresh:
                 continue
 
-            # Approximate unclip by scaling around box centre
-            pts = cv2.boxPoints(rect).astype(np.float32)
-            centre = pts.mean(axis=0)
-            expanded = centre + (pts - centre) * self._unclip_ratio
+            # Preserve the existing short-side expansion without making the
+            # horizontal margin grow with sentence length.
+            # ponytail: rectangular approximation; polygon offsets if curved text is needed.
+            padding = min(bw, bh) * (self._unclip_ratio - 1) / 2
+            expanded = cv2.boxPoints((
+                rect[0], (bw + 2 * padding, bh + 2 * padding), rect[2],
+            )).astype(np.float32)
 
             boxes.append(TextBox(points=expanded, confidence=score))
         return boxes
@@ -1111,7 +1117,7 @@ def _classify_region(
 
     if cy > h * 0.50 and width_ratio > 0.15:
         return "subtitle", f"wide bottom text in {zone}", True
-    if cy < h * 0.30 and width_ratio > 0.15:
+    if cy < h * 0.30:
         persistent = (
             presence_fraction is not None
             and presence_fraction >= _PERSISTENT_OVERLAY_FRACTION
@@ -1123,8 +1129,10 @@ def _classify_region(
         if persistent and not appearance_changed:
             if zone.startswith("top-right"):
                 return "logo", f"persistent top-right overlay in {zone}", False
-            return "watermark", f"persistent top text overlay in {zone}", False
-        return "subtitle", f"transient wide top text in {zone}", True
+            if width_ratio > 0.15:
+                return "watermark", f"persistent top text overlay in {zone}", False
+        if width_ratio > 0.15:
+            return "subtitle", f"transient wide top text in {zone}", True
 
     # Wide thin text strip below top 25% → likely subtitle regardless of vertical position
     if width_ratio > 0.40 and height_ratio < 0.08 and cy > h * 0.25:
@@ -1522,6 +1530,7 @@ def refine_temporal_presence(
                             f"keeping frame: {exc}"
                         )
                         boxes = []
+                    result.sampled_frame_boxes[frame_index] = boxes
                 for candidate in active:
                     if any(
                         _box_overlaps_bbox(

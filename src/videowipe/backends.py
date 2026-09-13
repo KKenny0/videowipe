@@ -88,8 +88,12 @@ class TorchBackend(InpaintBackend):
         self.model.load_state_dict(data["netG"])
         self.model.eval()
         self._torch = torch
+        self._weight_sha256 = self.benchmark_metadata()["weight_sha256"]
 
     def benchmark_metadata(self) -> dict:
+        if hasattr(self, "_weight_sha256"):
+            return {"device": str(self.device), "torch": self._torch.__version__,
+                    "threads": self._torch.get_num_threads(), "weight_sha256": self._weight_sha256}
         digest = hashlib.sha256()
         with open(self.weight_path, "rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 20), b""):
@@ -184,6 +188,19 @@ class ONNXBackend(InpaintBackend):
         self._enc_name = self.encoder_session.get_inputs()[0].name
         self._trans_name = self.transformer_session.get_inputs()[0].name
         self._dec_name = self.decoder_session.get_inputs()[0].name
+        self._weight_sha256 = {}
+        for path in required:
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            self._weight_sha256[os.path.basename(path)] = digest.hexdigest()
+        self._runtime_version = ort.__version__
+
+    def benchmark_metadata(self) -> dict:
+        return {"device": self.encoder_session.get_providers(),
+                "onnxruntime": self._runtime_version,
+                "weight_sha256": dict(self._weight_sha256)}
 
     def encode(self, tensor: np.ndarray) -> np.ndarray:
         return self.encoder_session.run(None, {self._enc_name: tensor})[0]

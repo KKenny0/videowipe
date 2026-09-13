@@ -540,7 +540,7 @@ def test_validate_rejects_wrong_kind():
 
 def test_validate_rejects_wrong_schema_version():
     plan = _valid_plan()
-    plan.schema_version = 2
+    plan.schema_version = 4
     with pytest.raises(InvalidInputError, match="schema_version"):
         validate_plan(plan)
 

@@ -8,6 +8,8 @@ this inpainter, not a public contract.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
+from pathlib import Path
 import os
 import subprocess
 import tempfile
@@ -200,6 +202,23 @@ class STTNInpainter:
                 "failed to find subtitles. Try providing a mask manually with -m."
             )
 
+        cache = None
+        if job.prediction_cache_dir is not None:
+            from videowipe.inpainters.prediction_cache import PredictionCache
+            from videowipe.plan import _sha256_file
+            runtime = self.backend.benchmark_metadata()
+            implementation = hashlib.sha256()
+            package = Path(__file__).resolve().parents[1]
+            for name in ('inpainters/sttn.py', 'backends.py', 'models/sttn.py', 'core/spectral_norm.py'):
+                implementation.update((package / name).read_bytes())
+            identity = dict(runtime, source_sha256=_sha256_file(job.video_path),
+                            source_size=[ori_w, ori_h], input_size=[w, h],
+                            backend=type(self.backend).__name__,
+                            precision='float16-autocast' if str(runtime['device']).startswith('cuda') else 'float32',
+                            ref_length=self.ref_length, neighbor_stride=self.neighbor_stride,
+                            implementation_sha256=implementation.hexdigest())
+            cache = PredictionCache(job.prediction_cache_dir, identity)
+        prediction_s = composition_s = 0.0
         output_reader = None
 
         ffmpeg_cmd = [
@@ -283,6 +302,16 @@ class STTNInpainter:
                                 if k not in active_modes and np.any(alpha[top:bottom] != 0):
                                     active_modes.add(k)
 
+                    prediction_started = time.monotonic()
+                    comps = {}
+                    keys = {}
+                    if cache is not None:
+                        for k in active_modes:
+                            keys[k] = cache.key(start_f, end_f, *mode[k])
+                            cached = cache.read(keys[k], end_f - start_f)
+                            if cached is not None:
+                                comps[k] = cached
+                    missing_modes = active_modes - comps.keys()
                     frames_hr = [] if output_reader is None else None
                     frames = {k: [] for k in range(len(mode))}
 
@@ -295,7 +324,7 @@ class STTNInpainter:
                             )
                         if frames_hr is not None:
                             frames_hr.append(image)
-                        for k in active_modes:
+                        for k in missing_modes:
                             from_h, to_h = mode[k]
                             frames[k].append(cv2.resize(
                                 image[from_h:to_h], (w, h),
@@ -311,7 +340,15 @@ class STTNInpainter:
                         for k in range(len(mode))
                         if frames[k]
                     }
-                    comps = {k: futures[k].result() for k in futures}
+                    for k, future in futures.items():
+                        comps[k] = future.result()
+                        if cache is not None:
+                            cache.write(keys[k], comps[k])
+                    prediction_s += time.monotonic() - prediction_started
+                    if cache is not None and job.phase_progress is not None:
+                        job.phase_progress('predict', min(end_f, last) - first, last - first,
+                                           f'hits={cache.hits};misses={cache.misses}')
+                    composition_started = time.monotonic()
 
                     for j in range(end_f - start_f):
                         if output_reader is not None:
@@ -332,7 +369,7 @@ class STTNInpainter:
                             per_frame = segment_masks[start_f + j]
                         frame_comps = []
                         for k in range(len(mode)):
-                            if comps.get(k) and j < len(comps[k]):
+                            if comps.get(k) and j < len(comps[k]) and comps[k][j] is not None:
                                 mode_height = mode[k][1] - mode[k][0]
                                 comp = cv2.resize(
                                     comps[k][j], (ori_w, mode_height),
@@ -353,14 +390,27 @@ class STTNInpainter:
                             frame = np.vstack([frame_ori, frame])
                         pipe.stdin.write(frame.tobytes())
 
-                    if job.progress is not None:
+                    composition_s += time.monotonic() - composition_started
+                    if job.phase_progress is not None:
+                        job.phase_progress("compose" if cache is not None else "inpaint", min(end_f, last) - first,
+                                           last - first, f"bands={len(active_modes)}")
+                    elif job.progress is not None:
                         job.progress(min(end_f, last) - first, last - first)
 
+            if job.phase_progress is not None:
+                job.phase_progress("encode", 0, 1, None)
+            encoding_started = time.monotonic()
             pipe.stdin.close()
             stdin_closed = True
             pipe.wait()
 
             if isinstance(job.metrics, dict):
+                job.metrics.update(prediction_s=round(prediction_s, 4),
+                                   composition_s=round(composition_s, 4),
+                                   encoding_finalize_s=round(time.monotonic() - encoding_started, 4))
+                if cache is not None:
+                    job.metrics.update(prediction_hits=cache.hits, prediction_misses=cache.misses,
+                                       prediction_corrupt=cache.corrupt, prediction_writes=cache.writes)
                 job.metrics["inpainting_s"] = round(
                     time.monotonic() - t_inpaint_start, 3
                 )
@@ -386,6 +436,8 @@ class STTNInpainter:
                 f"{stderr}"
             )
         stderr_file.close()
+        if job.phase_progress is not None:
+            job.phase_progress("encode", 1, 1, None)
         print(f"Saved to {video_out_path}")
         return InpaintOutcome(
             output_path=video_out_path,

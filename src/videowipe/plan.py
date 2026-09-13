@@ -1,22 +1,11 @@
-"""WipePlan v1: serializable, reviewable, deterministically-executable plan.
+"""Serializable cleanup plans with deterministic spatial and temporal masks.
 
-A :class:`WipePlan` is the intermediate representation between detection and
-inpainting. Each detected candidate becomes an addressable *track* with:
-
-- an explicit ``remove`` | ``keep`` action,
-- a stable spatial mask (stored in a sidecar NPZ, not the JSON),
-- half-open temporal ``[start, end)`` segments saying when it is active.
-
-Schema v1 is a *screen-overlay* model: one stable spatial mask per track plus
-time intervals. It is not a general motion-object tracker — there is no
-per-frame mask propagation. That is the minimum model the current failure
-facts require: it closes subtitle-gap false erasures and lets persistent top
-overlays (logos, credits) be flagged ``keep`` instead of misclassified as
-subtitles.
-
-The JSON stays agent-readable; precise binary masks live in a sidecar
-``wipe_plan_masks.npz``. The NPZ holds only raw ``uint8`` arrays and is loaded
-with ``allow_pickle=False``; nothing picklable is ever written.
+V1 stores a static mask and active intervals per target. V2 adds protection.
+V3 optionally records local subtitle rectangles in disjoint half-open frame
+intervals; missing spatial evidence means no removal, never a static fallback.
+The NPZ stores the exact spatial union for overview/crop selection. Execution
+rasterizes the active rectangles, then feathers and applies protection.
+Legacy v1/v2 plans preserve their original behavior.
 """
 from __future__ import annotations
 
@@ -24,7 +13,9 @@ import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping, Sequence
+from bisect import bisect_right
 from dataclasses import dataclass, field
+from copy import deepcopy
 from functools import lru_cache
 from typing import Any
 
@@ -38,7 +29,7 @@ PLAN_KIND = "wipe_plan"
 JSON_FILENAME = "wipe_plan.json"
 MASK_FILENAME = "wipe_plan_masks.npz"
 
-_ACTION_VALUES = ("remove", "keep")
+_ACTION_VALUES = ("remove", "keep", "protect")
 _TOP_REGION_FRACTION = 0.30      # mirrors detect._classify_region's top-subtitle threshold
 _PERSISTENT_PRESENCE = 0.80     # plan Rule 6: persistent-overlay safety default
 _COARSE_GAP_SECONDS = 2.0       # plan Rule 8: temporal-coarseness warning threshold
@@ -137,7 +128,9 @@ class Segment:
 
     @classmethod
     def from_value(cls, value) -> Segment:
-        return cls(start=int(value[0]), end=int(value[1]))
+        if not isinstance(value, (list, tuple)) or len(value) != 2 or any(type(v) is not int for v in value):
+            raise InvalidInputError("segments must contain integer frame pairs")
+        return cls(start=value[0], end=value[1])
 
 
 @dataclass
@@ -157,8 +150,11 @@ class Track:
     # In-memory only; never serialized to JSON. Loaded from the sidecar NPZ.
     mask: np.ndarray | None = field(default=None, repr=False)
 
+    spatial_segments: list[dict] | None = field(default=None, repr=False)
+
     def to_dict(self) -> dict:
         return {
+            **({"spatial_segments": deepcopy(self.spatial_segments)} if self.spatial_segments is not None else {}),
             "id": self.id,
             "type": self.type,
             "label": self.label,
@@ -187,6 +183,7 @@ class Track:
             decision_reason=str(d["decision_reason"]),
             segments=[Segment.from_value(s) for s in d["segments"]],
             mask_key=str(d["mask_key"]),
+            spatial_segments=d.get("spatial_segments"),
         )
 
     @property
@@ -258,7 +255,7 @@ class WipePlan:
     def from_dict(cls, d: Mapping[str, Any]) -> WipePlan:
         return cls(
             kind=str(d["kind"]),
-            schema_version=int(d["schema_version"]),
+            schema_version=d["schema_version"],
             source=Source.from_dict(d["source"]),
             request=dict(d.get("request", {})),
             temporal_resolution=TemporalResolution.from_dict(d["temporal_resolution"]),
@@ -563,9 +560,9 @@ def validate_plan(
     """Raise :class:`InvalidInputError` on any structural violation."""
     if plan.kind != PLAN_KIND:
         raise InvalidInputError(f"plan.kind must be {PLAN_KIND!r}, got {plan.kind!r}")
-    if plan.schema_version != SCHEMA_VERSION:
+    if type(plan.schema_version) is not int or plan.schema_version not in (1, 2, 3):
         raise InvalidInputError(
-            f"unsupported schema_version {plan.schema_version} (expected {SCHEMA_VERSION})"
+            f"unsupported schema_version {plan.schema_version} (expected 1, 2 or 3)"
         )
     if plan.mask_asset.filename != MASK_FILENAME:
         raise InvalidInputError(
@@ -603,6 +600,10 @@ def validate_plan(
             raise InvalidInputError(
                 f"track {t.id}: action {t.action!r} not in {_ACTION_VALUES}"
             )
+        if t.action == "protect" and plan.schema_version < 2:
+            raise InvalidInputError("protect tracks require schema_version 2")
+        if t.action == "protect" and (t.mask is not None and not np.any(t.mask)):
+            raise InvalidInputError(f"track {t.id}: protect mask must be non-empty")
         if len(t.bbox) != 4 or any(
             isinstance(v, (bool, np.bool_))
             or not isinstance(v, (int, np.integer))
@@ -621,7 +622,7 @@ def validate_plan(
         # Execution requires a precise mask on every remove track. A plan read
         # metadata-only (load_masks=False) may carry mask=None for inspection,
         # but it cannot be executed.
-        if require_remove and t.action == "remove" and t.mask is None:
+        if require_remove and t.action in ("remove", "protect") and t.mask is None:
             raise InvalidInputError(
                 f"track {t.id}: remove track has no precise mask; cannot execute"
             )
@@ -644,9 +645,36 @@ def validate_plan(
                     f"track {t.id}: mask dtype {arr.dtype} must be integer/bool"
                 )
 
-        if t.action == "remove" and not t.segments:
+        if t.spatial_segments is not None:
+            if plan.schema_version != 3 or t.action == "protect":
+                raise InvalidInputError("spatial segments require schema_version 3 and a non-protect track")
+            if not isinstance(t.spatial_segments, list) or len(t.spatial_segments) > frame_count:
+                raise InvalidInputError("invalid spatial segments")
+            end = 0
+            for row in t.spatial_segments:
+                if not isinstance(row, dict) or set(row) != {"start", "end", "boxes"}:
+                    raise InvalidInputError("invalid spatial segment fields")
+                if (type(row["start"]) is not int or type(row["end"]) is not int
+                        or not end <= row["start"] < row["end"] <= frame_count):
+                    raise InvalidInputError("spatial segments must be ordered, disjoint frame intervals")
+                end = row["end"]
+                if not isinstance(row["boxes"], list) or not 1 <= len(row["boxes"]) <= 64:
+                    raise InvalidInputError("spatial segment requires 1-64 boxes")
+                for box in row["boxes"]:
+                    if (not isinstance(box, (list, tuple)) or len(box) != 4
+                            or any(type(v) is not int for v in box)
+                            or not 0 <= box[0] <= box[2] < width
+                            or not 0 <= box[1] <= box[3] < height):
+                        raise InvalidInputError("spatial box exceeds source or has invalid coordinates")
+            if t.mask is not None and not np.array_equal(
+                np.asarray(t.mask).reshape(height, width) > 0,
+                _spatial_mask(t, (height, width)) > 0,
+            ):
+                raise InvalidInputError("spatial union disagrees with track mask")
+
+        if t.action in ("remove", "protect") and not t.segments:
             raise InvalidInputError(
-                f"track {t.id}: remove track must have at least one segment"
+                f"track {t.id}: {t.action} track must have at least one segment"
             )
         prev_end = 0
         for seg in t.segments:
@@ -759,25 +787,43 @@ def load_wipe_plan(
     return plan
 
 
+def _spatial_mask(track, shape, frame_index=None, *, active_only=False):
+    mask = np.zeros(shape, dtype=np.uint8)
+    for row in track.spatial_segments:
+        if frame_index is not None and not row["start"] <= frame_index < row["end"]:
+            continue
+        if active_only and not any(s.start < row["end"] and s.end > row["start"] for s in track.segments):
+            continue
+        for x1, y1, x2, y2 in row["boxes"]:
+            mask[y1:y2+1, x1:x2+1] = 1
+    return mask
+
+
 def is_temporal(plan: WipePlan) -> bool:
-    """True if any remove track is not active on the entire video.
+    """True if any remove or protect track is not active on the entire video.
 
     File-based inpainters (external command, ProPainter) consume one static
     mask PNG and cannot honor temporal segments; the engine uses this to
     reject such plans instead of silently flattening them.
     """
     frame_count = plan.source.frame_count
-    for t in plan.remove_tracks:
+    for t in plan.tracks:
+        if t.action == "keep":
+            continue
+        if t.spatial_segments is not None:
+            return True
         if not (len(t.segments) == 1 and t.segments[0] == Segment(0, frame_count)):
             return True
     return False
 
 
 def _execution_tracks(plan: WipePlan) -> list[tuple[Track, np.ndarray]]:
-    """Return remove tracks with precise masks normalized to binary ``uint8``."""
+    """Return remove/protect tracks with precise masks normalized to binary ``uint8``."""
     validate_plan(plan)
     prepared = []
-    for track in plan.remove_tracks:
+    for track in plan.tracks:
+        if track.action == "keep":
+            continue
         if track.mask is None:
             raise InvalidInputError(
                 f"track {track.id}: remove track has no precise mask; cannot execute"
@@ -785,7 +831,8 @@ def _execution_tracks(plan: WipePlan) -> list[tuple[Track, np.ndarray]]:
         arr = np.asarray(track.mask)
         if arr.ndim == 3:
             arr = arr[:, :, 0]
-        normalized = (arr > 0).astype(np.uint8)
+        normalized = (_spatial_mask(track, (plan.source.height, plan.source.width), active_only=True)
+                      if track.spatial_segments is not None else (arr > 0).astype(np.uint8))
         prepared.append((track, normalized))
     return prepared
 
@@ -795,15 +842,23 @@ def _project_mask(
     active_tracks: tuple[int, ...],
     frame_shape: tuple[int, int],
     feather_radius: int = 0,
+    frame_index: int | None = None,
 ) -> np.ndarray:
     mask = np.zeros(frame_shape, dtype=np.uint8)
     for index in active_tracks:
-        np.maximum(mask, prepared[index][1], out=mask)
+        if prepared[index][0].action == "remove":
+            track, spatial = prepared[index]
+            if frame_index is not None and track.spatial_segments is not None:
+                spatial = _spatial_mask(track, frame_shape, frame_index)
+            np.maximum(mask, spatial, out=mask)
     if feather_radius > 0 and mask.any():
         flat = mask.astype(np.float32)
         kernel = max(3, feather_radius * 2 + 1)
         blurred = cv2.GaussianBlur(flat, (kernel, kernel), feather_radius / 2.0)
-        return np.clip(np.where(flat >= 1.0, 1.0, blurred), 0.0, 1.0)
+        mask = np.clip(np.where(flat >= 1.0, 1.0, blurred), 0.0, 1.0)
+    for index in active_tracks:
+        if prepared[index][0].action == "protect":
+            mask[prepared[index][1] != 0] = 0
     return mask
 
 
@@ -833,23 +888,35 @@ def execution_masks(
                 f"track {track.id}: remove track mask is empty; cannot execute"
             )
     frame_shape = (plan.source.height, plan.source.width)
-    all_tracks = tuple(range(len(prepared)))
-    static_mask = _project_mask(
-        prepared, all_tracks, frame_shape, feather_radius
-    )[:, :, None]
+    static_mask = _union_projection(prepared, frame_shape, feather_radius)[:, :, None]
     if not prepared or not is_temporal(plan):
         return static_mask, None
 
     @lru_cache(maxsize=1)
-    def mask_for(active_tracks: tuple[int, ...]) -> np.ndarray:
+    def mask_for(active_tracks: tuple[int, ...], spatial_frame: int | None) -> np.ndarray:
         mask = _project_mask(
-            prepared, active_tracks, frame_shape, feather_radius
+            prepared, active_tracks, frame_shape, feather_radius, spatial_frame
         )
         mask.setflags(write=False)
         return mask
 
+    spatial_starts = {i: [row["start"] for row in track.spatial_segments]
+                      for i, (track, _) in enumerate(prepared) if track.spatial_segments is not None}
+
     def frame_mask(frame_index: int) -> np.ndarray:
-        return mask_for(_active_tracks(prepared, frame_index))
+        active = _active_tracks(prepared, frame_index)
+        boundary = None
+        for i in active:
+            if i not in spatial_starts:
+                continue
+            rows = prepared[i][0].spatial_segments
+            index = bisect_right(spatial_starts[i], frame_index) - 1
+            changed = (rows[index]["start"] if frame_index < rows[index]["end"]
+                       else rows[index]["end"]) if index >= 0 else 0
+            boundary = max(boundary or 0, changed)
+        # Every frame between joint spatial boundaries has exactly the same
+        # alpha. Reuse it instead of blurring a full frame on every video frame.
+        return mask_for(active, boundary)
 
     # Private producer guarantee: these cached results never change after return.
     frame_mask._videowipe_stable_masks = True
@@ -859,7 +926,7 @@ def execution_masks(
 def predicted_mask_at(plan: WipePlan, frame_index: int) -> np.ndarray:
     """Boolean ``(H, W)`` remove-prediction mask at *frame_index*.
 
-    Union of every remove track whose segments contain *frame_index*. This is
+    Union of active remove masks minus active protection masks. This is
     the per-frame prediction a temporal plan makes; the fact-baseline evaluator
     uses it instead of replaying one static mask on every annotated frame.
     """
@@ -868,14 +935,26 @@ def predicted_mask_at(plan: WipePlan, frame_index: int) -> np.ndarray:
         prepared,
         _active_tracks(prepared, frame_index),
         (plan.source.height, plan.source.width),
+        frame_index=frame_index,
     ).astype(bool)
+
+
+def _union_projection(prepared, frame_shape, feather_radius=0):
+    # Without protection the legacy union is exact and avoids repeated blurs.
+    if not any(track.action == "protect" for track, _ in prepared):
+        return _project_mask(prepared, tuple(range(len(prepared))), frame_shape, feather_radius)
+    result = np.zeros(frame_shape, dtype=np.float32 if feather_radius else np.uint8)
+    boundaries = sorted({s.start for track, _ in prepared for s in track.segments}
+                        | {s.end for track, _ in prepared for s in track.segments})
+    boundaries = sorted(set(boundaries) | {row[key] for track, _ in prepared
+                         for row in (track.spatial_segments or []) for key in ("start", "end")})
+    for frame in boundaries[:-1]:
+        np.maximum(result, _project_mask(prepared, _active_tracks(prepared, frame),
+                                        frame_shape, feather_radius, frame), out=result)
+    return result
 
 
 def remove_union_mask(plan: WipePlan) -> np.ndarray:
-    """Boolean ``(H, W)`` spatial union of all remove tracks (time-independent)."""
-    prepared = _execution_tracks(plan)
-    return _project_mask(
-        prepared,
-        tuple(range(len(prepared))),
-        (plan.source.height, plan.source.width),
-    ).astype(bool)
+    """Pixels possibly removed at any time, respecting time-limited protection."""
+    return _union_projection(_execution_tracks(plan),
+                             (plan.source.height, plan.source.width)).astype(bool)

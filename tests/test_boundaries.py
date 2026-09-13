@@ -409,6 +409,7 @@ def test_onnx_backend_filters_unavailable_providers(tmp_path, monkeypatch):
             "CoreMLExecutionProvider", "CPUExecutionProvider",
         ],
         InferenceSession=FakeSession,
+        __version__="test",
     )
     monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
     base = tmp_path / "sttn"

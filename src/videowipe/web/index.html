@@ -30,6 +30,8 @@
     .brand { font-size:21px; font-weight:780; letter-spacing:-.6px; }
     .brand span { font-size:12px; color:var(--muted); font-weight:400; letter-spacing:0; margin-left:15px; border-left:1px solid var(--line); padding-left:15px; }
     .topbar .spacer { flex:1; }
+    .topbar button { white-space:nowrap; }
+    #saveState:empty { display:none; }
     .quiet,.ghost { background:transparent; border:1px solid var(--line); padding:0 13px; height:36px; display:inline-flex; align-items:center; justify-content:center; gap:7px; text-decoration:none; color:var(--ink); }
     .quiet:hover,.ghost:hover { background:var(--soft); }
     .subtle { border:0; background:transparent; color:var(--muted); padding:8px; }
@@ -40,7 +42,7 @@
     .filemeta { color:var(--muted); font:11px/1.6 var(--mono); margin:3px 0 0; }
     .status { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--green); flex:none; }
     .status::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
-    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 304px; grid-template-areas:"viewer targets" "actions targets"; gap:16px; align-items:start; }
+    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 304px; grid-template-areas:"viewer targets" "actions targets" "review targets"; gap:16px; align-items:start; }
     .viewer { grid-area:viewer; background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
     .stage { position:relative; width:min(100%,calc(36vh * var(--ratio,1.777778))); margin:auto; aspect-ratio:var(--ratio,1.777778); display:flex; justify-content:center; align-items:center; background:var(--stage); overflow:hidden; }
     .stage.is-comparison { width:min(100%,calc(36vh * var(--ratio,.888889))); aspect-ratio:var(--ratio,.888889); }
@@ -48,6 +50,23 @@
     .stage .view-label { position:absolute; top:14px; left:14px; padding:4px 9px; border-radius:4px; color:#fff; background:#171b1bd9; font-size:11px; pointer-events:none; }
     .compare-labels { position:absolute; inset:0; pointer-events:none; display:grid; grid-template-rows:1fr 1fr; }
     .compare-labels span { align-self:start; justify-self:start; margin:10px 14px; padding:3px 7px; font-size:10px; color:#fff; background:#121714cf; border-radius:3px; }
+    #maskCanvas,#protectCanvas { position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none; }
+    #maskCanvas { opacity:.55; }
+    #protectCanvas.drawing { pointer-events:auto;cursor:crosshair;touch-action:none; }
+    .revision-tools { display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:12px 0; }
+    .revision-tools label { font-size:12px; }
+    .segment-edit { width:100%;min-height:70px;box-sizing:border-box;font:12px var(--mono);color:var(--ink);background:var(--paper);border:1px solid var(--line);padding:8px; }
+    .protection-row,.review-window { border-top:1px solid var(--line);padding:10px 0; }
+    #resultReview { grid-area:review;display:block; }
+    #resultReview .hint { margin:6px 0 12px; }
+    #revisionTools { padding:0 16px; }
+    #protectionDetails { margin:14px 16px; }
+    .editor label[for="segmentsInput"] { display:block; }
+    .revision-tools button,.review-window button,#applySegments,#addProtect,.protection-row button { border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font:inherit;font-size:12px;min-height:32px;padding:6px 9px; }
+    .review-window button:first-child { text-align:left; }
+    .protection-row label { display:block;font-size:11px;color:var(--muted);margin:8px 0; }
+    .protection-row input { width:100%;box-sizing:border-box; }
+    .review-window button { margin:4px 8px 4px 0; }
     #overlays { position:absolute; inset:0; pointer-events:none; }
     .target-box { position:absolute; border:1.5px solid #a8e4ce; background:#65c7a210; border-radius:3px; pointer-events:auto; padding:0; min-height:16px; transition:border-color .12s; }
     .target-box[data-active="true"] { border-color:var(--accent); border-width:2px; background:#ff6b3510; }
@@ -132,7 +151,7 @@
       .prototype label { margin-left:auto; gap:2px; }
       .prototype select { font-size:11px; max-width:166px; }
       .shell { padding:0 12px 20px; }
-      .topbar { height:66px; gap:8px; }
+      .topbar { min-height:66px; height:auto; padding:8px 0; gap:8px; flex-wrap:wrap; }
       .brand { font-size:19px; }
       .brand span { display:none; }
       .topbar .quiet { height:40px; padding:0 9px; font-size:11px; }
@@ -142,7 +161,7 @@
       h1 { font-size:14px; max-width:225px; }
       .status { font-size:10px; margin-top:3px; }
       .filemeta { font-size:10px; }
-      .workspace { grid-template-columns:1fr; grid-template-areas:"viewer" "actions" "targets"; gap:12px; }
+      .workspace { grid-template-columns:1fr; grid-template-areas:"viewer" "actions" "review" "targets"; gap:12px; }
       .stage { width:100%; }
       .stage.is-comparison { width:min(100%,calc(34vh * var(--ratio,.888889))); }
       .playbar { gap:7px; padding:5px 10px; flex-wrap:wrap; }
@@ -226,6 +245,9 @@
       <svg class="logo" viewBox="0 0 64 64" fill="none" aria-hidden="true"><rect x="7" y="10" width="50" height="44" rx="4" stroke="currentColor" stroke-width="1.6"></rect><path d="M17 10 L23 50 L32 26 L41 50 L47 10" stroke="#FF6B35" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
       <div class="brand">VideoWipe<span>本地视频清理</span></div>
       <div class="spacer"></div>
+      <button class="quiet" id="cancel" type="button" hidden>取消处理</button>
+      <button class="quiet" id="retry" type="button" hidden>重试</button>
+      <span id="saveState" class="hint" aria-live="polite"></span>
       <button class="quiet" id="restart" type="button">换一个视频</button>
       <button class="quiet" id="theme" type="button" aria-label="切换明暗配色">深色</button>
     </header>
@@ -247,6 +269,7 @@
           <video id="video" preload="metadata" playsinline aria-label="视频预览"></video>
           <img id="fallbackFrame" alt="目标对应的原片画面" hidden><span class="view-label" id="viewLabel">原片</span>
           <div class="compare-labels" id="compareLabels" hidden><span>原片</span><span>清理后</span></div>
+          <canvas id="maskCanvas" hidden aria-label="实际处理范围"></canvas><canvas id="protectCanvas" hidden aria-label="拖动画出保护区域"></canvas>
           <div id="overlays"></div>
           <div class="stage-message" id="busy" hidden><strong id="busyTitle">正在检测目标</strong><p id="busyHint">正在准备视频</p><progress id="progress" max="100" value="0" aria-label="当前阶段进度"></progress></div>
         </div>
@@ -256,6 +279,7 @@
           <div class="view-buttons" id="viewButtons" aria-label="画面来源"><button type="button" data-view="source" aria-pressed="true">原片</button><button type="button" data-view="trial" aria-pressed="false" disabled>试擦对比</button><button type="button" data-view="clean" aria-pressed="false" hidden>结果</button></div>
           <button class="play" id="mute" type="button" aria-label="静音">♪</button>
         </div>
+        <div class="revision-tools" id="revisionTools" hidden><label title="自动字幕范围随时间变化；手工框选会替换自动范围。"><input id="showMask" type="checkbox"> 实际处理范围</label><span id="maskState" role="status"></span><button id="undoReview" class="link-button" type="button">撤销上次编辑</button><button id="drawProtect" class="link-button" type="button">保护这里</button></div>
         <div class="timeline">
           <div class="timeline-top"><span id="rangeLabel">拖动时间轴查看原片</span><span id="windowLabel"></span></div>
           <div class="ruler"><div class="ruler-track" id="presenceTrack"></div><div class="trial-window" id="trialWindow" hidden></div><input id="seek" type="range" min="0" max="1" step="0.04" value="0" aria-label="播放位置（秒）"></div>
@@ -263,18 +287,21 @@
         </div>
       </section>
       <section class="actions" aria-label="清理操作">
-        <div class="action-copy"><strong id="actionTitle">先确认要清理的内容</strong><p id="actionHint">视频已载入，检测后可以先试擦一小段。</p></div>
+        <div class="action-copy"><strong id="actionTitle">先确认要清理的内容</strong><p id="actionHint">视频已载入，检测后可以先试擦一小段。</p><p id="reviewProgress" hidden></p></div>
         <div class="buttons"><button class="primary" id="primary" type="button">检测目标 <span aria-hidden="true">→</span></button><a id="download" class="primary" hidden>下载成片</a></div>
         <div class="action-extra" id="extra" hidden>
           <details id="timeDetails"><summary>调整试擦时间</summary><div class="time-controls"><label for="start">从 <input id="start" type="number" min="0" step="0.04" value="0" required> 秒</label><label for="duration">时长 <select id="duration"><option value="3">3 秒</option><option value="5">5 秒</option></select></label><button id="recommend" class="link-button" type="button">用推荐片段</button></div></details>
           <button class="link-button" id="direct" type="button">直接处理全片</button>
         </div>
       </section>
+      <section id="resultReview" class="actions" hidden aria-label="成片复查"><h2>建议复查位置</h2><p class="hint">按生效边界定位，不代表发现了画面异常。</p><div class="revision-tools"><button id="markIssue" type="button">标记当前位置有问题</button><button id="stopLoop" type="button">停止循环</button><label>展开目标边界 <select id="reviewTrack"><option value="">建议位置</option></select></label></div><div id="reviewWindows"></div><button id="clearPredictions" class="link-button" type="button">清除本任务预测缓存</button></section>
       <aside class="targets" aria-label="检测目标">
         <div class="section-head"><h2>清理目标</h2><span id="targetCount">等待检测</span></div>
         <p class="summary" id="selectionSummary">你可以先播放视频，再决定清理什么。</p>
         <div id="targetList"><div class="empty-targets">检测后，目标会以画面和时间呈现。<br>勾选需要移除的内容。</div></div>
-        <div class="editor" id="editor" hidden><div class="editor-heading"><strong id="editorTitle">调整区域框</strong><button id="resetBox" type="button">恢复原框</button></div><label for="boxWidth">宽度<input id="boxWidth" type="range" min="10" max="95" step="1"><output id="widthValue"></output></label><label for="boxY">位置<input id="boxY" type="range" min="2" max="88" step="1"><output id="yValue"></output></label><p class="hint" style="margin:8px 0 0">可拖动区域框和边缘，也可用方向键微调。调整后需要重新试擦。</p></div>
+        <div class="editor" id="editor" hidden><div class="editor-heading"><strong id="editorTitle">调整区域框</strong><button id="resetBox" type="button">恢复原框</button></div><label for="boxWidth">宽度<input id="boxWidth" type="range" min="10" max="95" step="1"><output id="widthValue"></output></label><label for="boxY">位置<input id="boxY" type="range" min="2" max="88" step="1"><output id="yValue"></output></label><label for="segmentsInput">生效时间（秒，每行：开始, 结束）</label><textarea id="segmentsInput" class="segment-edit"></textarea><button id="applySegments" type="button">保存时间</button><button id="resetSegments" class="link-button" type="button">恢复检测时间</button><p class="hint" style="margin:8px 0 0">可拖动区域框和边缘，也可用方向键微调。调整后需要重新试擦。</p></div>
+        <details id="protectionDetails" hidden><summary>保护区域 <span id="protectionCount"></span></summary><p class="hint">保护像素始终来自原片，优先于移除。可在画面拖动添加，也可用下方坐标编辑。</p><button id="addProtect" type="button">添加中央保护区</button><div id="protectionList"></div></details>
+        <details id="previousReview" hidden><summary>上次检测的审阅草稿（仅供核对）</summary><div id="previousReviewItems"></div></details>
         <p class="hint" id="targetHint" hidden>点目标查看它出现的画面。未勾选的目标仍可查看。</p>
       </aside>
     </div>
@@ -285,16 +312,23 @@
     const $ = id => document.getElementById(id);
     const video = $("video");
     const jobStorageKey = "videowipe.currentJobId";
-    const busyStates = new Set(["restoring", "uploading", "pending", "trial_running", "running"]);
+    const busyStates = new Set(["restoring", "uploading", "pending", "trial_running", "running", "cancelling"]);
     let selectedFile = null, localURL = null, currentJobId = null, stream = null;
     let source = null, tracks = [], selectedIds = [], bboxDrafts = {}, activeTrackId = null;
     let state = "restoring", view = "source", trial = null, manualTime = false, mediaEpoch = 0, seeking = false;
     let sourceSupported = true, reviewLoaded = false;
+    let reviewRevision=0, finalPlanReady=false, saveQueue=Promise.resolve(), saveError=null, saving=0, saveGeneration=0;
+    let previewLoading=false, keyboardSave=null;
+    let segmentDrafts={}, protections=[], undoStack=[], savedReview=null, resultRevision=null, resultReviewRevision=null, loopWindow=null;
+    let maskEpoch=0, maskTimer=null, maskHasRemoval=true;
+    const playbackLease=crypto.randomUUID();
+    const canEdit=()=>reviewLoaded&&["pending","preview_ready","done"].includes(state);
     const evidenceImages = new Map();
     const fmt = (value, decimal=false) => { const t=Math.max(0,Number(value)||0); return String(Math.floor(t/60)).padStart(2,"0")+":"+(decimal?(t%60).toFixed(2).padStart(5,"0"):String(Math.floor(t%60)).padStart(2,"0")); };
     const duration = () => source ? source.frame_count / source.fps : 0;
     const busy = () => busyStates.has(state);
-    const selectedTracks = () => tracks.filter(t => selectedIds.includes(t.id));
+    const effectiveSegments = track => segmentDrafts[track.id] || track.segments;
+    const selectedTracks = () => tracks.filter(t => selectedIds.includes(t.id)).map(t=>({...t,segments:effectiveSegments(t)}));
     const position = () => video.currentTime + (view === "trial" && trial ? trial.start_seconds : 0);
     const effectiveBBox = track => bboxDrafts[track.id] || track.bbox;
     function trackName(track) {
@@ -308,15 +342,35 @@
     function showWarnings(warnings=[]) { if(warnings.length)notify("需留意："+warnings.join("；")); }
     function reviewRequest() {
       return {selected_ids:[...selectedIds], bbox_overrides:Object.fromEntries(Object.entries(bboxDrafts).filter(([id])=>selectedIds.includes(id))),
+        segment_overrides:Object.fromEntries(Object.entries(segmentDrafts).filter(([id])=>selectedIds.includes(id))), protections:structuredClone(protections),
         start_seconds:Number($("start").value), duration_seconds:Number($("duration").value)};
     }
     function signature(request) {
       return JSON.stringify([...(request.selected_ids || []).slice().sort(),
-        Object.entries(request.bbox_overrides || {}).sort(([a],[b])=>a.localeCompare(b)), request.start_seconds, request.duration_seconds]);
+        Object.entries(request.bbox_overrides || {}).sort(([a],[b])=>a.localeCompare(b)), Object.entries(request.segment_overrides||{}).sort(([a],[b])=>a.localeCompare(b)), request.protections||[], request.start_seconds, request.duration_seconds]);
     }
-    function saveReview() { if(currentJobId)storageSet(`videowipe.review.${currentJobId}`,JSON.stringify({...reviewRequest(),manualTime})); }
+    function saveReview(recordUndo=true) {
+      if(!currentJobId||!canEdit())return saveQueue;
+      const jobId=currentJobId, generation=saveGeneration, body=reviewRequest();
+      const overrides={selected_ids:body.selected_ids,bbox_overrides:body.bbox_overrides,segment_overrides:body.segment_overrides,protections:body.protections};
+      maskEpoch++;$("maskCanvas").hidden=true;if($("showMask").checked)$("maskState").textContent="正在更新范围…";
+      saving++;$("saveState").textContent="正在保存…";renderActions();
+      saveQueue=saveQueue.catch(()=>{}).then(async()=>{
+        try {
+          if(jobId!==currentJobId||generation!==saveGeneration)return;
+          const data=await request(`/jobs/${jobId}/review`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({expected_revision:reviewRevision,overrides})});
+          if(jobId!==currentJobId)return;if(recordUndo&&savedReview&&JSON.stringify(savedReview)!==JSON.stringify(overrides))undoStack.push(structuredClone(savedReview));savedReview=structuredClone(overrides);reviewRevision=data.review_revision;saveError=null;if(view==="clean")$("viewLabel").textContent=resultReviewRevision===reviewRevision?"清理结果":"上次结果 · 修改尚未导出";
+        } catch(error) {
+          if(jobId!==currentJobId)return;saveError=error;
+          if(error.status===409){saveGeneration++;reviewLoaded=false;await loadPreview(jobId);saveError=null;notify("另一页面已修改决定，已载入当前版本，请核对后继续。","error");}
+          else notify("审阅尚未保存："+error.message,"error");
+        } finally {saving--;if(jobId===currentJobId)$("saveState").textContent=saveError?"保存未完成":saving?"正在保存…":"已保存";renderActions();scheduleMask();}
+      });
+      return saveQueue;
+    }
+    async function flushReview() { await saveReview();if(saveError)throw saveError; }
     function validRange() {
-      if(!source||!$("start").value.trim()||!$("start").validity.valid)return false;
+      if(!maskHasRemoval||!source||!$("start").value.trim()||!$("start").validity.valid)return false;
       const first=Number($("start").value), last=Math.min(duration(),first+Number($("duration").value));
       return Number.isFinite(first)&&first>=0&&first<last&&selectedTracks().some(t=>(t.has_mask!==false||bboxDrafts[t.id])&&t.segments.some(([a,b])=>a<Math.ceil(last*source.fps)&&b>Math.floor(first*source.fps)));
     }
@@ -331,7 +385,7 @@
     }
     function invalidateTrial() {
       if(trial&&signature(trial.request)!==signature(reviewRequest())) { const at=position();trial=null;if(view==="trial")void setMedia("source",at); }
-      saveReview();renderActions();renderTimeline();
+      maskHasRemoval=true;scheduleMask();renderActions();renderTimeline();
     }
     function updateMeta() {
       if(!source)return;
@@ -344,10 +398,13 @@
       return new Promise((resolve,reject)=>{const done=error=>{clearTimeout(timer);video.removeEventListener(event,ok);video.removeEventListener("error",bad);error?reject(error):resolve();};const ok=()=>done();const bad=()=>done(new Error("此格式暂不能在浏览器预览"));const timer=setTimeout(()=>done(new Error("视频定位超时，请重试")),15000);video.addEventListener(event,ok,{once:true});video.addEventListener("error",bad,{once:true});});
     }
     async function setMedia(next, at=position()) {
-      const epoch=++mediaEpoch;video.pause();view=next;seeking=true;$("stage").classList.add("is-seeking");$("overlays").replaceChildren();
-      $("stage").classList.toggle("is-comparison",next==="trial");$("compareLabels").hidden=next!=="trial";$("viewLabel").hidden=next==="trial";$("viewLabel").textContent=next==="clean"?"清理结果":"原片";
+      const epoch=++mediaEpoch;
+      if(currentJobId){try{await postJson(`/jobs/${currentJobId}/playback`,{lease_id:playbackLease,trial_id:next==="trial"?trial.id:null});}catch(error){if(next==="trial"){notify(error.message,"error");return;}}}
+      if(epoch!==mediaEpoch)return;
+      video.pause();$("maskCanvas").hidden=true;view=next;seeking=true;$("stage").classList.add("is-seeking");$("overlays").replaceChildren();
+      $("stage").classList.toggle("is-comparison",next==="trial");$("compareLabels").hidden=next!=="trial";$("viewLabel").hidden=next==="trial";$("viewLabel").textContent=next==="clean"?(resultReviewRevision===reviewRevision?"清理结果":"上次结果 · 修改尚未导出"):"原片";
       $("fallbackFrame").hidden=true;updateMeta();renderActions();
-      const url=next==="trial"?`/jobs/${currentJobId}/trial-video?trial_id=${encodeURIComponent(trial.id)}`:next==="clean"?`/jobs/${currentJobId}/result-video`:localURL||`/jobs/${currentJobId}/source-video`;
+      const url=next==="trial"?`/jobs/${currentJobId}/trial-video?trial_id=${encodeURIComponent(trial.id)}`:next==="clean"?`/jobs/${currentJobId}/result-video?revision=${encodeURIComponent(resultRevision||"legacy")}`:localURL||`/jobs/${currentJobId}/source-video`;
       try {
         if(video.getAttribute("src")!==url){const loaded=mediaEvent("loadedmetadata");video.src=url;video.load();await loaded;}
         else if(video.readyState<1)await mediaEvent("loadedmetadata");
@@ -362,7 +419,7 @@
         if(epoch!==mediaEpoch)return;
         if(next==="source"){sourceSupported=false;notify(`${error.message}，仍可检测并使用目标画面查看。`);showEvidenceFrame();}
         else notify(error.message,"error");
-      } finally { if(epoch===mediaEpoch){seeking=false;$("stage").classList.remove("is-seeking");renderOverlays();renderActions();} }
+      } finally { if(epoch===mediaEpoch){seeking=false;$("stage").classList.remove("is-seeking");renderOverlays();renderActions();scheduleMask();} }
     }
     function showEvidenceFrame() {
       const track=tracks.find(t=>t.id===activeTrackId)||tracks[0];
@@ -370,10 +427,10 @@
     }
     function updatePlayback() {
       $("currentTime").textContent=fmt(position(),true);$("seek").value=position();
-      if(currentJobId&&view!=="trial"&&!seeking&&video.readyState>=2)storageSet(`videowipe.position.${currentJobId}`,String(position()));
+
     }
     function renderTimeline() {
-      $("presenceTrack").replaceChildren(); if(!source)return;
+      $("presenceTrack").replaceChildren(); if(!source){$("trialWindow").hidden=true;$("windowLabel").textContent="";$("rangeLabel").textContent="拖动时间轴查看原片";return;}
       for(const track of selectedTracks())for(const [a,b] of track.segments){const span=document.createElement("span");span.className="presence";span.style.left=a/source.frame_count*100+"%";span.style.width=(b-a)/source.frame_count*100+"%";$("presenceTrack").append(span);}
       const start=Number($("start").value),end=Math.min(duration(),start+Number($("duration").value));
       $("trialWindow").hidden=!reviewLoaded||!validRange();$("trialWindow").style.left=start/duration()*100+"%";$("trialWindow").style.width=(end-start)/duration()*100+"%";
@@ -383,18 +440,23 @@
     function renderActions() {
       const isBusy=busy(), trialReady=trial?.ready&&signature(trial.request)===signature(reviewRequest());
       $("intro").hidden=Boolean(selectedFile||currentJobId);$("workspace").hidden=$("projectline").hidden=!selectedFile&&!currentJobId;
-      $("choose").disabled=isBusy;$("restart").disabled=isBusy;$("busy").hidden=!isBusy;$("primary").hidden=state==="done";$("download").hidden=state!=="done";
-      $("primary").disabled=isBusy||(state==="ready"?!selectedFile:state!=="preview_ready"||!validRange());
-      $("extra").hidden=!reviewLoaded||state==="done";$("direct").hidden=Boolean(trialReady);$("direct").disabled=isBusy||!selectedIds.length||state!=="preview_ready";
-      for(const id of ["start","duration","recommend","boxWidth","boxY","resetBox"])$(id).disabled=isBusy||state==="done";
-      $("targetList").inert=isBusy;$("overlays").inert=isBusy||state==="done";
+      $("choose").disabled=isBusy;$("restart").disabled=isBusy;$("restart").hidden=isBusy;$("busy").hidden=!isBusy||(state==="pending"&&reviewLoaded);$("reviewProgress").hidden=state!=="pending"||!reviewLoaded;$("cancel").hidden=!["pending","running","trial_running","cancelling"].includes(state);$("cancel").disabled=state==="cancelling";$("retry").hidden=!["error","interrupted","cancelled"].includes(state);$("primary").hidden=false;$("download").hidden=!resultRevision;
+      $("primary").disabled=isBusy||saving>0||(state==="ready"?!selectedFile:!["preview_ready","done"].includes(state)||!finalPlanReady||!validRange());
+      $("extra").hidden=!reviewLoaded;$("direct").hidden=Boolean(trialReady);$("direct").disabled=isBusy||!finalPlanReady||saving>0||!selectedIds.length||!["preview_ready","done"].includes(state)||!maskHasRemoval;
+      for(const id of ["start","duration","recommend","boxWidth","boxY","resetBox"])$(id).disabled=!canEdit();
+      $("revisionTools").hidden=$("protectionDetails").hidden=!reviewLoaded;$("drawProtect").disabled=$("addProtect").disabled=!canEdit();$("undoReview").disabled=!canEdit()||!undoStack.length||saving>0;$("applySegments").disabled=$("resetSegments").disabled=!canEdit();
+      $("targetList").inert=isBusy&&!canEdit();$("overlays").inert=!canEdit();
       document.querySelector('[data-view="trial"]').disabled=!trialReady||isBusy;
-      document.querySelector('[data-view="clean"]').hidden=state!=="done";
+      document.querySelector('[data-view="clean"]').hidden=!resultRevision;document.querySelector('[data-view="clean"]').disabled=isBusy;
       for(const button of document.querySelectorAll('[data-view]'))button.setAttribute("aria-pressed",String(button.dataset.view===view));
-      $("play").disabled=isBusy||seeking||(view==="source"&&!sourceSupported);$("seek").disabled=seeking||(view==="source"&&!sourceSupported);
-      const labels={ready:["等待检测","先确认要清理的内容","可以先播放视频，再开始检测。","检测目标 →"],uploading:["正在复制视频","正在复制视频","文件保存在本机。","正在复制…"],pending:["正在检测","正在寻找清理目标","检测结束后可先试擦一小段。","正在检测…"],preview_ready:trialReady?["试擦已就绪","这段效果满意吗？","仅代表所选片段，可以调整目标后重新试擦。","满意，处理全片 →"]:["可以试擦","先看一小段，再决定",validRange()?"已推荐包含目标的片段，也可以手动调整时间。":selectedIds.length?"所选时间没有有效目标，请使用推荐片段。":"尚未选择清理目标。",`先看这 ${Math.min(duration()||3,Number($("duration").value))} 秒效果 →`],trial_running:["正在试擦","正在修复所选片段","全片处理等待你确认。","正在试擦…"],running:["正在处理","正在清理全片","完成后可在这里播放、检查和下载。","正在处理…"],done:["处理完成","先检查，再带走","暂停后切换原片与结果，检查画面和声音。",""],error:["处理停止","本次处理未完成","原视频保留，可换片重新开始。","处理停止"],cancelled:["已取消","任务已取消","可以换一个视频重新开始。","已取消"]};
+      $("play").disabled=(isBusy&&state!=="pending")||seeking||(view==="source"&&!sourceSupported);$("seek").disabled=seeking||(view==="source"&&!sourceSupported);
+      const labels={ready:["等待检测","先确认要清理的内容","可以先播放视频，再开始检测。","检测目标 →"],uploading:["正在复制视频","正在复制视频","文件保存在本机。","正在复制…"],pending:["正在检测","正在寻找清理目标","检测结束后可先试擦一小段。","正在检测…"],preview_ready:trialReady?["试擦已就绪","这段效果满意吗？","仅代表所选片段，可以调整目标后重新试擦。","满意，处理全片 →"]:["可以试擦","先看一小段，再决定",validRange()?"已推荐包含目标的片段，也可以手动调整时间。":selectedIds.length?"所选时间没有有效目标，请使用推荐片段。":"尚未选择清理目标。",`先看这 ${Math.min(duration()||3,Number($("duration").value))} 秒效果 →`],trial_running:["正在试擦","正在修复所选片段","全片处理等待你确认。","正在试擦…"],running:["正在处理","正在清理全片","完成后可在这里播放、检查和下载。","正在处理…"],done:["处理完成","检查成片，必要时再修改","按下方建议复查，也可修改时间或保护区后重新试擦。",trialReady?"按当前修改重新导出 →":"先试擦当前修改 →"],error:["处理停止","本次处理未完成","原视频保留，可换片重新开始。","处理停止"],cancelled:["已取消","任务已取消","可点击重试重新检测，或换一个视频。","已取消"]};
       const text=labels[state]||labels.ready;$("status").textContent=text[0];$("busyTitle").textContent=text[0];$("actionTitle").textContent=text[1];$("actionHint").textContent=text[2];$("primary").textContent=text[3];
-      if(currentJobId)$("download").href=`/jobs/${currentJobId}/download`;
+      if(state==="pending"&&reviewLoaded){$("status").textContent="目标可审阅";$("busyTitle").textContent="正在确认出现时间";$("primary").textContent="确认时间后试擦";$("actionTitle").textContent="可以先选目标";$("actionHint").textContent="正在确认出现时间，完成后即可试擦。";}
+      if(state==="cancelling"){$("status").textContent="正在取消";$("busyTitle").textContent="正在取消";$("actionTitle").textContent="正在安全结束处理";$("primary").textContent="正在取消…";$("actionHint").textContent="等待当前分段安全结束。";}
+      if(state==="interrupted"){$("status").textContent="处理已中断";$("actionTitle").textContent="可以从这里重试";$("primary").textContent="请点击重试";$("actionHint").textContent="已保存的决定和成功视频保留，可点击重试。";}
+      if(!maskHasRemoval&&reviewLoaded)$("actionHint").textContent="没有需要处理的区域，请调整选择或保护范围。";
+      if(currentJobId)$("download").href=`/jobs/${currentJobId}/download`;$("download").textContent=resultReviewRevision===reviewRevision?"下载成片":"下载上次成片";
     }
     function renderTargets() {
       $("targetList").replaceChildren();$("targetCount").textContent=reviewLoaded?`${selectedIds.length} / ${tracks.length} 项待清理`:"等待检测";
@@ -402,11 +464,11 @@
       if(!tracks.length){const empty=document.createElement("p");empty.className="hint";empty.textContent=reviewLoaded?"没有发现可清理目标。":"检测后将在这里显示目标画面和出现时间。";$("targetList").append(empty);}
       for(const track of tracks){
         const row=document.createElement("div");row.className="target"+(track.id===activeTrackId?" is-active":"");row.dataset.trackId=track.id;
-        const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedIds.includes(track.id);checkbox.disabled=busy()||state==="done";checkbox.setAttribute("aria-label","移除"+trackName(track));
-        checkbox.addEventListener("change",()=>{selectedIds=checkbox.checked?[...selectedIds,track.id]:selectedIds.filter(id=>id!==track.id);if(!manualTime)recommend();invalidateTrial();renderTargets();renderOverlays();});
+        const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.checked=selectedIds.includes(track.id);checkbox.disabled=!canEdit();checkbox.setAttribute("aria-label","移除"+trackName(track));
+        checkbox.addEventListener("change",()=>{selectedIds=checkbox.checked?[...selectedIds,track.id]:selectedIds.filter(id=>id!==track.id);if(!manualTime)recommend();invalidateTrial();renderTargets();renderOverlays();void saveReview();});
         const button=document.createElement("button");button.className="target-inspect";button.type="button";button.setAttribute("aria-label","定位"+trackName(track));button.addEventListener("click",()=>inspect(track.id));
         const title=document.createElement("span");title.className="target-title";title.textContent=trackName(track);const badge=document.createElement("small");badge.textContent=checkbox.checked?"移除":"保留";title.append(badge);
-        const meta=document.createElement("span");meta.className="target-meta";meta.textContent=track.segments.length?track.segments.map(([a,b])=>`${fmt(a/source.fps,true)}–${fmt(b/source.fps,true)}`).join("、"):"无有效时间";
+        const meta=document.createElement("span");meta.className="target-meta";meta.textContent=effectiveSegments(track).length?effectiveSegments(track).map(([a,b])=>`${fmt(a/source.fps,true)}–${fmt(b/source.fps,true)}`).join("、"):"无有效时间";
         if(track.evidence_kind!=="observed")meta.textContent+=" · 位置参考";
         const canvas=document.createElement("canvas");canvas.setAttribute("role","img");canvas.setAttribute("aria-label",trackName(track)+"原片裁剪");
         button.append(title,meta,canvas);row.append(checkbox,button);$("targetList").append(row);
@@ -416,8 +478,8 @@
       updateEditor();$("targetHint").hidden=!tracks.length;renderActions();
     }
     function updateEditor() {
-      const track=tracks.find(t=>t.id===activeTrackId);$("editor").hidden=!track||!selectedIds.includes(track.id)||state==="done";
-      if(!track)return;const [x,y,x2]=effectiveBBox(track);$("editorTitle").textContent=trackName(track)+" · 区域框";$("boxWidth").value=(x2-x+1)/source.width*100;$("boxY").value=y/source.height*100;$("widthValue").textContent=Math.round((x2-x+1)/source.width*100)+"%";$("yValue").textContent=Math.round(y/source.height*100)+"%";
+      const track=tracks.find(t=>t.id===activeTrackId);$("editor").hidden=!track||!selectedIds.includes(track.id);
+      if(!track)return;$("segmentsInput").value=effectiveSegments(track).map(([a,b])=>`${a/source.fps}, ${b/source.fps}`).join("\n");const [x,y,x2]=effectiveBBox(track);$("editorTitle").textContent=trackName(track)+" · 区域框";$("boxWidth").value=(x2-x+1)/source.width*100;$("boxY").value=y/source.height*100;$("widthValue").textContent=Math.round((x2-x+1)/source.width*100)+"%";$("yValue").textContent=Math.round(y/source.height*100)+"%";
     }
     function inspect(id) { activeTrackId=id;const track=tracks.find(t=>t.id===id);renderTargets();void setMedia("source",track.evidence_frame/source.fps); }
     function imageMetrics() {
@@ -439,7 +501,7 @@
     }
 
     function beginPointerEdit(event, track, edge) {
-      if (busy() || state === "done") return;
+      if (!canEdit()) return;
       if (event.button !== undefined && event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -460,6 +522,7 @@
         ));
       };
       target.onpointerup = target.onpointercancel = () => {
+        void saveReview();
         target.onpointermove = null;
         target.onpointerup = null;
         target.onpointercancel = null;
@@ -467,7 +530,7 @@
     }
 
     function keyboardEdit(event, track, edge) {
-      if (busy() || state === "done") return;
+      if (!canEdit()) return;
       const deltas = {
         ArrowLeft: [-1, 0], ArrowRight: [1, 0],
         ArrowUp: [0, -1], ArrowDown: [0, 1],
@@ -480,6 +543,7 @@
       if (!metrics) return;
       const amount = event.shiftKey ? 10 : 1;
       const [dx, dy] = deltas[event.key].map((value) => value * amount);
+      clearTimeout(keyboardSave);keyboardSave=setTimeout(()=>void saveReview(),200);
       storeDraft(track, transformBBox(
         effectiveBBox(track), edge, dx, dy,
         metrics.sourceWidth, metrics.sourceHeight,
@@ -491,7 +555,7 @@
       for(const box of $("overlays").children)box.classList.toggle("is-active",box.dataset.trackId===id);updateEditor();
     }
     function storeDraft(track, bbox) {
-      if(busy()||state!=="preview_ready"||!selectedIds.includes(track.id))return;
+      if(!canEdit()||!selectedIds.includes(track.id))return;
       if(bbox.every((n,i)=>n===track.bbox[i]))delete bboxDrafts[track.id];else bboxDrafts[track.id]=bbox;
       invalidateTrial();updateEditor();updateOverlayPositions();
     }
@@ -504,7 +568,7 @@
       for(const box of $("overlays").children){const track=tracks.find(t=>t.id===box.dataset.trackId);box.hidden=!track.segments.some(([a,b])=>a<=frame&&frame<b);}
     }
     function renderOverlays() {
-      $("overlays").replaceChildren();if(view!=="source"||busy()||seeking||!reviewLoaded||state==="done")return;
+      $("overlays").replaceChildren();if(view!=="source"||(busy()&&!canEdit())||seeking||!reviewLoaded||state==="done")return;
       for(const track of tracks){
         const selected=selectedIds.includes(track.id),box=document.createElement("div");box.dataset.trackId=track.id;box.className="bbox-box"+(track.id===activeTrackId?" is-active":"");box.tabIndex=0;box.setAttribute("role","group");box.setAttribute("aria-label",`${selected?"调整":"查看"}${trackName(track)}区域`);
         if(selected){box.addEventListener("pointerdown",e=>{video.pause();beginPointerEdit(e,track,"move");});box.addEventListener("keydown",e=>{video.pause();keyboardEdit(e,track,"move");});
@@ -516,7 +580,7 @@
     }
     async function request(url, options) {
       const response=await fetch(url,options);const payload=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error(typeof payload.detail==="string"?payload.detail:`请求未完成 (${response.status})`);
+      if(!response.ok){const error=new Error(typeof payload.detail==="string"?payload.detail:`请求未完成 (${response.status})`);error.status=response.status;throw error;}
       return payload;
     }
     const postJson=(url,body)=>request(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -525,50 +589,68 @@
       let preview;
       try{preview=await request(`/jobs/${jobId}/preview`);}catch(error){const status=await request(`/jobs/${jobId}`);if(status.state!=="preview_ready")return applyStatus(status);throw error;}
       if(jobId!==currentJobId)return;
-      source=preview.source;tracks=preview.tracks||[];selectedIds=tracks.filter(t=>t.action==="remove").map(t=>t.id);bboxDrafts={};manualTime=false;
-      let saved=null;try{saved=JSON.parse(storageGet(`videowipe.review.${jobId}`));}catch{}
-      saved=preview.confirmed_review||saved||preview.trial?.request;
-      if(saved){selectedIds=Array.isArray(saved.selected_ids)?saved.selected_ids.filter(id=>tracks.some(t=>t.id===id)):selectedIds;
+      const oldSegments=segmentDrafts,oldProtections=protections;
+      const keepDraft=reviewLoaded, oldSelection=[...selectedIds], oldBoxes={...bboxDrafts}, oldManual=manualTime, oldStart=$("start").value, oldDuration=$("duration").value;
+      source=preview.source;tracks=preview.tracks||[];selectedIds=tracks.filter(t=>t.action==="remove").map(t=>t.id);bboxDrafts={};segmentDrafts={};protections=[];manualTime=false;
+      let saved=preview.overrides||preview.confirmed_review||preview.trial?.request;
+      if(saved) saved={...preview.trial?.request,...saved};
+      if(!keepDraft)reviewRevision=preview.review_revision;finalPlanReady=preview.final_plan_ready;
+      if(saved){segmentDrafts=structuredClone(saved.segment_overrides||{});protections=structuredClone(saved.protections||[]);selectedIds=Array.isArray(saved.selected_ids)?saved.selected_ids.filter(id=>tracks.some(t=>t.id===id)):selectedIds;
         for(const [id,box] of Object.entries(saved.bbox_overrides||{}))if(tracks.some(t=>t.id===id)&&Array.isArray(box)&&box.length===4&&box.every(Number.isInteger)&&box[0]>=0&&box[1]>=0&&box[2]>box[0]&&box[3]>box[1]&&box[2]<source.width&&box[3]<source.height)bboxDrafts[id]=box;
         manualTime=saved.manualTime??true;$("start").value=Number.isFinite(saved.start_seconds)?saved.start_seconds:0;$("duration").value=saved.duration_seconds===5?"5":"3";
       }else if(preview.recommended_trial){$("start").value=preview.recommended_trial.start_seconds;$("duration").value="3";}
       if(!saved&&!preview.recommended_trial)recommend();
-      reviewLoaded=true;activeTrackId=tracks[0]?.id||null;$("filename").textContent=preview.original_filename;updateMeta();renderTargets();renderTimeline();renderOverlays();
-      if(state==="preview_ready"&&!(preview.trial?.ready&&signature(preview.trial.request)===signature(reviewRequest()))){const stored=Number(storageGet(`videowipe.position.${jobId}`));void setMedia("source",stored||((tracks[0]?.evidence_frame||0)/source.fps));}
+      if(keepDraft){segmentDrafts=oldSegments;protections=oldProtections;selectedIds=oldSelection;bboxDrafts=oldBoxes;manualTime=oldManual;$("start").value=oldStart;$("duration").value=oldDuration;if(!manualTime)recommend();}
+      $("previousReview").hidden=!preview.previous_review?.overrides;$("previousReviewItems").replaceChildren();
+      if(preview.previous_review?.overrides){const old=preview.previous_review;for(const candidate of old.candidates){const item=document.createElement("p"),box=old.overrides.bbox_overrides?.[candidate.id]||candidate.bbox;item.textContent=`${old.overrides.selected_ids.includes(candidate.id)?"移除":"保留"} · ${candidate.label} · 区域 ${box.join(", ")}`;$("previousReviewItems").append(item);}}
+      if(!keepDraft){savedReview={selected_ids:[...selectedIds],bbox_overrides:structuredClone(bboxDrafts),segment_overrides:structuredClone(segmentDrafts),protections:structuredClone(protections)};undoStack=[];}
+      reviewLoaded=true;renderProtections();activeTrackId=tracks[0]?.id||null;$("filename").textContent=preview.original_filename;updateMeta();renderTargets();renderTimeline();renderOverlays();
+      if(state==="preview_ready"&&!(preview.trial?.ready&&signature(preview.trial.request)===signature(reviewRequest()))){const stored=Number(preview.trial?.start_seconds||0);void setMedia("source",stored||((tracks[0]?.evidence_frame||0)/source.fps));}
     }
     function closeStream(){if(stream){stream.close();stream=null;}}
     async function applyStatus(data) {
       if(data.id!==currentJobId)return;
-      state=data.state;$("filename").textContent=data.original_filename||$("filename").textContent;renderActions();
-      const phaseNames={upload:"复制视频",plan:"准备检测",prepare:"准备处理",detect:"检测目标",refine:"确认出现时间",persist:"保存计划",inpaint:"修复画面",encode:"编码视频",complete:"已完成",trial:"准备试擦",preview:"等待审阅"};
+      const wasFinal=finalPlanReady;
+      state=data.state;resultRevision=data.result_revision||null;resultReviewRevision=data.result_review_revision??null;$("resultReview").hidden=state!=="done";finalPlanReady=Boolean(data.final_plan_ready);
+      if(["preview_ready","done","error","cancelled","interrupted"].includes(state))closeStream();
+      if(data.review_ready&&(!reviewLoaded||(!wasFinal&&finalPlanReady))&&!previewLoading){previewLoading=true;try{await loadPreview(data.id);}finally{previewLoading=false;}}
+      $("filename").textContent=data.original_filename||$("filename").textContent;renderActions();
+      const phaseNames={upload:"复制视频",plan:"准备检测",prepare:"准备处理",detect:"检测目标",refine:"确认出现时间",persist:"保存计划",inpaint:"修复画面",predict:"计算或复用预测",compose:"从原片重新合成",encode:"编码视频",complete:"已完成",trial:"准备试擦",preview:"等待审阅"};
       $("busyHint").textContent=(phaseNames[data.phase]||"正在处理")+(data.progress>0?` · 当前阶段 ${Math.round(data.progress*100)}%`:"");
+      if(data.completed&&data.total)$("busyHint").textContent+=` · ${data.completed} / ${data.total}${data.phase==="inpaint"||data.phase==="refine"?" 帧":""}`;
+      if(data.remaining_seconds)$("busyHint").textContent+=` · 处理约剩 ${Math.ceil(data.remaining_seconds[0])}–${Math.ceil(data.remaining_seconds[1])} 秒`;
+      if(data.phase_counts?.predict||data.phase_counts?.compose){const p=data.phase_counts.predict,c=data.phase_counts.compose;$("busyHint").textContent+=(p?` · 预测 ${p[0]}/${p[1]} 帧`:"")+(c?` · 已合成 ${c[0]}/${c[1]} 帧`:"");}
+      if(data.device)$("busyHint").textContent+=` · ${Array.isArray(data.device.device)?data.device.device.join(", "):data.device.device}`;
+      $("reviewProgress").textContent=$("busyHint").textContent;
+      if(data.conflicts?.length)notify("部分目标的出现证据已变化，请取消这些目标的选择后再试擦。","error");
       if(data.progress>0)$("progress").value=data.progress*100;else $("progress").removeAttribute("value");
       if(data.state==="preview_ready"||data.state==="done"){
-        closeStream();if(!reviewLoaded)await loadPreview(data.id);if(data.id!==currentJobId)return;
+        if(!reviewLoaded)await loadPreview(data.id);if(data.id!==currentJobId)return;
         if(data.state==="done"){await showDone(data.id);showWarnings(data.warnings);return;}
         if(data.error){trial=null;notify(`试擦未完成：${data.error}。视频和选择已保留，可以重试。`,"error");}
-        else if(data.trial?.ready&&signature(data.trial.request)===signature(reviewRequest())){trial=data.trial;storageSet(`videowipe.trialStart.${data.id}`,String(trial.start_seconds));void setMedia("trial",trial.start_seconds);notify(`试擦已就绪，用时 ${trial.elapsed_s} 秒。上下画面同步，仅代表这段效果。`);}
+        else if(data.trial?.ready&&signature(data.trial.request)===signature(reviewRequest())){trial=data.trial;void setMedia("trial",trial.start_seconds);notify(`试擦已就绪，用时 ${trial.elapsed_s} 秒。上下画面同步，仅代表这段效果。`);}
         else showWarnings(data.warnings);
         renderTargets();renderActions();renderTimeline();renderOverlays();
-      }else if(data.state==="error"||data.state==="cancelled"){closeStream();notify(data.error||"处理已停止","error");renderActions();}
+      }else if(data.state==="error"||data.state==="cancelled"||data.state==="interrupted"){notify(data.state==="cancelled"?"已取消，可点击重试重新检测。":data.error||"处理已停止","error");renderTargets();renderActions();}
     }
     async function showDone(jobId) {
       state="done";trial=null;renderTargets();renderActions();
-      const at=Number(storageGet(`videowipe.trialStart.${jobId}`)||storageGet(`videowipe.position.${jobId}`)||0);
-      await setMedia("clean",at);
+      const data=await request(`/jobs/${jobId}`);if(jobId!==currentJobId)return;trial=data.trial?.ready?data.trial:null;renderActions();const at=data.trial?.start_seconds||0;
+      await setMedia("clean",at);await loadResultReview();
     }
     function startProgressStream(jobId) {
-      closeStream();stream=new EventSource(`/jobs/${jobId}/progress`);
+      closeStream();stream=new EventSource(`/jobs/${jobId}/progress`);const connection=stream;let reconnecting=false;
       stream.onmessage=event=>{void applyStatus(JSON.parse(event.data)).catch(error=>notify(error.message,"error"));};
-      stream.onerror=()=>{closeStream();notify("进度连接已断开。刷新页面可恢复当前任务；后台处理仍在继续。","error");};
+      stream.onopen=()=>{if(stream!==connection)return;if(reconnecting){reconnecting=false;notify("");}void request(`/jobs/${jobId}`).then(applyStatus).catch(error=>{if(error.status===404)closeStream();notify(error.status===404?"任务已不存在，无法恢复。":error.message,"error");});};
+      stream.onerror=()=>{if(stream!==connection||["preview_ready","done","error","cancelled","interrupted"].includes(state))return;reconnecting=true;notify("正在重新连接进度，连接后将确认任务状态。" );void request(`/jobs/${jobId}`).catch(error=>{if(error.status===404){closeStream();notify("任务已不存在，无法恢复。","error");}});};
     }
     async function restoreJob() {
       let data=null;const storedId=storageGet(jobStorageKey);
       if(storedId){try{data=await request(`/jobs/${encodeURIComponent(storedId)}`);}catch{storageSet(jobStorageKey,null);}}
-      if(!data)data=await request("/jobs/current");if(!data||data.state==="idle")return;
+      if(!data)data=await request("/jobs/current");if(!data||data.state==="idle"){if(data?.recovery_error)notify("任务恢复未完成："+data.recovery_error,"error");return;}
       rememberJob(data.id);state=data.state;renderActions();
-      if(data.state!=="pending"){try{await loadPreview(data.id);}catch{}}
-      if(busyStates.has(data.state)){void setMedia("source",Number(storageGet(`videowipe.position.${data.id}`)||0));startProgressStream(data.id);}
+      if(data.review_ready){try{await loadPreview(data.id);}catch{}}
+      if(busyStates.has(data.state)){void setMedia("source",data.trial?.start_seconds||0);startProgressStream(data.id);}
       await applyStatus(data);
     }
     async function reset() {
@@ -577,12 +659,13 @@
       catch(error){notify(error.message,"error");return;}
       closeStream();video.pause();++mediaEpoch;if(localURL)URL.revokeObjectURL(localURL);localURL=null;
       video.removeAttribute("src");video.load();$("fallbackFrame").hidden=true;$("stage").classList.remove("is-seeking");
-      rememberJob(null);selectedFile=null;source=null;tracks=[];selectedIds=[];bboxDrafts={};trial=null;activeTrackId=null;manualTime=false;reviewLoaded=false;sourceSupported=true;seeking=false;state="ready";view="source";evidenceImages.clear();$("fileInput").value="";$("start").value=0;$("duration").value="3";notify("");renderTargets();renderActions();renderOverlays();
+      segmentDrafts={};protections=[];undoStack=[];savedReview=null;resultRevision=null;loopWindow=null;maskEpoch++;maskHasRemoval=true;$("resultReview").hidden=true;$("showMask").checked=false;$("maskCanvas").hidden=true;renderProtections();
+      rememberJob(null);selectedFile=null;source=null;tracks=[];selectedIds=[];bboxDrafts={};trial=null;activeTrackId=null;manualTime=false;reviewLoaded=false;sourceSupported=true;seeking=false;state="ready";view="source";reviewRevision=0;finalPlanReady=false;saveError=null;evidenceImages.clear();$("fileInput").value="";$("start").value=0;$("duration").value="3";notify("");renderTargets();renderActions();renderOverlays();renderTimeline();$("saveState").textContent="";$("previousReview").hidden=true;$("previousReviewItems").replaceChildren();saveGeneration++;
     }
     async function pickFile(file) {
       if(!file||busy())return;
       if(currentJobId){await reset();if(currentJobId)return;}
-      if(localURL)URL.revokeObjectURL(localURL);selectedFile=file;source=null;sourceSupported=true;state="ready";view="source";localURL=URL.createObjectURL(file);$("filename").textContent=file.name;notify("");renderActions();await setMedia("source",0);
+      if(localURL)URL.revokeObjectURL(localURL);selectedFile=file;source=null;sourceSupported=true;state="ready";view="source";localURL=URL.createObjectURL(file);$("filename").textContent=file.name;notify("");renderActions();await setMedia("source",0);renderTimeline();
     }
     async function submit() {
       if(!selectedFile||busy())return;state="uploading";renderActions();notify("");
@@ -591,29 +674,100 @@
       catch(error){state="ready";notify(error.message,"error");renderActions();}
     }
     async function runTrial() {
-      if(state!=="preview_ready"||!validRange())return;saveReview();const body=reviewRequest();trial=null;state="trial_running";renderActions();notify("");
+      if(!["preview_ready","done"].includes(state)||!finalPlanReady||!validRange())return;const jobId=currentJobId;try{await flushReview();}catch{return;}if(jobId!==currentJobId)return;const body={...reviewRequest(),expected_revision:reviewRevision,operation_id:crypto.randomUUID()};trial=null;state="trial_running";renderActions();notify("");
       try{const data=await postJson(`/jobs/${currentJobId}/trial`,body);await applyStatus(data);if(busy())startProgressStream(currentJobId);}
       catch(error){state="preview_ready";notify(`试擦未完成：${error.message}。可以调整或重试。`,"error");renderActions();}
     }
     async function confirmRun() {
-      if(state!=="preview_ready"||!selectedIds.length)return;saveReview();state="running";renderActions();notify("");
-      const body=reviewRequest();try{const data=await postJson(`/jobs/${currentJobId}/confirm`,{selected_ids:body.selected_ids,bbox_overrides:body.bbox_overrides});await applyStatus(data);if(busy())startProgressStream(currentJobId);}
+      if(!["preview_ready","done"].includes(state)||!finalPlanReady||!selectedIds.length)return;const jobId=currentJobId;try{await flushReview();}catch{return;}if(jobId!==currentJobId)return;state="running";renderActions();notify("");
+      const body=reviewRequest();try{const data=await postJson(`/jobs/${currentJobId}/confirm`,{selected_ids:body.selected_ids,bbox_overrides:body.bbox_overrides,segment_overrides:body.segment_overrides,protections:body.protections,expected_revision:reviewRevision,operation_id:crypto.randomUUID()});await applyStatus(data);if(busy())startProgressStream(currentJobId);}
       catch(error){state="preview_ready";notify(error.message,"error");renderActions();}
     }
     $("primary").addEventListener("click",()=>{if(state==="ready")void submit();else if(trial?.ready&&signature(trial.request)===signature(reviewRequest()))void confirmRun();else void runTrial();});
+    $("cancel").addEventListener("click",async()=>{try{await applyStatus(await postJson(`/jobs/${currentJobId}/cancel`,{}));}catch(error){notify(error.message,"error");}});
+    $("retry").addEventListener("click",async()=>{try{const data=await postJson(`/jobs/${currentJobId}/retry`,{operation_id:crypto.randomUUID()});notify("");reviewLoaded=false;await applyStatus(data);if(busy())startProgressStream(currentJobId);}catch(error){notify(error.message,"error");}});
+    for(const id of ["boxWidth","boxY"])$(id).addEventListener("change",()=>void saveReview());
     $("direct").addEventListener("click",confirmRun);$("restart").addEventListener("click",reset);$("choose").addEventListener("click",()=>$("fileInput").click());$("fileInput").addEventListener("change",()=>void pickFile($("fileInput").files[0]));
     $("intro").addEventListener("dragover",event=>event.preventDefault());$("intro").addEventListener("drop",event=>{event.preventDefault();void pickFile(event.dataTransfer.files[0]);});
     $("start").addEventListener("input",()=>{manualTime=true;invalidateTrial();});$("duration").addEventListener("change",()=>{if(!manualTime)recommend();invalidateTrial();});$("recommend").addEventListener("click",()=>{manualTime=false;recommend();invalidateTrial();});
     for(const [id,part] of [["boxWidth",2],["boxY",1]])$(id).addEventListener("input",()=>{const track=tracks.find(t=>t.id===activeTrackId);if(!track)return;let [x,y,x2,y2]=effectiveBBox(track);const value=Number($(id).value)/100;if(part===2)x2=Math.min(source.width-1,Math.max(x+1,x+Math.round(value*source.width)-1));else{const h=y2-y;y=Math.max(0,Math.min(source.height-1-h,Math.round(value*source.height)));y2=y+h;}storeDraft(track,[x,y,x2,y2]);});
-    $("resetBox").addEventListener("click",()=>{delete bboxDrafts[activeTrackId];invalidateTrial();updateEditor();updateOverlayPositions();});
+    $("resetBox").addEventListener("click",()=>{delete bboxDrafts[activeTrackId];invalidateTrial();updateEditor();updateOverlayPositions();void saveReview();});
+    function parseIntervals(text) {
+      return text.trim().split(/\n+/).map(line=>{
+        const parts=line.split(/[,，]/).map(value=>value.trim());
+        if(parts.length!==2||parts.some(value=>value===''))throw new Error('每行填写开始秒数, 结束秒数');
+        const [a,b]=parts.map(Number);
+        if(!Number.isFinite(a)||!Number.isFinite(b)||a<0||a>=b||b>duration())throw new Error('时间需在视频内，且结束晚于开始');
+        const frames=[a,b].map(value=>{const f=value*source.fps;return Math.abs(f-Math.round(f))<1e-9?Math.round(f):f;});
+        return [Math.floor(frames[0]),Math.min(source.frame_count,Math.ceil(frames[1]))];
+      });
+    }
+    function edited() { if(!manualTime)recommend();invalidateTrial();renderTargets();renderTimeline();renderOverlays();void saveReview(); }
+    $('applySegments').addEventListener('click',()=>{try{segmentDrafts[activeTrackId]=parseIntervals($('segmentsInput').value);edited();}catch(error){notify(error.message,'error');}});
+    $('resetSegments').addEventListener('click',()=>{delete segmentDrafts[activeTrackId];edited();});
+    $('undoReview').addEventListener('click',async()=>{await saveQueue;if(!undoStack.length)return;const previous=undoStack.pop();selectedIds=previous.selected_ids;bboxDrafts=previous.bbox_overrides;segmentDrafts=previous.segment_overrides||{};protections=previous.protections||[];invalidateTrial();renderTargets();renderProtections();renderOverlays();await saveReview(false);});
+    function renderProtections() {
+      $('protectionList').replaceChildren();$('protectionCount').textContent=protections.length;
+      for(const region of protections){const row=document.createElement('div');row.className='protection-row';
+        const label=document.createElement('label');label.textContent='矩形坐标：左, 上, 右, 下（像素）';const box=document.createElement('input');box.value=region.bbox.join(', ');box.setAttribute('aria-label','保护区域矩形坐标');label.append(box);
+        const timeLabel=document.createElement('label');timeLabel.textContent='保护时间（秒，每行：开始, 结束）';const intervals=document.createElement('textarea');intervals.className='segment-edit';intervals.value=region.segments.map(([a,b])=>`${a/source.fps}, ${b/source.fps}`).join('\n');timeLabel.append(intervals);
+        const save=document.createElement('button');save.textContent='保存保护区域';save.type='button';save.disabled=!canEdit();save.onclick=()=>{try{const values=box.value.split(/[,，]/).map(v=>v.trim());const coords=values.map(Number);if(values.some(v=>v==='')||coords.length!==4||!coords.every(Number.isInteger)||coords[0]<0||coords[1]<0||coords[2]<=coords[0]||coords[3]<=coords[1]||coords[2]>=source.width||coords[3]>=source.height)throw new Error('保护矩形需在画面内且至少 2×2 像素');const segments=parseIntervals(intervals.value);region.bbox=coords;region.segments=segments;edited();renderProtections();}catch(error){notify(error.message,'error');}};
+        const remove=document.createElement('button');remove.textContent='删除保护';remove.type='button';remove.disabled=!canEdit();remove.onclick=()=>{protections=protections.filter(p=>p.id!==region.id);edited();renderProtections();};row.append(label,timeLabel,save,remove);$('protectionList').append(row);
+      }
+    }
+    function addProtection(box) {
+      if(!canEdit())return;if(protections.length>=64){notify('最多添加 64 个保护区域','error');return;}
+      protections.push({id:'p_'+crypto.randomUUID(),bbox:box,segments:[[0,source.frame_count]]});$('protectionDetails').open=true;edited();renderProtections();notify('保护区已添加，默认全片生效，可在保护区域中修改时间。');
+    }
+    $('addProtect').addEventListener('click',()=>addProtection([Math.floor(source.width*.4),Math.floor(source.height*.4),Math.floor(source.width*.6),Math.floor(source.height*.6)]));
+    $('drawProtect').addEventListener('click',async()=>{
+      if(!canEdit())return;await setMedia('source');video.pause();const canvas=$('protectCanvas');canvas.width=source.width;canvas.height=source.height;canvas.hidden=false;canvas.classList.add('drawing');$('overlays').style.pointerEvents='none';$('overlays').hidden=true;notify('在画面拖出保护矩形；按 Esc 退出。');
+    });
+    function endDrawing(){const canvas=$('protectCanvas');canvas.classList.remove('drawing');canvas.hidden=true;canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);$('overlays').hidden=false;$('overlays').style.pointerEvents='';}
+    $('protectCanvas').addEventListener('pointerdown',event=>{
+      if(!canEdit())return;event.preventDefault();const canvas=event.currentTarget,m=imageMetrics(),bounds=$('stage').getBoundingClientRect();
+      const point=e=>[Math.max(0,Math.min(source.width-1,Math.round((e.clientX-bounds.left-m.left)/m.scale))),Math.max(0,Math.min(source.height-1,Math.round((e.clientY-bounds.top-m.top)/m.scale)))];
+      const start=point(event);canvas.setPointerCapture(event.pointerId);let box=null;
+      canvas.onpointermove=e=>{const end=point(e);box=[Math.min(start[0],end[0]),Math.min(start[1],end[1]),Math.max(start[0],end[0]),Math.max(start[1],end[1])];const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#45d9fc';ctx.lineWidth=3/m.scale;ctx.strokeRect(box[0],box[1],box[2]-box[0]+1,box[3]-box[1]+1);};
+      canvas.onpointerup=()=>{canvas.onpointermove=canvas.onpointerup=null;endDrawing();if(box&&box[2]>box[0]&&box[3]>box[1])addProtection(box);};canvas.onpointercancel=()=>{canvas.onpointermove=canvas.onpointerup=null;endDrawing();};
+    });
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')endDrawing();});
+    function scheduleMask(){clearTimeout(maskTimer);maskTimer=setTimeout(()=>void refreshMask(),120);}
+    async function refreshMask(){
+      const canvas=$('maskCanvas');canvas.hidden=true;
+      if(!currentJobId||!finalPlanReady||saving||busy()||view==='trial')return;
+      const jobId=currentJobId,revision=reviewRevision,epoch=++maskEpoch,frame=Math.max(0,Math.min(source.frame_count-1,Math.floor(position()*source.fps)));
+      try{const response=await fetch(`/jobs/${jobId}/mask?frame_index=${frame}&revision=${revision}`);
+        if(epoch!==maskEpoch||jobId!==currentJobId||revision!==reviewRevision)return;
+        if(!response.ok){const data=await response.json();throw new Error(data.detail||'范围尚未就绪');}
+        maskHasRemoval=response.headers.get('X-Has-Removal')!=='false';renderActions();
+        if(!$('showMask').checked){$('maskState').textContent='';return;}
+        const bitmap=await createImageBitmap(await response.blob());
+        if(epoch!==maskEpoch||revision!==reviewRevision||saving){bitmap.close();return;}
+        canvas.width=source.width;canvas.height=source.height;const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);bitmap.close();const pixels=ctx.getImageData(0,0,canvas.width,canvas.height);for(let i=0;i<pixels.data.length;i+=4){pixels.data[i+3]=pixels.data[i];pixels.data[i]=255;pixels.data[i+1]=107;pixels.data[i+2]=53;}ctx.putImageData(pixels,0,0);canvas.hidden=false;$('maskState').textContent='橙色为此刻实际处理范围';
+      }catch(error){if(epoch===maskEpoch&&$('showMask').checked)$('maskState').textContent=error.message;}
+    }
+    $('showMask').addEventListener('change',scheduleMask);
+    async function loadResultReview(){
+      if(!currentJobId||state!=='done')return;const jobId=currentJobId;
+      try{const track=$('reviewTrack').value,data=await request(`/jobs/${jobId}/result-review${track?'?track_id='+encodeURIComponent(track):''}`);if(jobId!==currentJobId)return;resultRevision=data.result_revision;$('resultReview').hidden=false;$('reviewWindows').replaceChildren();
+        const chosen=$('reviewTrack').value;$('reviewTrack').replaceChildren(new Option('建议位置',''),...tracks.map(t=>new Option(trackName(t),t.id)));$('reviewTrack').value=chosen;
+        for(const window of data.windows){const row=document.createElement('div');row.className='review-window';const go=document.createElement('button');go.type='button';go.textContent=`${fmt(window.start/source.fps,true)}–${fmt(window.end/source.fps,true)} · ${[...new Set(window.origins.map(o=>o.reason))].join(' / ')}`;go.onclick=async()=>{try{loopWindow=[window.start,window.end];await setMedia('clean',window.start/source.fps);await video.play();}catch(error){notify(error.message,'error');}};
+          const seen=document.createElement('button');seen.type='button';const frame=window.origins[0].frame;seen.textContent=data.marks.some(m=>m.frame_index===frame&&m.status==='seen')?'已看过':'看过了';seen.onclick=()=>void markResult(frame,'seen');const issue=document.createElement('button');issue.type='button';issue.textContent=data.marks.some(m=>m.frame_index===frame&&m.status==='issue')?'已标记问题':'标记问题';issue.onclick=()=>void markResult(frame,'issue');row.append(go,seen,issue);$('reviewWindows').append(row);}
+      }catch(error){notify(error.message,'error');}
+    }
+    async function markResult(frame,status){try{await postJson(`/jobs/${currentJobId}/result-review`,{result_revision:resultRevision,frame_index:frame,status});await loadResultReview();}catch(error){notify(error.message,'error');}}
+    $('markIssue').addEventListener('click',()=>void markResult(Math.min(source.frame_count-1,Math.floor(position()*source.fps)),'issue'));
+    $('reviewTrack').addEventListener('change',()=>void loadResultReview());$('stopLoop').addEventListener('click',()=>{loopWindow=null;video.pause();});
+    $('clearPredictions').addEventListener('click',async()=>{try{await request(`/jobs/${currentJobId}/prediction-cache`,{method:'DELETE'});notify('本任务预测缓存已清除。');}catch(error){notify(error.message,'error');}});
     async function togglePlay(){if(busy()||seeking)return;if(video.paused){try{await video.play();}catch{notify("浏览器无法播放此视频，可使用目标画面查看。","error");}}else video.pause();}
     $("play").addEventListener("click",togglePlay);$("mute").addEventListener("click",()=>{video.muted=!video.muted;$("mute").textContent=video.muted?"×":"♪";$("mute").setAttribute("aria-label",video.muted?"取消静音":"静音");});
     video.addEventListener("play",()=>{$("play").textContent="Ⅱ";$("play").setAttribute("aria-label","暂停");});video.addEventListener("pause",()=>{$("play").textContent="▶";$("play").setAttribute("aria-label","播放");});
-    video.addEventListener("timeupdate",()=>{updatePlayback();updateOverlayVisibility();});
+    video.addEventListener("timeupdate",()=>{updatePlayback();updateOverlayVisibility();if(loopWindow&&view==="clean"&&video.currentTime>=loopWindow[1]/source.fps)video.currentTime=loopWindow[0]/source.fps;scheduleMask();});
     $("seek").addEventListener("change",()=>void setMedia(view,Number($("seek").value)));
     $("viewButtons").addEventListener("click",event=>{const button=event.target.closest('[data-view]');if(button&&!button.disabled)void setMedia(button.dataset.view,position());});
-    document.addEventListener("keydown",event=>{if(event.target.closest("input,select,button,a,summary,[role=group]"))return;if(event.code==="Space"){event.preventDefault();void togglePlay();}if(["ArrowLeft","ArrowRight"].includes(event.code)){event.preventDefault();void setMedia(view,position()+(event.code==="ArrowRight"?1:-1)/(source?.fps||25));}});
-    window.addEventListener("resize",updateOverlayPositions);window.addEventListener("beforeunload",()=>{if(localURL)URL.revokeObjectURL(localURL);});
+    document.addEventListener("keydown",event=>{if(event.target.closest("textarea,input,select,button,a,summary,[role=group]"))return;if(event.code==="Space"){event.preventDefault();void togglePlay();}if(["ArrowLeft","ArrowRight"].includes(event.code)){event.preventDefault();void setMedia(view,position()+(event.code==="ArrowRight"?1:-1)/(source?.fps||25));}});
+    window.addEventListener("resize",updateOverlayPositions);window.addEventListener("beforeunload",()=>{if(currentJobId)void fetch(`/jobs/${currentJobId}/playback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({lease_id:playbackLease,trial_id:null}),keepalive:true});if(localURL)URL.revokeObjectURL(localURL);});
     let dark=storageGet("videowipe.theme")==="dark";function applyTheme(){document.documentElement.dataset.theme=dark?"dark":"light";$("theme").textContent=dark?"浅色":"深色";}$("theme").addEventListener("click",()=>{dark=!dark;applyTheme();storageSet("videowipe.theme",dark?"dark":"light");});applyTheme();renderActions();void restoreJob().catch(error=>notify(error.message,"error")).finally(()=>{if(state==="restoring")state="ready";renderActions();});
 
   </script>

@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
+import cv2
 
 from videowipe.detect import (
     CleanDetectionResult,
+    CleanCandidate,
+    TextBox,
+    _bbox,
     infer_regions_from_text,
     infer_targets_from_text,
     normalize_target,
@@ -16,7 +22,7 @@ from videowipe.detect import (
     resolve_requested_targets,
     select_clean_candidates,
 )
-from videowipe.plan import Source, WipePlan, build_wipe_plan, compute_source, validate_plan
+from videowipe.plan import Source, WipePlan, build_wipe_plan, compute_source, validate_plan, _spatial_mask
 
 
 @dataclass(frozen=True)
@@ -129,6 +135,36 @@ class CleanPlanDraft:
             remove_ids,
             self._resolved_request,
             user_directed,
+        )
+
+    def review_snapshot(self, output_dir: str) -> dict[str, Any]:
+        """Independent public metadata; never shares detector or mask objects."""
+        return {
+            "source": self._source.to_dict(),
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "default_selected_ids": sorted(self.proposed_remove_ids),
+            "evidence": {
+                name: str(Path(output_dir) / name)
+                for name in ("clean_candidates.json", "clean_preview.jpg",
+                             "clean_preview_source.jpg")
+            },
+        }
+
+    def save_refinement_evidence(self, output_dir: str) -> None:
+        """Private restart evidence; the public callback never exposes it."""
+        evidence = {
+            "sample_indices": self._result.sample_indices,
+            "candidates": [dict(candidate.to_dict(),
+                                detector_backed=candidate.detector_backed,
+                                temporal_sample_indices=candidate.temporal_sample_indices)
+                           for candidate in self._result.candidates],
+            "boxes": {str(index): [dict(points=box.points.tolist(),
+                                        confidence=float(box.confidence), text=box.text)
+                                   for box in boxes]
+                      for index, boxes in self._result.sampled_frame_boxes.items()},
+        }
+        (Path(output_dir) / "refinement_evidence.json").write_text(
+            json.dumps(evidence), encoding="utf-8",
         )
 
     def for_request(
@@ -313,6 +349,88 @@ def finalize(
     )
 
 
+def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, check_cancelled=None):
+    """Reuse dense detections; absent local evidence never means a full-band wipe."""
+    eligible = {c.id for c in result.candidates
+                if c.type == "subtitle" and getattr(c, "detector_backed", False)}
+    h, w = result.frame_shape
+    evidence = getattr(result, "sampled_frame_boxes", {})
+    if not evidence:
+        return  # Custom mask providers need not supply detector frame evidence.
+    # Midpoint interpolation can extend final intervals beyond the coarse
+    # windows that were densely checked. Resolve only those unobserved frames;
+    # an observed empty/error frame remains empty.
+    missing = sorted({index for track in plan.remove_tracks
+                      if track.id in eligible and "bbox-override" not in track.decision_reason
+                      and (selected_ids is None or track.id in selected_ids)
+                      for segment in track.segments for index in range(segment.start, segment.end)
+                      if index not in evidence})
+    if missing and video_path is not None:
+        reader = cv2.VideoCapture(video_path)
+        try:
+            if not reader.isOpened():
+                raise ValueError("Cannot open video for local subtitle boundary checks")
+            for index in missing:
+                if check_cancelled is not None:
+                    check_cancelled()
+                reader.set(cv2.CAP_PROP_POS_FRAMES, index)
+                ok, frame = reader.read()
+                if not ok:
+                    raise ValueError(f"Cannot decode subtitle boundary frame {index}")
+                try:
+                    evidence[index] = result.detector.detect(frame)
+                except Exception as exc:
+                    evidence[index] = []
+                    plan.warnings.append(f"local subtitle detection failed at frame {index}; keeping frame: {exc}")
+        finally:
+            reader.release()
+    evidence = sorted(evidence.items())
+    for track in plan.remove_tracks:
+        if (track.id not in eligible or "bbox-override" in track.decision_reason
+                or (selected_ids is not None and track.id not in selected_ids)):
+            continue
+        x1, y1, x2, y2 = track.bbox
+        local_frames = {}
+        for index, boxes in evidence:
+            if not any(s.contains(index) for s in track.segments):
+                continue
+            local = []
+            for box in boxes:
+                bx1, by1, bx2, by2 = _bbox(box.points, w, h)
+                if x1 <= (bx1+bx2)/2 <= x2 and y1 <= (by1+by2)/2 <= y2:
+                    local.append((bx1, by1, bx2, by2))
+            if not local:
+                continue
+            margin = max(4, int(np.ceil(np.median([b[3]-b[1]+1 for b in local]) * .2)))
+            local = sorted({(max(0, a-14), max(0, b-margin), min(w-1, c+14), min(h-1, d+margin))
+                            for a,b,c,d in local})
+            if len(local) > 64:
+                raise ValueError(f"Too many local subtitle boxes at frame {index}")
+            local_frames[index] = [list(box) for box in local]
+        rows = []
+        radius = max(0, int(plan.source.fps / 4))
+        for index, boxes in local_frames.items():
+            neighborhood = list(boxes)
+            for direction in (-1, 1):
+                for distance in range(1, radius+1):
+                    adjacent = local_frames.get(index + direction * distance)
+                    if adjacent is None:
+                        break  # Never borrow evidence across a subtitle gap.
+                    neighborhood.extend(adjacent)
+            # Typography height is stable over a short window even when DBNet
+            # clips accents in one frame. Width stays local to the current text.
+            top = min(b[1] for b in neighborhood)
+            bottom = max(b[3] for b in neighborhood)
+            boxes = [[a, top, c, bottom] for a, _, c, _ in boxes]
+            if rows and rows[-1]["end"] == index and rows[-1]["boxes"] == boxes:
+                rows[-1]["end"] = index + 1
+            else:
+                rows.append({"start": index, "end": index+1, "boxes": boxes})
+        track.spatial_segments = rows
+        track.mask = _spatial_mask(track, (h, w))
+        plan.schema_version = 3
+
+
 def _finalize_result(
     video_path: str,
     result: CleanDetectionResult,
@@ -361,5 +479,52 @@ def _finalize_result(
         **kwargs,
     )
     plan.warnings.extend(warnings)
+    _add_spatial_segments(plan, result, video_path=video_path, check_cancelled=check_cancelled)
     validate_plan(plan, frame_shape=result.frame_shape)
     return plan
+
+
+def refine_review(video_path, machine_plan, reviewed_plan, evidence_path, detector,
+                  progress=None, check_cancelled=None, output_dir=None):
+    """Refine newly selected keep tracks without changing reviewed masks."""
+    new_ids = {track.id for track in reviewed_plan.remove_tracks} - {
+        track.id for track in machine_plan.remove_tracks
+    }
+    if not new_ids:
+        return reviewed_plan
+    evidence = json.loads(Path(evidence_path).read_text(encoding="utf-8"))
+    masks = {track.id: track.mask for track in machine_plan.tracks}
+    candidates = [CleanCandidate(**row, mask=masks[row["id"]])
+                  for row in evidence["candidates"]]
+    result = CleanDetectionResult(
+        candidates=candidates,
+        frame_shape=(machine_plan.source.height, machine_plan.source.width),
+        sample_indices=evidence["sample_indices"], detector=detector,
+        sampled_frame_boxes={int(index): [TextBox(np.asarray(box["points"]),
+                                                box["confidence"], box["text"])
+                                         for box in boxes]
+                             for index, boxes in evidence["boxes"].items()},
+    )
+    warnings = refine_temporal_presence(
+        video_path, result,
+        {track.id: track.segments for track in machine_plan.tracks if track.id in new_ids},
+        machine_plan.source.frame_count, progress=progress,
+        check_cancelled=check_cancelled,
+    )
+    refined = build_wipe_plan(
+        candidates, result.sample_indices, len(result.sample_indices),
+        machine_plan.source, result.frame_shape, explicit_remove_ids=new_ids,
+    )
+    by_id = {track.id: track for track in refined.tracks}
+    for track in reviewed_plan.remove_tracks:
+        if track.id in new_ids:
+            track.segments = by_id[track.id].segments
+        if not track.segments:
+            raise ValueError(f"Selected target {track.id} has no confirmed active frames")
+    _add_spatial_segments(reviewed_plan, result, new_ids, video_path=video_path, check_cancelled=check_cancelled)
+    reviewed_plan.warnings.extend(warnings)
+    validate_plan(reviewed_plan, require_remove=True)
+    if output_dir is not None:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        CleanPlanDraft(video_path, result, machine_plan.source, new_ids, {}, True).save_refinement_evidence(output_dir)
+    return reviewed_plan

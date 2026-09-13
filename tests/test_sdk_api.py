@@ -630,8 +630,9 @@ def test_clean_run_writes_plan_and_propagates_warnings(tmp_path, monkeypatch):
         output_suffix = "clean"
         feather_radius = 0
 
-        def process_video(self, reader, frame_info, mask_arr, output_dir, video_path="", progress=None):
+        def process_video(self, reader, frame_info, mask_arr, output_dir, video_path="", progress=None, frame_mask=None):
             received_masks["arr"] = mask_arr
+            assert frame_mask is not None and frame_mask(0).shape == mask_arr.shape[:2]
             self._bm["timing"]["inpainting_s"] = 0.001
             return os.path.join(output_dir, "output_clean.mp4")
 
@@ -772,3 +773,79 @@ def test_targets_keep_unselected_default_remove_candidate(tmp_path):
         detector=_TwoSubtitleDetector(), targets=["watermark"],
     ))
     assert all(t.action == "keep" for t in plan2.tracks)
+
+
+def test_candidates_are_independent_and_arrive_before_refinement(tmp_path):
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=5)
+    events = []
+    snapshots = []
+    engine = WipeEngine(task="clean")
+    request = WipeRequest(video=video, output_dir=tmp_path / "plan",
+                          detector=_PlanFakeDetector())
+
+    def review(snapshot):
+        assert "refine" not in events
+        assert all(Path(path).is_file() for path in snapshot["evidence"].values())
+        json.dumps(snapshot)  # no arrays, detector, or private draft
+        snapshots.append(snapshot)
+        snapshot["candidates"][0]["bbox"][0] = -999
+        snapshot["default_selected_ids"].clear()
+        snapshot["source"]["width"] = 0
+
+    plan = engine.plan(request, on_progress=lambda event: events.append(event.phase),
+                       on_candidates=review)
+    assert snapshots and "refine" in events
+    assert plan.source.width > 0 and plan.remove_tracks
+    assert all(track.bbox[0] >= 0 for track in plan.tracks)
+    assert (tmp_path / "plan" / "refinement_evidence.json").is_file()
+    failure = RuntimeError("review consumer closed")
+    with pytest.raises(RuntimeError) as raised:
+        engine.plan(request, on_candidates=lambda _: (_ for _ in ()).throw(failure))
+    assert raised.value is failure
+    assert engine.plan(request).tracks  # callback failure releases the engine
+    with pytest.raises(InvalidInputError, match="on_candidates"):
+        engine.plan(request, on_candidates="invalid")
+
+
+def test_new_remove_refines_keep_and_reuses_frame_evidence(tmp_path):
+    from copy import deepcopy
+
+    class CountingDetector(_PlanFakeDetector):
+        calls = 0
+
+        def detect(self, frame):
+            self.calls += 1
+            return super().detect(frame)
+
+    video = tmp_path / "input.mp4"
+    _write_plan_video(video, frames=5)
+    detector = CountingDetector()
+    engine = WipeEngine(task="clean", detector=detector)
+    snapshots = []
+    machine = engine.plan(WipeRequest(video=video, output_dir=tmp_path / "plan", ocr="off"),
+                          on_candidates=snapshots.append)
+    assert snapshots[0]["default_selected_ids"] == sorted(track.id for track in machine.remove_tracks)
+    keep_ids = {track.id for track in machine.tracks if track.action == "keep"}
+    assert keep_ids
+    reviewed = deepcopy(machine)
+    for track in reviewed.tracks:
+        track.action = "remove"
+    before = detector.calls
+    evidence = tmp_path / "plan/refinement_evidence.json"
+    result = engine._refine_review(str(video), machine, reviewed, evidence,
+                                   output_dir=str(tmp_path / "execution"))
+    assert detector.calls == before  # initial subtitle refinement already checked all frames
+    assert all(track.segments for track in result.remove_tracks)
+    saved = json.loads((tmp_path / "execution/refinement_evidence.json").read_text())
+    for candidate in saved["candidates"]:
+        if candidate["id"] in keep_ids:
+            assert candidate["temporal_sample_indices"] == list(range(5))
+    # Fully negative evidence must not fall back to removing the entire video.
+    saved["boxes"] = {str(index): [] for index in range(5)}
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps(saved))
+    with pytest.raises(InvalidInputError, match="remove track must have at least one segment"):
+        engine._refine_review(str(video), machine, deepcopy(reviewed), empty)
+    assert detector.calls == before
+    assert all(track.action == "keep" for track in machine.tracks if track.id in keep_ids)

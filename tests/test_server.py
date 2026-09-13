@@ -51,9 +51,11 @@ def _add_audio(video, output):
 
 class FakeEngine:
     def __init__(self):
+        from types import SimpleNamespace
+        self._task_impl = SimpleNamespace(feather_radius=4)
         self.calls = []
 
-    def plan(self, request, on_progress=None):
+    def plan(self, request, on_progress=None, cancellation=None, on_candidates=None):
         self.calls.append(
             {
                 "method": "plan",
@@ -97,9 +99,21 @@ class FakeEngine:
         mask_image = np.zeros((64, 96), dtype=np.uint8)
         mask_image[50:60, 10:86] = 255
         cv2.imwrite(str(output_path / "auto_mask.png"), mask_image)
-        return self._write_plan(request.video, output_path)
+        plan = self._write_plan(request.video, output_path)
+        self._write_plan(request.video, output_path / "coarse")
+        (output_path / "refinement_evidence.json").write_text("{}")
+        if on_candidates:
+            on_candidates({"source": plan.source.to_dict(), "candidates": candidates["candidates"],
+                           "default_selected_ids": ["c1"], "evidence": {}})
+        return plan
 
-    def run(self, request, on_progress=None):
+    def _trial_identity(self):
+        return {"backend": "fake", "device": "cpu", "weight_sha256": "fake", "precision": "float32"}
+
+    def _refine_review(self, video, machine, plan, evidence, **kwargs):
+        return plan
+
+    def run(self, request, on_progress=None, cancellation=None):
         plan = load_wipe_plan(request.plan, video_path=request.video)
         self.calls.append(
             {
@@ -117,7 +131,20 @@ class FakeEngine:
             on_progress(ProgressEvent("inpaint", 8, 8))
         output_path = Path(request.output_dir)
         result = output_path / "input_clean.mp4"
-        shutil.copyfile(request.video, result)
+        if request.trial_range:
+            reader = cv2.VideoCapture(str(request.video))
+            width, height = int(reader.get(cv2.CAP_PROP_FRAME_WIDTH)), int(reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            writer = cv2.VideoWriter(str(result), cv2.VideoWriter_fourcc(*"mp4v"),
+                                     reader.get(cv2.CAP_PROP_FPS), (width, height * 2))
+            for index in range(request.trial_range[1]):
+                ok, frame = reader.read()
+                assert ok
+                if index >= request.trial_range[0]:
+                    writer.write(np.vstack([frame, frame]))
+            reader.release()
+            writer.release()
+        else:
+            shutil.copyfile(request.video, result)
         return WipeResult(
             output_path=str(result), backend="fake", mask_source="auto",
             timings={"inpaint": 0.01}, warnings=("fake warning",),
@@ -304,7 +331,7 @@ def test_confirm_bbox_override_replaces_only_edited_track_mask(client, tmp_path)
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
     job_dir = tmp_path / "jobs" / job_id
-    before = load_wipe_plan(str(job_dir / "wipe_plan.json"))
+    before = load_wipe_plan(str(Path(jobs.get_job(job_id).plan_dir) / "wipe_plan.json"))
     before_sha = before.mask_asset.sha256
     c2_before = next(track for track in before.tracks if track.id == "c2").mask.copy()
 
@@ -351,8 +378,8 @@ def test_invalid_bbox_override_keeps_plan_unchanged(
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
     job_dir = tmp_path / "jobs" / job_id
-    plan_path = job_dir / "wipe_plan.json"
-    mask_path = job_dir / "wipe_plan_masks.npz"
+    plan_path = Path(jobs.get_job(job_id).plan_dir) / "wipe_plan.json"
+    mask_path = plan_path.parent / "wipe_plan_masks.npz"
     before = (plan_path.read_bytes(), mask_path.read_bytes())
 
     response = test_client.post(f"/jobs/{job_id}/confirm", json=payload)
@@ -404,7 +431,7 @@ def test_confirm_rejects_id_present_only_in_candidates_json(client, tmp_path):
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
 
-    candidates_path = tmp_path / "jobs" / job_id / "clean_candidates.json"
+    candidates_path = Path(jobs.get_job(job_id).plan_dir) / "clean_candidates.json"
     payload = json.loads(candidates_path.read_text(encoding="utf-8"))
     payload["candidates"].append({"id": "candidate-only", "selected": True})
     candidates_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -425,7 +452,7 @@ def test_confirm_rejects_corrupt_plan_without_starting_job(client, tmp_path):
     _write_test_video(video)
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
-    plan_path = tmp_path / "jobs" / job_id / "wipe_plan.json"
+    plan_path = Path(jobs.get_job(job_id).plan_dir) / "wipe_plan.json"
     plan_path.write_text("{", encoding="utf-8")
 
     response = test_client.post(
@@ -503,7 +530,7 @@ def test_confirm_without_selected_ids_uses_current_wipe_plan_actions(client, tmp
     job_id = create_response.json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
 
-    plan_path = tmp_path / "jobs" / job_id / "wipe_plan.json"
+    plan_path = Path(jobs.get_job(job_id).plan_dir) / "wipe_plan.json"
     plan = load_wipe_plan(str(plan_path))
     for track in plan.tracks:
         track.action = "remove" if track.id == "c2" else "keep"
@@ -555,7 +582,7 @@ def test_trial_isolated_plan_retry_and_media(client, tmp_path, monkeypatch):
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
     job = jobs.get_job(job_id)
-    canonical = Path(job.output_dir) / "wipe_plan.json"
+    canonical = Path(job.plan_dir) / "wipe_plan.json"
     original = canonical.read_bytes()
     body = {"selected_ids": ["c1"], "bbox_overrides": {"c1": [12, 50, 80, 60]},
             "start_seconds": 1.25, "duration_seconds": 3}
@@ -579,9 +606,10 @@ def test_trial_isolated_plan_retry_and_media(client, tmp_path, monkeypatch):
         raise RuntimeError("test inference failure")
 
     monkeypatch.setattr(fake, "run", fail)
+    body["bbox_overrides"]["c1"] = [14, 50, 80, 60]
     test_client.post(f"/jobs/{job_id}/trial", json=body)
     failed = _wait_for_state(test_client, job_id, "preview_ready")
-    assert failed["trial"] is None
+    assert failed["trial"]["id"] == trial_id  # previous successful trial survives
     assert "test inference failure" in failed["error"]
     assert canonical.read_bytes() == original
     monkeypatch.setattr(fake, "run", original_run)
@@ -624,10 +652,10 @@ def test_trial_serializes_work_and_rejects_inactive_interval(client, tmp_path, m
     job_id = _post_video(test_client, video).json()["id"]
     _wait_for_state(test_client, job_id, "preview_ready")
     job = jobs.get_job(job_id)
-    path = Path(job.output_dir) / "wipe_plan.json"
+    path = Path(job.plan_dir) / "wipe_plan.json"
     plan = load_wipe_plan(str(path))
     plan.tracks[0].segments = [Segment(4, 8)]
-    save_wipe_plan(plan, job.output_dir)
+    save_wipe_plan(plan, job.plan_dir)
     assert test_client.post(f"/jobs/{job_id}/trial", json={"duration_seconds": 0.5}).status_code == 400
     release = threading.Event()
     original_run = fake.run
@@ -686,7 +714,7 @@ def test_media_is_job_bound_and_evidence_uses_observed_frame(client, tmp_path):
     job = jobs.get_job(job_id)
     assert job.original_filename == "中文片段.mp4"
     assert Path(job.video_path).name == "input.mp4"
-    candidates_path = Path(job.output_dir) / "clean_candidates.json"
+    candidates_path = Path(job.plan_dir) / "clean_candidates.json"
     candidates = json.loads(candidates_path.read_text())
     candidates["candidates"][0]["presence_frames"] = [5, 3, 7]
     candidates_path.write_text(json.dumps(candidates))
@@ -739,7 +767,7 @@ def test_workspace_recommendation_and_stale_trial_state():
     page = server_app._web_index().read_text()
     recommendation = page.split("    function recommend() {", 1)[1].split("    function invalidateTrial()", 1)[0]
     transition = page.split("    async function applyStatus(data) {", 1)[1].split("    async function showDone", 1)[0]
-    signature = page.split("    function signature(request) {", 1)[1].split("    function saveReview()", 1)[0]
+    signature = page.split("    function signature(request) {", 1)[1].split("    function saveReview(", 1)[0]
     harness = r'''
 const assert = require("node:assert/strict");
 const nodes = {start:{value:0},duration:{value:3}};
@@ -749,6 +777,7 @@ const duration = () => 20;
 let mask=true; const bboxDrafts={};
 const selectedTracks = () => [{id:"c1",has_mask:mask,segments:[[300,500]]}];
 let currentJobId="job", state="trial_running", latestState, reviewLoaded=false, trial=null;
+let finalPlanReady=false,previewLoading=false,resultRevision=null;
 let events=[];
 const renderActions=()=>{}, renderTargets=()=>{}, renderTimeline=()=>{}, renderOverlays=()=>{};
 const closeStream=()=>events.push("closed"), notify=(text)=>events.push(text), showWarnings=()=>{};
@@ -789,7 +818,7 @@ def test_review_and_evidence_paths_reject_symlink_escape(client, tmp_path):
     (Path(job.output_dir) / "evidence-0.jpg").symlink_to(video)
     assert test_client.get(f"/jobs/{job_id}/frame?frame_index=0").status_code == 409
     assert len(server_app._display_filename("中" * 200).encode("utf-8")) <= 180
-    plan_path = Path(job.output_dir) / "wipe_plan.json"
+    plan_path = Path(job.plan_dir) / "wipe_plan.json"
     plan_path.rename(plan_path.with_suffix(".bak"))
     assert test_client.get(f"/jobs/{job_id}/frame?frame_index=0").status_code == 409
 
@@ -803,11 +832,12 @@ def test_restored_edited_trial_still_loads_source_video(confirmed):
 const assert=require("node:assert/strict");
 const preview={source:{fps:25,width:100,height:100,frame_count:500},original_filename:"clip.mp4",
 tracks:[{id:"c1",bbox:[1,1,50,50],action:"remove",evidence_frame:300}],
-trial:{ready:true,request:{selected_ids:["c1"],bbox_overrides:{},start_seconds:12,duration_seconds:3}}};
+trial:{ready:true,start_seconds:13,request:{selected_ids:["c1"],bbox_overrides:{},start_seconds:12,duration_seconds:3}}};
 const saved={selected_ids:["c1"],bbox_overrides:{c1:[2,2,51,51]},start_seconds:12,duration_seconds:3};
-let source,tracks,selectedIds,bboxDrafts,manualTime,reviewLoaded,activeTrackId;
+let source,tracks=[],selectedIds=[],bboxDrafts={},manualTime,reviewLoaded,activeTrackId,reviewRevision,finalPlanReady;
+let segmentDrafts={},protections=[],savedReview=null,undoStack=[];const renderProtections=()=>{};
 let currentJobId="job",state="preview_ready";
-const nodes={};const $=id=>nodes[id]||=( {} );
+const nodes={};const $=id=>nodes[id]||=({replaceChildren(){}});
 const request=async()=>preview;
 const storageGet=key=>key.includes("review")?JSON.stringify(saved):"13";
 const signature=JSON.stringify,reviewRequest=()=>saved;
@@ -817,6 +847,8 @@ const events=[];const setMedia=(view,at)=>events.push([view,at]);
     assertions = r'''
 (async()=>{await loadPreview("job");assert.deepEqual(events,[["source",13]]);assert.deepEqual(bboxDrafts,saved.bbox_overrides);})().catch(error=>{console.error(error);process.exitCode=1;});
 '''
+    if not confirmed:
+        harness += "preview.overrides=saved;"
     if confirmed:
         harness += "preview.confirmed_review={...saved,bbox_overrides:{c1:[3,3,52,52]}};"
         assertions = assertions.replace("saved.bbox_overrides", "preview.confirmed_review.bbox_overrides")
@@ -866,3 +898,375 @@ updateOverlayVisibility();assert.equal(box.hidden,false);
                     + "async function pickFile(file) {" + pick
                     + "function inspect(id) {" + inspect
                     + "function updateOverlayVisibility() {" + visibility + assertions], check=True)
+
+
+def test_early_review_cas_survives_refinement(client, tmp_path, monkeypatch):
+    import threading
+    test_client, fake = client
+    video = tmp_path / "early.mp4"
+    _write_test_video(video)
+    ready, finish = threading.Event(), threading.Event()
+    original = fake.plan
+
+    def blocked(request, **kwargs):
+        plan = original(request, **kwargs)
+        ready.set()
+        assert finish.wait(5)
+        return plan
+
+    monkeypatch.setattr(fake, "plan", blocked)
+    job_id = _post_video(test_client, video).json()["id"]
+    assert ready.wait(5)
+    try:
+        snapshot = test_client.get(f"/jobs/{job_id}").json()
+        assert snapshot["state"] == "pending" and snapshot["review_ready"]
+        assert not snapshot["final_plan_ready"]
+        assert test_client.get(f"/jobs/{job_id}/preview").status_code == 200
+        body = {"expected_revision": 0, "overrides": {
+            "selected_ids": ["c1"], "bbox_overrides": {"c1": [12, 50, 80, 60]},
+        }}
+        saved = test_client.patch(f"/jobs/{job_id}/review", json=body)
+        assert saved.status_code == 200 and saved.json()["review_revision"] == 1
+        assert test_client.patch(f"/jobs/{job_id}/review", json=body).status_code == 409
+        assert test_client.post(f"/jobs/{job_id}/trial", json={}).status_code == 409
+    finally:
+        finish.set()
+    snapshot = _wait_for_state(test_client, job_id, "preview_ready")
+    assert snapshot["overrides"] == body["overrides"]
+    assert snapshot["final_plan_ready"] and snapshot["review_revision"] == 1
+    assert test_client.post(f"/jobs/{job_id}/confirm", json={"expected_revision": 0}).status_code == 409
+
+
+def test_saved_trial_cache_and_result_survive_restart(client, tmp_path):
+    test_client, fake = client
+    video = tmp_path / "resume.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    body = {"selected_ids": ["c1"], "start_seconds": 0, "duration_seconds": 1}
+    test_client.post(f"/jobs/{job_id}/trial", json=body)
+    first = _wait_for_state(test_client, job_id, "preview_ready")
+    assert first["trial"]["ready"] and not first["trial"]["cache_hit"]
+    calls = len(fake.calls)
+    test_client.post(f"/jobs/{job_id}/trial", json=body)
+    second = _wait_for_state(test_client, job_id, "preview_ready")
+    assert second["trial"]["cache_hit"] and len(fake.calls) == calls
+    test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]})
+    done = _wait_for_state(test_client, job_id, "done")
+    manifest = json.loads((Path(jobs.get_job(job_id).output_dir) / "job.json").read_text())
+    assert manifest["schema_version"] == 1
+    assert not Path(manifest["plan_dir"]).is_absolute()
+    jobs.reset_jobs()
+    restored = test_client.get("/jobs/current").json()
+    assert restored["state"] == "done" and restored["id"] == job_id
+    assert restored["trial"]["id"] == done["trial"]["id"]
+    assert test_client.get(f"/jobs/{job_id}/result-video").status_code == 200
+    assert test_client.get(f"/jobs/{job_id}/trial-video?trial_id={done['trial']['id']}").status_code == 200
+
+
+@pytest.mark.parametrize("damage", ["schema", "escape", "symlink", "source", "pair", "json"])
+def test_recovery_rejects_corrupt_or_foreign_manifest(client, tmp_path, damage):
+    test_client, _ = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    path = Path(job.output_dir) / "job.json"
+    data = json.loads(path.read_text())
+    if damage == "schema":
+        data["schema_version"] = 99
+    elif damage == "escape":
+        data["video_path"] = "../outside.mp4"
+    elif damage == "symlink":
+        Path(job.video_path).unlink()
+        Path(job.video_path).symlink_to(video)
+    elif damage == "source":
+        Path(job.video_path).write_bytes(b"replaced input")
+    elif damage == "pair":
+        (Path(job.plan_dir) / "wipe_plan_masks.npz").write_bytes(b"incomplete masks")
+    if damage == "json":
+        path.write_text("{")
+    else:
+        path.write_text(json.dumps(data))
+    jobs.reset_jobs()
+    response = test_client.get("/jobs/current").json()
+    assert response["state"] == "idle" and response["recovery_error"]
+    assert jobs.get_job(job_id) is None
+
+
+def test_cancel_holds_slot_and_duplicate_operation_does_not_start_worker(client, tmp_path, monkeypatch):
+    import threading
+    test_client, fake = client
+    video = tmp_path / "cancel.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    entered, finish = threading.Event(), threading.Event()
+    calls = []
+
+    def blocked(request, on_progress=None, cancellation=None):
+        calls.append(request)
+        entered.set()
+        assert finish.wait(5)
+        cancellation.raise_if_cancelled()
+        raise AssertionError("cancellation must be observed")
+
+    monkeypatch.setattr(fake, "run", blocked)
+    body = {"operation_id": "one", "selected_ids": ["c1"]}
+    assert test_client.post(f"/jobs/{job_id}/confirm", json=body).status_code == 200
+    assert entered.wait(5)
+    try:
+        assert test_client.post(f"/jobs/{job_id}/confirm", json=body).status_code == 200
+        assert len(calls) == 1
+        for _ in range(2):
+            assert test_client.post(f"/jobs/{job_id}/cancel").json()["state"] == "cancelling"
+        assert _post_video(test_client, video).status_code == 409
+        assert test_client.delete("/jobs/current").status_code == 409
+    finally:
+        finish.set()
+    snapshot = _wait_for_state(test_client, job_id, "preview_ready")
+    assert snapshot["overrides"]["selected_ids"] == ["c1"]
+    assert not snapshot["result_path"]
+
+
+def test_manifest_atomic_failure_preserves_previous_bytes(client, tmp_path, monkeypatch):
+    test_client, _ = client
+    video = tmp_path / "atomic.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    manifest = Path(job.output_dir) / "job.json"
+    before = manifest.read_bytes()
+    monkeypatch.setattr(jobs.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError, match="disk full"):
+        job.save()
+    assert manifest.read_bytes() == before
+    assert not list(Path(job.output_dir).glob(".job.json.*.tmp"))
+
+
+def test_cache_key_tracks_execution_factors_and_playback_pins(client, tmp_path):
+    from copy import deepcopy
+    test_client, fake = client
+    video = tmp_path / "cache.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    plan = load_wipe_plan(str(Path(job.plan_dir) / "wipe_plan.json"))
+    identity = fake._trial_identity()
+    original = server_app._trial_key(plan, (0, 4), identity)
+    for key in ["backend", "device", "weight_sha256", "precision", "gap", "ref_length", "neighbor_stride", "feather", "encoding", "implementation_sha256"]:
+        changed = dict(identity, **{key: "different"})
+        assert server_app._trial_key(plan, (0, 4), changed) != original
+    assert server_app._trial_key(plan, (1, 4), identity) != original
+    changed = deepcopy(plan)
+    changed.tracks[0].mask[50, 10] = 0
+    assert server_app._trial_key(changed, (0, 4), identity) != original
+    # A held browser playback lease excludes its file even after a newer trial.
+    for index in range(4):
+        test_client.post(f"/jobs/{job_id}/trial", json={"duration_seconds": (index + 1) / 4})
+        state = _wait_for_state(test_client, job_id, "preview_ready")
+        if index < 3:
+            assert test_client.post(f"/jobs/{job_id}/playback", json={
+                "lease_id": str(index), "trial_id": state["trial"]["id"],
+            }).status_code == 200
+    assert len(job.trial_cache) == 3  # fourth result succeeds without caching
+    assert all(jobs.contained_path(job.output_dir, row["path"]).is_file() for row in job.trial_cache)
+
+
+def test_retry_uses_new_run_and_last_success_remains_available(client, tmp_path, monkeypatch):
+    test_client, fake = client
+    video = tmp_path / "retry.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    original = fake.run
+    attempted = []
+
+    def fail(request, **kwargs):
+        attempted.append(request.output_dir)
+        raise RuntimeError("encoder failure")
+
+    monkeypatch.setattr(fake, "run", fail)
+    test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]})
+    failed = _wait_for_state(test_client, job_id, "error")
+    assert failed["overrides"]["selected_ids"] == ["c1"]
+    monkeypatch.setattr(fake, "run", original)
+    assert test_client.post(f"/jobs/{job_id}/retry", json={"operation_id": "retry-full"}).status_code == 200
+    done = _wait_for_state(test_client, job_id, "done")
+    assert Path(done["result_path"]).parent != Path(attempted[0])
+    assert test_client.get(f"/jobs/{job_id}/download").status_code == 200
+    assert test_client.delete("/jobs/current").status_code == 200
+    jobs.reset_jobs()
+    assert test_client.get("/jobs/current").json()["state"] == "idle"
+
+
+def test_interrupted_detection_requires_new_review_and_only_restores_last(client, tmp_path):
+    test_client, _ = client
+    video = tmp_path / "interrupted.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    test_client.patch(f"/jobs/{job_id}/review", json={"expected_revision": 0,
+        "overrides": {"selected_ids": ["c2"], "bbox_overrides": {}}})
+    job.state, job.phase = "pending", "refine"
+    job.plan_dir, job.final_plan_ready = None, False
+    job.save()
+    jobs.reset_jobs()
+    restored = test_client.get("/jobs/current").json()
+    assert restored["state"] == "interrupted" and restored["overrides"]["selected_ids"] == ["c2"]
+    assert test_client.post(f"/jobs/{job_id}/retry", json={"operation_id": "detect-again"}).status_code == 200
+    ready = _wait_for_state(test_client, job_id, "preview_ready")
+    assert ready["overrides"] is None
+    assert ready["previous_review"]["overrides"]["selected_ids"] == ["c2"]
+    assert ready["selected_ids"] == ["c1"]
+    assert test_client.post(f"/jobs/{job_id}/retry", json={"operation_id": "detect-again"}).status_code == 200
+
+
+def test_progress_estimate_requires_comparable_completed_segments(tmp_path, monkeypatch):
+    job = jobs.Job("test", "", str(tmp_path))
+    tick = iter(range(20))
+    monkeypatch.setattr(server_app.time, "perf_counter", lambda: next(tick))
+    for index in (25, 50, 75):
+        server_app._update_progress(job, ProgressEvent("inpaint", index, 150, "bands=1"))
+        assert job.remaining_seconds is None
+    server_app._update_progress(job, ProgressEvent("inpaint", 100, 150, "bands=1"))
+    assert job.remaining_seconds == [2, 2]
+    server_app._update_progress(job, ProgressEvent("inpaint", 125, 150, "bands=0"))
+    assert job.remaining_seconds is None
+    server_app._update_progress(job, ProgressEvent("encode", 0, 1))
+    assert job.remaining_seconds is None and job.completed == 0 and job.total == 1
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires node")
+def test_native_sse_reconnect_and_missing_job_stop():
+    html = server_app._web_index().read_text()
+    function = html.split("    function startProgressStream(jobId) {", 1)[1].split("    async function restoreJob()", 1)[0]
+    harness = r'''
+const assert=require("node:assert/strict");
+let stream=null,state="pending",missing=false;const messages=[],snapshots=[];
+class EventSource {constructor(url){this.url=url;this.closed=false;}close(){this.closed=true;}}
+const notify=message=>messages.push(message),applyStatus=data=>snapshots.push(data);
+function closeStream(){if(stream){stream.close();stream=null;}}
+const request=async()=>{if(missing)throw {status:404,message:"missing"};return {id:"job",state:"pending"};};
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+'''
+    assertions = r'''
+(async()=>{
+startProgressStream("job");const first=stream;
+first.onerror();await settle();assert.equal(first.closed,false);assert.equal(stream,first);
+first.onopen();await settle();assert.equal(snapshots.length,1);
+state="preview_ready";const before=messages.length;first.onerror();assert.equal(messages.length,before);
+state="pending";missing=true;first.onerror();await settle();assert.equal(first.closed,true);assert.equal(stream,null);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    subprocess.run(["node", "-e", harness + "function startProgressStream(jobId) {" + function + assertions], check=True)
+
+
+def test_revision_protection_mask_restore_and_result_marks(client, tmp_path):
+    test_client, fake = client
+    video = tmp_path / 'revision.mp4'; _write_test_video(video)
+    job_id = _post_video(test_client, video).json()['id']
+    ready = _wait_for_state(test_client, job_id, 'preview_ready')
+    edits = {'selected_ids': ['c1'], 'bbox_overrides': {},
+             'segment_overrides': {'c1': [[4, 8], [0, 3], [2, 5]]},
+             'protections': [{'id': 'p_one', 'bbox': [20, 45, 30, 63], 'segments': [[0, 1], [7, 8]]}]}
+    saved = test_client.patch(f'/jobs/{job_id}/review', json={'expected_revision': ready['review_revision'], 'overrides': edits})
+    assert saved.status_code == 200
+    snapshot = saved.json(); revision = snapshot['review_revision']
+    assert snapshot['overrides']['segment_overrides']['c1'] == [[0, 8]]
+    response = test_client.get(f'/jobs/{job_id}/mask?revision={revision}&frame_index=0')
+    assert response.status_code == 200
+    alpha = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_GRAYSCALE)
+    assert not alpha[45:64, 20:31].any() and alpha[52, 40] == 255
+    assert test_client.get(f'/jobs/{job_id}/mask?revision={revision-1}&frame_index=0').status_code == 409
+    assert test_client.get(f'/jobs/{job_id}/mask?revision={revision}&frame_index=8').status_code == 400
+    assert test_client.post(f'/jobs/{job_id}/confirm', json={**edits, 'expected_revision': revision}).status_code == 200
+    done = _wait_for_state(test_client, job_id, 'done')
+    assert done['result_revision'] and fake.calls[-1]['plan'].schema_version == 2
+    data = test_client.get(f'/jobs/{job_id}/result-review').json()
+    assert len(data['windows']) <= 12 and data['result_revision'] == done['result_revision']
+    mark = {'result_revision': done['result_revision'], 'frame_index': 3, 'status': 'issue'}
+    assert test_client.post(f'/jobs/{job_id}/result-review', json=mark).status_code == 200
+    assert test_client.post(f'/jobs/{job_id}/result-review', json={**mark, 'result_revision': 'stale'}).status_code == 409
+    old_result = jobs.get_job(job_id).result_path
+    # Saving decisions on a completed job still allows another export.
+    assert test_client.post(f'/jobs/{job_id}/confirm', json=edits).status_code == 200
+    newer = _wait_for_state(test_client, job_id, 'done')
+    assert newer['result_revision'] != done['result_revision']
+    assert newer['review_marks'] == [{'frame_index': 3, 'status': 'issue'}]
+    assert Path(old_result).is_file()
+    jobs.JOBS.clear(); jobs._current_job = None
+    restored = test_client.get('/jobs/current').json()
+    assert restored['result_revision'] == newer['result_revision']
+    assert restored['overrides']['protections'] == edits['protections']
+    assert test_client.get(f'/jobs/{job_id}/mask?revision={restored["review_revision"]}&frame_index=7').status_code == 200
+
+
+def test_empty_effective_removal_and_invalid_edits_do_not_execute(client, tmp_path):
+    test_client, fake = client
+    video = tmp_path / 'empty.mp4'; _write_test_video(video)
+    job_id = _post_video(test_client, video).json()['id']
+    _wait_for_state(test_client, job_id, 'preview_ready')
+    edits = {'selected_ids': ['c1'], 'protections': [
+        {'id': 'p_all', 'bbox': [0, 0, 95, 63], 'segments': [[0, 8]]}]}
+    assert test_client.post(f'/jobs/{job_id}/confirm', json=edits).status_code == 400
+    assert test_client.post(f'/jobs/{job_id}/trial', json=edits).status_code == 400
+    assert not any(c['method'] == 'run' for c in fake.calls)
+    for intervals in ([], [[0, 0]], [[-1, 2]], [[0, 9]], [[True, 2]], [[1.2, 3]]):
+        response = test_client.patch(f'/jobs/{job_id}/review', json={
+            'expected_revision': 0, 'overrides': {'selected_ids': ['c1'], 'segment_overrides': {'c1': intervals}}})
+        assert response.status_code in (400, 422)
+    assert test_client.post(f'/jobs/{job_id}/confirm', json={}).status_code == 200
+    _wait_for_state(test_client, job_id, 'done')
+    directory = Path(jobs.get_job(job_id).output_dir) / 'predictions'; directory.mkdir()
+    (directory / ('a'*64 + '.npz')).write_bytes(b'cache')
+    (directory / 'keep.txt').write_text('unrelated')
+    temporary = directory / ('.' + 'b'*32 + '.tmp'); temporary.write_bytes(b'orphan')
+    assert test_client.delete(f'/jobs/{job_id}/prediction-cache').status_code == 200
+    assert (directory / 'keep.txt').is_file() and not list(directory.glob('*.npz')) and not temporary.exists()
+
+
+def test_editor_seconds_roundtrip_preserves_frame_boundaries():
+    from types import SimpleNamespace
+    from videowipe.server.review import seconds_to_frames
+    for fps in (25, 29.97, 30000/1001):
+        source = SimpleNamespace(fps=fps, frame_count=1000)
+        for first in range(999):
+            assert seconds_to_frames(first/fps, (first+1)/fps, source) == (first, first+1)
+        assert seconds_to_frames(1.25/fps, 4.75/fps, source) == (1, 5)
+    if shutil.which('node'):
+        html = server_app._web_index().read_text()
+        function = html.split('    function parseIntervals(text) {', 1)[1].split('    function edited()', 1)[0]
+        code = 'const assert=require("node:assert/strict");let source={fps:25,frame_count:1000};const duration=()=>source.frame_count/source.fps;'
+        code += 'function parseIntervals(text) {' + function
+        code += 'for(const fps of [25,29.97,30000/1001]){source.fps=fps;for(let n=0;n<999;n++)assert.deepEqual(parseIntervals(`${n/fps}, ${(n+1)/fps}`),[[n,n+1]]);}'
+        subprocess.run(['node', '-e', code], check=True)
+
+
+def test_interrupted_trial_retry_keeps_latest_interval_and_never_exports_full(client, tmp_path, monkeypatch):
+    test_client, _ = client
+    video = tmp_path/'trial-retry.mp4'
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()['id']
+    _wait_for_state(test_client, job_id, 'preview_ready')
+    test_client.post(f'/jobs/{job_id}/trial', json={'start_seconds': 0, 'duration_seconds': .25})
+    old = _wait_for_state(test_client, job_id, 'preview_ready')['trial']
+    # Persist a different pending request, then emulate loss of its worker.
+    monkeypatch.setattr(server_app.threading.Thread, 'start', lambda self: None)
+    test_client.post(f'/jobs/{job_id}/trial', json={'start_seconds': .5, 'duration_seconds': .5})
+    jobs.reset_jobs()
+    restored = test_client.get('/jobs/current').json()
+    assert restored['state'] == 'interrupted' and restored['trial']['id'] == old['id']
+    calls = []
+    def trial(job_id, body):
+        calls.append(body)
+        return {'retried': 'trial'}
+    monkeypatch.setattr(server_app, 'trial', trial)
+    monkeypatch.setattr(server_app, 'confirm', lambda *args: pytest.fail('trial retry launched full export'))
+    assert server_app.retry(job_id, server_app.RetryRequest(operation_id='retry-trial')) == {'retried': 'trial'}
+    assert len(calls) == 1 and calls[0].start_seconds == .5 and calls[0].duration_seconds == .5
+    assert calls[0].operation_id == 'retry-trial'

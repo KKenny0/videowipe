@@ -70,6 +70,8 @@ class InpaintJob:
     feather_radius: int = 0
     frame_mask: Optional[Callable[[int], np.ndarray]] = None
     trial_range: Optional[tuple[int, int]] = None
+    prediction_cache_dir: Optional[str] = None
+    phase_progress: Optional[Callable[[str, int, int, Optional[str]], None]] = None
 
 
 @dataclass

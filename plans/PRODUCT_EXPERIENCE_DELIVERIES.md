@@ -1,6 +1,6 @@
 # VideoWipe 三次交付实施方案
 
-日期：2026-09-12。状态：交付一原型已确认、实现及工程验收完成；交付二、三仍为后续方案。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md。
+日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。
 基线：v0.10.0，main，7286a04。原有未跟踪产品文档、plans 和 jobs 保留。
 
 ## 目标、取舍和共同边界
@@ -107,16 +107,16 @@ STTN 分段预测 —— 交付三的有界预测缓存
 
 ### 接口、文件、验收与回退
 
-- SDK 仅增加上述可选 on_candidates；WipeRequest 及 WipePlan v1 保持兼容。新增 HTTP review/cancel/retry；原 trial/confirm 请求新增可选 expected_revision、operation_id，新页面必须发送，旧客户端字段缺省仍走原来的单任务校验。
+- SDK 仅增加上述可选 on_candidates；WipeRequest 及 WipePlan v1 保持兼容。新增 HTTP review/cancel/retry 及 playback 播放引用保护；原 trial/confirm 请求新增可选 expected_revision、operation_id，新页面必须发送，旧客户端字段缺省仍走原来的单任务校验。
 - 主要涉及 engine.py、planning.py、detect.py（保留可复用细化检测框）、server/app.py、server/jobs.py、web/index.html、weights.py，以及现有 tests/test_server.py、tests/test_trial.py、tests/test_boundaries.py。清单读写先放 jobs.py，不设 Repository/Store 抽象。
 - 新增维护脚本 scripts/verify_cleanup_journey.py：mode=journey，记录选择文件、复制结束、候选可审阅、精修完成、首段可播放、全片可播放时间；区分冷启动、热启动、缓存命中。可运行命令见统一验收部分。
-- 真实三样本加一条由 english1 重复生成的 10 分钟压力素材：候选可审阅必须先于 refine 完成；同设置二次试擦模型调用为零；缓存键任一执行因素改变不能误命中；未命中普通全流程三次中位数退化不超过 5%。长素材只证明时长/资源行为，不代表真实长视频内容多样性。这些是待验收门槛。
+- 真实三样本加一条由 english1 重复生成的 10 分钟压力素材：候选可审阅必须先于 refine 完成；同设置二次试擦模型调用为零；缓存键任一执行因素改变不能误命中；未命中普通全流程三次中位数退化不超过 5%。长素材只证明时长/资源行为，不代表真实长视频内容多样性。上述工程门槛已通过；普通三样本三轮中位数退化分别为 1.8%、1.0%、0.6%，长素材三轮完成。原始记录见 result/product-journey/report.json 和 result/product-journey-long/report.json。
 - 覆盖断网重连、跨标签页旧版本、连续取消/重试、检测/编码失败、取消期间上传另一任务、服务重启、损坏清单、计划对写入中断、源片替换、缓存不足。等待计算真正退出后才释放单任务槽。
 - 回退后 v1 计划仍可由旧引擎执行，原视频和成功结果均保留；旧版忽略新清单，不承诺旧 UI 能恢复新任务。恢复能力不等于推理断点续算。
 
 ## 交付三：减少全片返工
 
-预计 10–15 个工程日；其中有界预测复用与保护语义的验证占主要时间。先交付复查定位和确定性编辑，再交付预测复用；未通过复用收益门槛时关闭复用，保留前两项可用功能并如实说明。
+复查定位、时间与保护编辑、分段预测复用已实现。三样片三轮门槛通过后，网页默认开启复用；SDK 仍由 prediction_cache_dir 显式开启。工程验证、最终实现复核与画质限制见交付三报告。多语样片存在明显残字，不宣称画质已达标。
 
 ### 3A 有依据的复查位置
 
@@ -181,7 +181,7 @@ PYTHONPATH=src python scripts/verify_cleanup_journey.py --mode journey --repeat 
 PYTHONPATH=src python scripts/verify_cleanup_journey.py --mode revision --repeat 3 --output result/product-revision
 ~~~
 
-上述是待实现验证入口，不是已经运行通过的命令。脚本必须同时保存源/计划/权重/实现身份，不能拿手工遮罩时间替代自动检测全流程时间。重复素材单独标记为压力测试，不与目标用户真实素材的结果混算。
+journey 验证入口已实现；普通素材以独立 HTTP 服务交替运行交付一基线与当前实现，各三轮。长素材仅运行当前实现三轮，检查时长、资源、复用与产物；普通素材承担性能回退门槛。revision 入口已实现：对同一自动检测计划做 SDK 冷/热缓存配对导出，记录编码前整片像素哈希与保护像素检查；它不冒充 HTTP 全流程耗时。验收是否通过以对应报告为准。脚本必须同时保存源/计划/权重/实现身份，不能拿手工遮罩时间替代自动检测全流程时间。重复素材单独标记为压力测试，不与目标用户真实素材的结果混算。
 
 交付三改变投影语义，还需在冻结的干净候选副本运行 make fact-baseline-formal 和 make decision-baseline-formal，并保留对 golden masks 的差异说明。正式基线不能在混有其他改动的工作区冒充完成。
 
@@ -207,3 +207,15 @@ PYTHONPATH=src python scripts/verify_cleanup_journey.py --mode revision --repeat
 - [FFmpeg concat](https://ffmpeg.org/ffmpeg-formats.html#concat-1)：拼接存在流、时间基等约束；本方案选择原片重新合成编码，避免先引入局部 MP4 拼接。
 - [IOPaint 对比交互源码](https://github.com/Sanster/IOPaint/blob/61a759fb3f332bacdce8b2813f4837495c9b86e0/web_app/src/components/Editor.tsx#L499-L527)：借鉴原地临时查看原图；不把静态图片切换当视频同步证明。
 - [LosslessCut 项目保存源码](https://github.com/mifi/lossless-cut/blob/aa498c38ec3dd3fd26b98d44aa86b27bbcbce333/src/renderer/src/hooks/useSegmentsAutoSave.ts#L21-L65)：借鉴将编辑决定保存为独立项目；VideoWipe 用 source SHA 绑定输入，并在执行前等待保存成功。
+
+### 2026-09-13 残字排查补记
+
+全片频率蒙版会裁掉变化字幕的边缘；完整检测框并集加余量虽改善多语残字，但逐帧区域 Jaccard 从 0.239141 降至 0.149409，实验已撤回。交付三原实现保留，画质仍未签收。下一步先验证按字幕时间段变化的局部空间蒙版及计划重放兼容性，避免继续全片扩张。证据：`result/residue-investigation/REPORT.md`。
+
+### 2026-09-13 局部字幕蒙版实现
+
+WipePlan v3 已接通局部空间区间、短窗口字高稳定、插值边界补检、时间/保护编辑与缓存重放。387 项测试通过，三样片完整导出及最终保护区缓存等价通过。代码保留为未提交待审改动；画质仍未签收：逐帧 Jaccard 0.227228、boundary F 0.347644，低于原实现，虽多语标注帧字幕覆盖从 92.88% 提高至 99.61%。下一步收紧背景覆盖并检查重建残留，不继续扩大计划/缓存层。证据：`result/local-subtitle-masks/REPORT.md`。
+
+### 2026-09-13 收紧字幕背景覆盖
+
+修复 DBNet 手工路径的补边坐标还原与长框扩边；同时移除持久右上 Logo 分类对框宽的依赖，避免收窄后“只去水印”误选。390 项测试通过，六个选择场景全通过。三样片标注帧平均擦除面积减少 28%–32%，逐帧 Jaccard 从 0.227228 升至 0.320703，boundary F 从 0.347644 升至 0.458330；原始标注覆盖率略降，原图中的疑似背景标注未修改。三条成片已生成，最终计划逐帧 alpha 与成片所用 alpha 一致，保留区域像素校验通过。画质仍未签收，英文第 152 帧仍有模型重建黑痕；下一步固定蒙版，检查预测残留和连续帧闪烁。未提交、未发布，证据：`result/local-subtitle-tightening/REPORT.md`。

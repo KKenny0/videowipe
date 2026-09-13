@@ -13,7 +13,7 @@ from videowipe.inpainters.base import InpaintJob
     (True, True, "auto", "cuda:0"), (False, True, "auto", "mps"),
     (False, False, "auto", "cpu"), (True, True, "cpu", "cpu"),
 ])
-def test_device_precedence(monkeypatch, cuda, mps, requested, expected):
+def test_device_precedence(tmp_path, monkeypatch, cuda, mps, requested, expected):
     torch = pytest.importorskip("torch")
     from videowipe.models import sttn as model
     devices = []
@@ -33,7 +33,9 @@ def test_device_precedence(monkeypatch, cuda, mps, requested, expected):
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
     monkeypatch.setattr(torch, "load", lambda *a, **kw: {"netG": {}})
     monkeypatch.setattr(model, "InpaintGenerator", FakeModel)
-    assert str(TorchBackend("unused", requested).device) == expected
+    weight = tmp_path / "fake.pth"
+    weight.write_bytes(b"test weights")
+    assert str(TorchBackend(str(weight), requested).device) == expected
     assert devices == [expected]
 
 
