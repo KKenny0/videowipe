@@ -33,20 +33,16 @@ def get_ref_index(neighbor_ids, length, ref_length):
     return ref_index
 
 
-def blend_frames(comp_frames, pred_img, neighbor_ids, mask):
+def blend_frames(comp_frames, pred_img, neighbor_ids, counts):
     """Blend predicted frames into the composite buffer.
 
     Pure-numpy replacement for the former @njit version.
-    neighbor_ids may contain duplicates across calls; for first hit the
-    frame is written directly, for subsequent hits it is averaged.
+    Accumulate repeated frame IDs; normalize once after all windows.
     """
     for i, idx in enumerate(neighbor_ids):
         img = pred_img[i].astype(np.float32)
-        if not mask[idx]:
-            comp_frames[idx] = img
-            mask[idx] = True
-        else:
-            comp_frames[idx] = 0.5 * comp_frames[idx] + 0.5 * img
+        comp_frames[idx] += img
+        counts[idx] += 1
 
 
 def _blend_frame_regions(frame_ori, comp_frames, modes, mask):
@@ -80,7 +76,7 @@ def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
     feats = backend.encode(backend.preprocess(frames))
 
     comp_frames_np = np.zeros((video_length, h, w, 3), dtype=np.float32)
-    mask = np.zeros((video_length,), dtype=np.bool_)
+    counts = np.zeros((video_length,), dtype=np.int32)
 
     for f in range(0, video_length, neighbor_stride):
         neighbor_ids = [
@@ -96,12 +92,12 @@ def _process_segment(frames, backend, w, h, ref_length, neighbor_stride):
         transformed = backend.transform(selected)
         decoded = backend.decode(transformed[: len(neighbor_ids)])
 
-        blend_frames(comp_frames_np, decoded, np.array(neighbor_ids), mask)
+        blend_frames(comp_frames_np, decoded, np.array(neighbor_ids), counts)
 
     comp_frames = []
     for idx in range(video_length):
-        if mask[idx]:
-            comp_frames.append(np.clip(comp_frames_np[idx], 0, 255).astype(np.uint8))
+        if counts[idx]:
+            comp_frames.append(np.clip(comp_frames_np[idx] / counts[idx], 0, 255).astype(np.uint8))
         else:
             comp_frames.append(None)
     return comp_frames
