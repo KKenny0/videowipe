@@ -36,6 +36,14 @@
 
 ---
 
+## Development status
+
+The changes on `main` since v0.10.0 include the cleanup workspace, saved review state and task recovery, time-range and protection editing, STTN prediction reuse, and local subtitle-tail recovery. They have not been published as a new release; use a source checkout to try them. Tagged packages and Docker images do not include these changes yet.
+
+Quality acceptance remains open. On the multilingual sample, frame 200 still retains a subtitle line and frame 400 retains an initial letter; complex backgrounds can show reconstruction artifacts. Review the whole result before using it. The September 13 macOS clean-install check also failed because `opencv-python-headless` 4.14.0.94 reported `GUI: COCOA`; that dependency issue remains unresolved. Passing tests and cache-equivalence checks are not a claim of complete subtitle removal.
+
+See the [delivery status](plans/PRODUCT_EXPERIENCE_DELIVERIES.md) and [diagnostic tools](scripts/QUALITY_DIAGNOSTICS.md). No new release is being published with this update.
+
 ## Remove hardcoded subtitles, watermarks, and logos locally
 
 **VideoWipe** is a self-hosted **hardcoded subtitle remover** and **video delogo** tool. It finds **burned-in / burn-in text**, **watermarks**, **logos**, and **on-screen timestamps**, lets you **review** each track, then **inpaints** only the pixels you chose to erase.

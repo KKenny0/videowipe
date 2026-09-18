@@ -1,6 +1,8 @@
 # VideoWipe 三次交付实施方案
 
-日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。
+最近核对：2026-09-18。下方逐日记录保留当时状态；当前实现已提交至 ca55855，正式验收发现的时间漏擦、横向残字和 macOS headless 依赖问题尚未修复。当前只同步源码，不发布新 Release。`result/` 路径均为本地忽略产物，不随仓库发布。
+
+原计划日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。
 基线：v0.10.0，main，7286a04。原有未跟踪产品文档、plans 和 jobs 保留。
 
 ## 目标、取舍和共同边界
@@ -267,3 +269,7 @@ WipePlan v3 已接通局部空间区间、短窗口字高稳定、插值边界�
 ### 2026-09-13 提交与色差优化
 
 按用户要求，已有尾部修复、测试与记录提交为 af9c3d1，未推送。随后 cProfile 定位 np.ptp 占恢复阶段约 48%，已用等价逐通道最大值/最小值替换。417 项测试、1,000 组生成样例及三样片 1,629 帧空间框/蒙版一致性通过。309.6 秒 1080p 素材恢复三轮中位 28.10 秒（含解码），较 46.85 秒减少约 40%；非交错对照，不包含完整规划/推理。新优化未提交，整体画质仍待签收。证据：`result/tail-profile/REPORT.md`。
+
+### 2026-09-13 最新提交发布验收未放行
+
+ca55855 在干净工作树完成 416 项测试、正式 fact/decision 与 wheel/sdist 验证。画质抽检发现 others 200 帧整行漏擦、400 帧首字母残留；当前默认重新规划确认 199–201 帧 alpha 全零、400 帧首字母在框外。另 macOS 干净安装的 opencv-python-headless 4.14.0.94 返回 GUI: COCOA，安装冒烟失败。因此未推送、未发布；下一步处理时间/横向覆盖及该平台依赖问题。证据：`result/release-acceptance/REPORT.md`。
