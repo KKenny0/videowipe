@@ -180,7 +180,22 @@ Three stages:
 2. **Planning** — Build a reviewable **WipePlan**: each track has type (subtitle / watermark / logo / timestamp), remove|keep action, time segments, and a precise mask.
 3. **Inpainting** — Only remove-track masks are applied per frame; default **STTN** fills from neighboring frames. Optional external models (e.g. ProPainter) plug in for higher quality.
 
-You can stop after detection (`--preview`), edit the plan JSON, then run cleanup — so the tool does not erase blindly.
+For example, `videowipe clean input.mp4 -o result/` runs this path through `WipeEngine`:
+
+```text
+Input video → detect text → build WipePlan → apply per-frame removal masks
+            → inpaint with STTN → write cleaned MP4 with original audio
+```
+
+**The default CLI command continues straight to inpainting; it does not pause for review.** Choose how to review or supply the removal areas:
+
+| Input / option | Execution path |
+|----------------|----------------|
+| `--preview` | Detect and save the plan and preview artifacts, then stop without loading the inpainting model. Edit the plan JSON before executing it. |
+| `--plan plan/wipe_plan.json` | Load and validate the reviewed plan, then inpaint without rerunning automatic detection. |
+| `--mask mask.png` | Skip automatic detection and planning; inpaint using the supplied mask. Mutually exclusive with `--plan`. |
+
+For an interactive CLI selection before inpainting, use `--confirm`. The local web UI provides the choose → trial → full-result workflow shown above.
 
 ## VideoWipe vs alternatives
 
