@@ -285,3 +285,7 @@ ca55855 在干净工作树完成 416 项测试、正式 fact/decision 与 wheel/
 此前发行版映射与 macOS 豁免不能证明 headless。现拒绝多个 cv2 提供者及竞争 OpenCV 发行版，核验实际加载原生模块路径和 RECORD 哈希，并在所有平台要求 GUI: NONE。混装 contrib、影子模块、哈希不符/缺失、缺少 RECORD/原生路径、macOS COCOA 的修复前反例均失败，修复后通过。干净 venv 的 4.14.0.94 仍返回 COCOA，严格冒烟正确拒绝，故上游依赖问题没有被修复。
 
 复审证据保存在 `result/review-repair/`：red-p1.log、red-p2.log、make-check.log、smoke.log、fact.json。远端 CI 尚未验证；中文复杂背景与整体成片仍未签收。当前无提交、推送或 Release。
+
+### 2026-09-26 发布前跨平台 CI 根因更正
+
+远端运行 36242600428 表明，前述 mp4v 帧计数归因不足以解释失败。缺少 ffprobe 的本机反例复现了额外告警与 trial=None；CI 现显式安装并核验 ffmpeg/ffprobe。Windows 还暴露任务恢复清单默认按系统编码解码的问题，现与写入端统一为 UTF-8，并用模拟 cp1252 的恢复测试验证中文文件名。测试读取 HTML/JSON 显式指定 UTF-8，路径断言使用 Path.parts。保留原业务断言与 headless 验收；发布仍等待更新提交的远端结果。

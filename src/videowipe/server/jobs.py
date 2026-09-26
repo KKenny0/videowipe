@@ -183,7 +183,7 @@ def restore_last(output_base: str) -> Optional[Job]:
     if not (root / "last_job.json").exists():
         return None
     with _current_lock:
-        pointer = json.loads(contained_path(root, "last_job.json").read_text())
+        pointer = json.loads(contained_path(root, "last_job.json").read_text(encoding="utf-8"))
         job_id = pointer["id"]
         if job_id is None:
             return None
@@ -192,7 +192,7 @@ def restore_last(output_base: str) -> Optional[Job]:
         if job_id in JOBS:
             return JOBS[job_id]
         directory = contained_path(root, job_id)
-        data = json.loads(contained_path(directory, "job.json").read_text())
+        data = json.loads(contained_path(directory, "job.json").read_text(encoding="utf-8"))
         if data.get("schema_version") != 1 or data.get("id") != job_id:
             raise ValueError("unsupported or mismatched job manifest")
         if data.get("state") not in {"pending", "preview_ready", "running", "trial_running", "done", "error", "cancelled", "cancelling", "interrupted"}:

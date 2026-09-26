@@ -59,6 +59,26 @@ def _ffmpeg_available():
     return shutil.which("ffmpeg") is not None
 
 
+def test_recovery_reads_utf8_with_legacy_system_encoding(client, tmp_path, monkeypatch):
+    test_client, _ = client
+    video = tmp_path / "input.mp4"
+    _write_test_video(video)
+    job_id = _post_video(test_client, video).json()["id"]
+    _wait_for_state(test_client, job_id, "preview_ready")
+    job = jobs.get_job(job_id)
+    job.commit(original_filename="字幕.mp4")
+    jobs.reset_jobs()
+    read_text = Path.read_text
+
+    def legacy_read(path, encoding=None, errors=None):
+        return read_text(path, encoding=encoding or "cp1252", errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", legacy_read)
+    restored = test_client.get("/jobs/current").json()
+    assert restored["id"] == job_id
+    assert restored["original_filename"] == "字幕.mp4"
+
+
 def _add_audio(video, output):
     subprocess.run(
         [
@@ -739,7 +759,7 @@ def test_media_is_job_bound_and_evidence_uses_observed_frame(client, tmp_path):
     assert job.original_filename == "中文片段.mp4"
     assert Path(job.video_path).name == "input.mp4"
     candidates_path = Path(job.plan_dir) / "clean_candidates.json"
-    candidates = json.loads(candidates_path.read_text())
+    candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
     candidates["candidates"][0]["presence_frames"] = [5, 3, 7]
     candidates_path.write_text(json.dumps(candidates))
     preview = test_client.get(f"/jobs/{job_id}/preview").json()
@@ -761,7 +781,7 @@ def test_media_is_job_bound_and_evidence_uses_observed_frame(client, tmp_path):
     assert test_client.get(f"/jobs/{job_id}/result-video").status_code == 409
     test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]})
     _wait_for_state(test_client, job_id, "done")
-    assert "/runs/" in job.result_path
+    assert "runs" in Path(job.result_path).parts
     assert test_client.get(f"/jobs/{job_id}/preview").json()["confirmed_review"] == {"selected_ids": ["c1"], "bbox_overrides": {}}
     assert test_client.get(f"/jobs/{job_id}/result-video", headers={"Range": "bytes=0-15"}).status_code == 206
     download = test_client.get(f"/jobs/{job_id}/download")
@@ -788,7 +808,7 @@ def test_display_name_is_not_a_storage_path(name, expected):
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires node")
 def test_workspace_recommendation_and_stale_trial_state():
-    page = server_app._web_index().read_text()
+    page = server_app._web_index().read_text(encoding="utf-8")
     recommendation = page.split("    function recommend() {", 1)[1].split("    function invalidateTrial()", 1)[0]
     transition = page.split("    async function applyStatus(data) {", 1)[1].split("    async function showDone", 1)[0]
     signature = page.split("    function signature(request) {", 1)[1].split("    function saveReview(", 1)[0]
@@ -850,7 +870,7 @@ def test_review_and_evidence_paths_reject_symlink_escape(client, tmp_path):
 @pytest.mark.skipif(not shutil.which("node"), reason="requires node")
 @pytest.mark.parametrize("confirmed", [False, True])
 def test_restored_edited_trial_still_loads_source_video(confirmed):
-    html = server_app._web_index().read_text()
+    html = server_app._web_index().read_text(encoding="utf-8")
     function = html.split("    async function loadPreview(jobId) {", 1)[1].split("    function closeStream()", 1)[0]
     harness = r'''
 const assert=require("node:assert/strict");
@@ -895,7 +915,7 @@ def test_source_media_never_serves_active_document(client, tmp_path, suffix):
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires node")
 def test_workspace_media_identity_transitions():
-    html = server_app._web_index().read_text()
+    html = server_app._web_index().read_text(encoding="utf-8")
     pick = html.split("    async function pickFile(file) {", 1)[1].split("    async function submit()", 1)[0]
     inspect = html.split("    function inspect(id) {", 1)[1].split("    function imageMetrics()", 1)[0]
     visibility = html.split("    function updateOverlayVisibility() {", 1)[1].split("    function renderOverlays()", 1)[0]
@@ -977,7 +997,7 @@ def test_saved_trial_cache_and_result_survive_restart(client, tmp_path):
     assert second["trial"]["cache_hit"] and len(fake.calls) == calls
     test_client.post(f"/jobs/{job_id}/confirm", json={"selected_ids": ["c1"]})
     done = _wait_for_state(test_client, job_id, "done")
-    manifest = json.loads((Path(jobs.get_job(job_id).output_dir) / "job.json").read_text())
+    manifest = json.loads((Path(jobs.get_job(job_id).output_dir) / "job.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 1
     assert not Path(manifest["plan_dir"]).is_absolute()
     jobs.reset_jobs()
@@ -997,7 +1017,7 @@ def test_recovery_rejects_corrupt_or_foreign_manifest(client, tmp_path, damage):
     _wait_for_state(test_client, job_id, "preview_ready")
     job = jobs.get_job(job_id)
     path = Path(job.output_dir) / "job.json"
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if damage == "schema":
         data["schema_version"] = 99
     elif damage == "escape":
@@ -1167,7 +1187,7 @@ def test_progress_estimate_requires_comparable_completed_segments(tmp_path, monk
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires node")
 def test_native_sse_reconnect_and_missing_job_stop():
-    html = server_app._web_index().read_text()
+    html = server_app._web_index().read_text(encoding="utf-8")
     function = html.split("    function startProgressStream(jobId) {", 1)[1].split("    async function restoreJob()", 1)[0]
     harness = r'''
 const assert=require("node:assert/strict");
@@ -1263,7 +1283,7 @@ def test_editor_seconds_roundtrip_preserves_frame_boundaries():
             assert seconds_to_frames(first/fps, (first+1)/fps, source) == (first, first+1)
         assert seconds_to_frames(1.25/fps, 4.75/fps, source) == (1, 5)
     if shutil.which('node'):
-        html = server_app._web_index().read_text()
+        html = server_app._web_index().read_text(encoding="utf-8")
         function = html.split('    function parseIntervals(text) {', 1)[1].split('    function edited()', 1)[0]
         code = 'const assert=require("node:assert/strict");let source={fps:25,frame_count:1000};const duration=()=>source.frame_count/source.fps;'
         code += 'function parseIntervals(text) {' + function

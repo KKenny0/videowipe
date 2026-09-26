@@ -28,6 +28,14 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - name: Verify media tools
+        run: python -c "import shutil; assert all(shutil.which(tool) for tool in ('ffmpeg', 'ffprobe')), 'ffmpeg and ffprobe must be on PATH'"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev,web]"
       - run: python -m pytest -q
