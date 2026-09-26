@@ -195,6 +195,92 @@ def test_descender_recovery_does_not_treat_colored_text_as_white(color):
     assert _descender_extensions(frame, [[10,10,70,22]]) == []
 
 
+def _gap_plan(segments):
+    plan = WipePlan('wipe_plan', 3, Source('x.mp4', 'a'*64, 400, 200, 8, 9), {},
+                    TemporalResolution(1, 1, 0), MaskAsset('wipe_plan_masks.npz', ''), [
+        Track('c1', 'subtitle', 'subtitle', 'remove', (30, 90, 180, 145), 1, 1,
+              'default', segments, 'c1')])
+    return plan
+
+
+def _gap_result(sampled):
+    return SimpleNamespace(frame_shape=(200, 400), candidates=[
+        SimpleNamespace(id='c1', type='subtitle', detector_backed=True)],
+        sampled_frame_boxes=sampled)
+
+
+def test_positive_short_gap_bridges():
+    from videowipe.detect import TextBox
+    from videowipe.planning import _add_spatial_segments
+    plan = _gap_plan([Segment(0, 2), Segment(5, 9)])
+    def tb(x1,y1,x2,y2): return TextBox(np.array([[x1,y1],[x2,y1],[x2,y2],[x1,y2]]), .9)
+    sampled = {0: [tb(50,100,150,130)], 1: [tb(50,100,150,130)],
+               2: [tb(50,100,150,130)], 3: [tb(50,100,150,130)], 4: [tb(50,100,150,130)],
+               5: [tb(52,100,148,130)], 6: [tb(52,100,148,130)],
+               7: [tb(52,100,148,130)], 8: [tb(52,100,148,130)]}
+    _add_spatial_segments(plan, _gap_result(sampled))
+    assert plan.tracks[0].segments == [Segment(0, 9)]  # The spurious gap merged.
+    mask = execution_masks(plan)[1]
+    assert mask(3)[110, 100] == 1  # Inherited line geometry covers the hole.
+    assert mask(3)[110, 20] == 0  # Only the flanked line, never the full band.
+
+
+def test_silent_short_gap_stays_open_when_flanks_disagree():
+    from videowipe.detect import TextBox
+    from videowipe.planning import _add_spatial_segments
+    plan = _gap_plan([Segment(0, 2), Segment(5, 9)])
+    def tb(x1,y1,x2,y2): return TextBox(np.array([[x1,y1],[x2,y1],[x2,y2],[x1,y2]]), .9)
+    sampled = {0: [tb(50,100,150,130)], 1: [tb(50,100,150,130)],
+               2: [], 3: [], 4: [],
+               5: [tb(250,100,350,130)], 6: [tb(250,100,350,130)],
+               7: [tb(250,100,350,130)], 8: [tb(250,100,350,130)]}
+    _add_spatial_segments(plan, _gap_result(sampled))
+    assert plan.tracks[0].segments == [Segment(0, 2), Segment(5, 9)]
+    assert not execution_masks(plan)[1](3).any()
+
+
+def test_leading_glyph_extension_recovers_clipped_first_letter():
+    from videowipe.planning import _leading_extensions
+    frame = np.full((40,80,3), 50, np.uint8)
+    frame[15:25,42:47] = 255  # Leading glyph missed by the detector box.
+    boxes = [[50,10,70,22]]
+    assert _leading_extensions(frame, boxes, 10) == [(42,10,46,22)]
+    frame[:, :] = 240  # White-on-white flash: no dark contrast, never qualifies.
+    assert _leading_extensions(frame, boxes, 10) == []
+    frame = np.full((40,80,3), 50, np.uint8)
+    frame[15:25,42:47] = (0,255,255)  # Colored glyph is not neutral white.
+    assert _leading_extensions(frame, boxes, 10) == []
+    frame[15:25,42:47] = 255
+    assert _leading_extensions(frame, boxes, 45) == []  # Past the track bbox edge.
+
+
+def test_leading_glyph_evidence_reaches_saved_plan_core(tmp_path):
+    import cv2
+    from videowipe.detect import TextBox
+    from videowipe.planning import _add_spatial_segments
+    video = tmp_path/'leading.avi'
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'FFV1'), 25, (80,40))
+    assert writer.isOpened()
+    frame = np.full((40,80,3), 50, np.uint8)
+    frame[14:19,30:35] = 255  # The leading glyph.
+    for _ in range(6):
+        writer.write(frame)
+    writer.release()
+    plan = _gap_plan([Segment(0, 6)])
+    plan.source = Source('leading.avi','a'*64,80,40,25,6)
+    plan.tracks[0].bbox = (10,10,70,22)
+    box = TextBox(np.array([[40,14],[60,14],[60,18],[40,18]]), .9)
+    result = SimpleNamespace(frame_shape=(40,80), candidates=[
+        SimpleNamespace(id='c1',type='subtitle',detector_backed=True)],
+        sampled_frame_boxes={i:[box] for i in range(6)})
+    _add_spatial_segments(plan,result,video_path=str(video))
+    save_wipe_plan(plan,str(tmp_path/'plan'))
+    replay = load_wipe_plan(str(tmp_path/'plan/wipe_plan.json'))
+    alpha = execution_masks(replay,1)[1]
+    for i in range(6):
+        assert alpha(i)[16,32] == 1  # The clipped leading glyph stays covered.
+
+
 def test_white_descender_with_dark_edge_is_not_left_in_feather():
     from videowipe.planning import _descender_extensions
     frame = np.full((40,80,3),110,np.uint8)
@@ -220,3 +306,48 @@ def test_white_tail_uses_glyph_evidence_above_shrinking_lower_edge():
         extra = _descender_extensions(frame, [[10,10,90,bottom]])
         assert any(a <= 42 <= c and b <= 45 <= d for a,b,c,d in extra)
         assert all(c < 50 for a,b,c,d in extra)
+
+
+@pytest.mark.parametrize("mode", ["blank", "error", "unreadable"])
+def test_short_gap_requires_positive_frame_evidence(tmp_path, monkeypatch, mode):
+    import cv2
+
+    from videowipe import planning
+    from videowipe.detect import TextBox
+    video = tmp_path / "gap.avi"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"FFV1"), 8, (400, 200))
+    assert writer.isOpened()
+    for _ in range(9):
+        writer.write(np.zeros((200, 400, 3), np.uint8))
+    writer.release()
+    box = TextBox(np.array([[50,100],[150,100],[150,130],[50,130]]), .9)
+    result = _gap_result({i: [box] for i in (0,1,5,6,7,8)})
+    def detect(frame):
+        assert not frame.any()
+        if mode == "error":
+            raise RuntimeError("detector unavailable")
+        return []
+    result.detector = SimpleNamespace(detect=detect)
+    if mode == "unreadable":
+        real_capture = cv2.VideoCapture
+        class Reader:
+            def __init__(self, path): self.reader = real_capture(path)
+            def isOpened(self): return self.reader.isOpened()
+            def set(self, prop, value): return self.reader.set(prop, value)
+            def read(self):
+                if 2 <= self.reader.get(cv2.CAP_PROP_POS_FRAMES) <= 4:
+                    return False, None
+                return self.reader.read()
+            def release(self): self.reader.release()
+        monkeypatch.setattr(cv2, "VideoCapture", Reader)
+        # Outline recovery's sequential decoder correctly raises on unreadable
+        # frames; inspect the completed spatial decision before that stage.
+        monkeypatch.setattr(planning, "_recover_descenders", lambda *args: None)
+    plan = _gap_plan([Segment(0,2), Segment(5,9)])
+    planning._add_spatial_segments(plan, result, video_path=str(video))
+    assert plan.tracks[0].segments == [Segment(0,2), Segment(5,9)]
+    mask = execution_masks(plan)[1]
+    assert mask(1).any()
+    assert all(not mask(i).any() for i in (2,3,4))
+    if mode == "error":
+        assert len(plan.warnings) == 3

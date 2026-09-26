@@ -38,11 +38,11 @@
 
 ## 开发状态
 
-`main` 在 v0.10.0 之后已加入清理工作区、审阅保存与任务恢复、时间和保护区域编辑、STTN 预测复用，以及字幕下缘恢复。这些改动尚未发布新版本，体验时请使用源码安装；现有标签包和 Docker 镜像尚不包含这些更新。
+v0.11.0 包含清理工作区、审阅保存与任务恢复、时间和保护区域编辑、STTN 预测复用，以及字幕下缘恢复。本版仍有下述画质和 macOS 安装限制。
 
-画质验收仍未完成：多语样片第 200 帧仍有整行字幕，第 400 帧仍有首字母残留，复杂背景可能出现重建纹理。使用前请复查整段结果。9 月 13 日的 macOS 干净安装检查还发现，`opencv-python-headless` 4.14.0.94 返回 `GUI: COCOA`，该依赖问题尚未解决。测试和缓存等价验证通过，不代表字幕已完整擦除。
+画质验收仍未完成。短字幕缺口只有每帧都有本轨道的局部检测阳性证据才合并，真实空帧与检测失败帧不再继承邻帧框；该安全修正重新打开多语样片 199–201 白闪帧漏擦问题。第 400 帧行首字形恢复实现保留，交叉淡化帧及复杂背景重建仍需复查。macOS 安装验收仍阻塞：干净安装 opencv-python-headless 4.14.0.94 返回 GUI: COCOA。冒烟现核验实际加载的原生二进制与 headless 发行版 RECORD 哈希，拒绝混装 OpenCV，并在所有平台要求 GUI: NONE。测试通过不代表完整擦除或跨平台 CI 通过；跨平台 CI 结果见发布说明。
 
-详见[交付状态](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)和[诊断工具说明](scripts/QUALITY_DIAGNOSTICS.md)。本次只同步源码，不发布新版本。
+详见[交付状态](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)和[诊断工具说明](scripts/QUALITY_DIAGNOSTICS.md)。验证结果和已知限制见 [v0.11.0 发布说明](https://github.com/KKenny0/videowipe/releases/tag/v0.11.0)。
 
 ## 本地硬字幕去除、视频去水印
 

@@ -1,6 +1,6 @@
 # VideoWipe 三次交付实施方案
 
-最近核对：2026-09-18。下方逐日记录保留当时状态；当前实现已提交至 ca55855，正式验收发现的时间漏擦、横向残字和 macOS headless 依赖问题尚未修复。当前只同步源码，不发布新 Release。`result/` 路径均为本地忽略产物，不随仓库发布。
+最近核对：2026-09-26。本轮获授权提交、推送并发布 v0.11.0；发布保留白闪帧漏检、macOS headless 验收和整体画质限制，不代表这些问题已经解决。下方逐日记录保留当时状态，以最后的复审更正及发布说明为准。`result/` 是本地忽略产物。
 
 原计划日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。
 基线：v0.10.0，main，7286a04。原有未跟踪产品文档、plans 和 jobs 保留。
@@ -273,3 +273,15 @@ WipePlan v3 已接通局部空间区间、短窗口字高稳定、插值边界�
 ### 2026-09-13 最新提交发布验收未放行
 
 ca55855 在干净工作树完成 416 项测试、正式 fact/decision 与 wheel/sdist 验证。画质抽检发现 others 200 帧整行漏擦、400 帧首字母残留；当前默认重新规划确认 199–201 帧 alpha 全零、400 帧首字母在框外。另 macOS 干净安装的 opencv-python-headless 4.14.0.94 返回 GUI: COCOA，安装冒烟失败。因此未推送、未发布；下一步处理时间/横向覆盖及该平台依赖问题。证据：`result/release-acceptance/REPORT.md`。
+
+### 2026-09-26 时间漏检桥接、行首字形恢复与安装冒烟修正
+
+像素取证确认两类根因：others 199–202 帧为白闪使白字失去对比、DBNet 整帧失效（197/198 尚有碎框、199–202 全空），属 coarse 级单点漏检；400 帧为首字母 I（白像素实测 x≥663）被低对比背景收缩到原始框 x=696，当前 14 像素横向余量不足，且邻域借左缘方案破坏“宽度不传播”设计测试，已回退。修复：短缺口（≤fps/2 帧）在两侧窗口中值几何一致（IoU≥0.5）时按证据桥接并合并 segments，refine 逐帧复核确认的空帧（新增 `refined_frames` 标记）永不被桥接；新增行首字形扩展，与尾部恢复同款中性亮字+暗对比门控，搜索限于轨道框内半字高窗口，白闪帧无暗对比不触发。421 项测试通过（含 4 项新回归）。others 重新规划：c4/c5 合并为 [0,360)/[364,516)，199–201 帧 alpha 141012 非零像素（原全零），400 帧 (660,850) 已覆盖；试擦成片 170–210、392–410 帧对比确认字幕（含首字母 I）全部擦除，174–188 白尾帧与旧计划逐字节一致；正式 fact/decision 基线在干净候选副本数值不变（Jaccard 0.319345 等）。CI 修复：test_server 测试视频改用 ffmpeg rawvideo→libx264 写入，跨平台可靠携带帧数与恒定帧率（Ubuntu mp4v 帧计数为 0 且 avg_frame_rate 异常导致视频信息告警与 trial 为 None），本机验证 frame_count=8、r=avg=4/1。macOS 安装根因：上游 opencv-python-headless macOS wheel 实测 4.12.0.88/4.14.0.94 均返回 GUI: COCOA 并链接 AppKit，属依赖产物特性而非环境问题；冒烟改为断言 cv2 由 headless 发行版提供（发行版映射，跨平台更强），GUI: NONE 字符串仅在非 macOS 强制；干净 venv 安装候选 wheel 冒烟通过。wheel/sdist 38/64 entries 验证通过。遗留：两条字幕交叉淡化重叠帧（如 360–361 帧）检测器失效且为 refine 级负证据，按设计保留；中文样片复杂背景重建纹理未复查；远端 CI 待推送后重跑。以上改动留在工作区未提交、未推送、未发布。证据：`result/gap-forensics/`（取证图、新计划、试擦成片与对比表）、`result/release-acceptance/gaps.json` 复测口径。
+
+### 2026-09-26 复审修正：安全保护通过不等于画质与安装签收
+
+此前“几何一致即可桥接”会把真实空帧、检测异常及不可读帧生成的空证据覆盖；现删除该推断与专用 refined_frames 标记，仅当缺口每帧都有本轨道局部阳性检测才合并。实际空白视频、检测异常、不可读帧反例在修复前均失败，修复后通过；行首与白尾恢复保留。199–201 白闪漏检恢复为待解决问题，不以误擦风险换取样片通过。
+
+此前发行版映射与 macOS 豁免不能证明 headless。现拒绝多个 cv2 提供者及竞争 OpenCV 发行版，核验实际加载原生模块路径和 RECORD 哈希，并在所有平台要求 GUI: NONE。混装 contrib、影子模块、哈希不符/缺失、缺少 RECORD/原生路径、macOS COCOA 的修复前反例均失败，修复后通过。干净 venv 的 4.14.0.94 仍返回 COCOA，严格冒烟正确拒绝，故上游依赖问题没有被修复。
+
+复审证据保存在 `result/review-repair/`：red-p1.log、red-p2.log、make-check.log、smoke.log、fact.json。远端 CI 尚未验证；中文复杂背景与整体成片仍未签收。当前无提交、推送或 Release。

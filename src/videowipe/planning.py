@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 import json
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -22,7 +23,8 @@ from videowipe.detect import (
     resolve_requested_targets,
     select_clean_candidates,
 )
-from videowipe.plan import Source, WipePlan, build_wipe_plan, compute_source, validate_plan, _spatial_mask
+from videowipe.plan import (Segment, Source, WipePlan, build_wipe_plan, compute_source,
+                            validate_plan, _spatial_mask)
 
 
 @dataclass(frozen=True)
@@ -349,6 +351,48 @@ def finalize(
     )
 
 
+def _leading_extensions(frame, boxes, min_x):
+    """Recover leading glyphs clipped off a box by low horizontal contrast.
+
+    Same conservative evidence as descender tails — neutral light/faint pixels
+    with adjacent dark contrast — searched left of each box within the track
+    bbox and at most half the box height, so bright scenery can only qualify
+    when a dark separation borders it. White-on-white flashes carry no dark
+    contrast and never qualify.
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    extra = []
+    for x1, y1, x2, y2 in boxes:
+        left = max(int(min_x), x1 - max(12, (y2 - y1 + 1) // 2))
+        if left >= x1:
+            continue
+        strip = gray[y1:y2+1, left:x1]
+        color = frame[y1:y2+1, left:x1]
+        blue, green, red = color[..., 0], color[..., 1], color[..., 2]
+        high = np.maximum(np.maximum(blue, green), red)
+        low = np.minimum(np.minimum(blue, green), red)
+        neutral = high - low <= 40
+        light = ((strip >= 180) & neutral).astype(np.uint8)
+        if not light.any():
+            continue
+        glyph = ((light > 0)
+                 | (((strip >= 128) & neutral)
+                    & cv2.dilate(light, np.ones((5, 5), np.uint8)))).astype(np.uint8)
+        support = cv2.dilate((strip <= 90).astype(np.uint8), np.ones((3, 3), np.uint8))
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(glyph)
+        for label in range(1, count):
+            x, y, width, height, _ = stats[label]
+            component = labels[y:y+height, x:x+width] == label
+            if (width < 3 or height < max(3, (y2 - y1 + 1) // 4)
+                    or not np.any(support[y:y+height, x:x+width][component])
+                    or not np.any(light[y:y+height, x:x+width][component])):
+                continue
+            # The leading glyph belongs to the same text line, so it inherits the
+            # row's vertical band instead of its own core extent.
+            extra.append([left+int(x), y1, left+int(x+width)-1, y2])
+    return sorted({tuple(box) for box in extra})
+
+
 def _descender_extensions(frame, boxes):
     """Recover narrow glyph tails supported by contrasting lower-edge pixels.
 
@@ -422,7 +466,8 @@ def _recover_descenders(plan, tracks, video_path, check_cancelled):
                 boxes = frames[track.id].get(i)
                 if boxes is None:
                     continue
-                extra = _descender_extensions(frame, boxes)
+                extra = (_descender_extensions(frame, boxes)
+                         + [list(box) for box in _leading_extensions(frame, boxes, track.bbox[0])])
                 if len(boxes)+len(extra) <= 64:
                     frames[track.id][i] = boxes + [list(b) for b in extra]
     finally:
@@ -454,17 +499,36 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                       and (selected_ids is None or track.id in selected_ids)
                       for segment in track.segments for index in range(segment.start, segment.end)
                       if index not in evidence})
-    if missing and video_path is not None:
+    # Short temporal gaps between consecutive segments of the same track: probe
+    # those frames too.  A detector miss at one coarse sample (e.g. white text
+    # over a white flash) can split one continuous subtitle into segments with a
+    # spurious gap narrower than the sampling interval.
+    radius = max(0, int(plan.source.fps / 4))
+    gap_frames: set[int] = set()
+    for track in plan.remove_tracks:
+        if (track.id not in eligible or "bbox-override" in track.decision_reason
+                or (selected_ids is not None and track.id not in selected_ids)):
+            continue
+        segs = sorted(track.segments, key=lambda s: s.start)
+        for a, b in zip(segs, segs[1:]):
+            gap = b.start - a.end  # number of frames in the gap
+            if 0 < gap <= radius * 2:
+                gap_frames.update(range(a.end, b.start))
+    missing_all = sorted(set(missing) | (gap_frames - evidence.keys()))
+    if missing_all and video_path is not None:
         reader = cv2.VideoCapture(video_path)
         try:
             if not reader.isOpened():
                 raise ValueError("Cannot open video for local subtitle boundary checks")
-            for index in missing:
+            for index in missing_all:
                 if check_cancelled is not None:
                     check_cancelled()
                 reader.set(cv2.CAP_PROP_POS_FRAMES, index)
                 ok, frame = reader.read()
                 if not ok:
+                    if index in gap_frames:
+                        evidence[index] = []  # treat unreadable gap frame as absent
+                        continue
                     raise ValueError(f"Cannot decode subtitle boundary frame {index}")
                 try:
                     evidence[index] = result.detector.detect(frame)
@@ -480,8 +544,11 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
             continue
         x1, y1, x2, y2 = track.bbox
         local_frames = {}
+        track_segs = track.segments
         for index, boxes in evidence:
-            if not any(s.contains(index) for s in track.segments):
+            in_segment = any(s.contains(index) for s in track_segs)
+            in_gap = index in gap_frames
+            if not (in_segment or in_gap):
                 continue
             local = []
             for box in boxes:
@@ -496,9 +563,23 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
             if len(local) > 64:
                 raise ValueError(f"Too many local subtitle boxes at frame {index}")
             local_frames[index] = [list(box) for box in local]
+        # Merge only when every gap frame has positive local detector evidence.
+        # Empty, failed, and unobserved frames never inherit neighboring boxes.
+        segs = sorted(track.segments, key=lambda s: s.start)
+        merge_pairs = {(a.end, b.start) for a, b in pairwise(segs)
+                       if 0 < b.start - a.end <= radius * 2
+                       and all(local_frames.get(i) for i in range(a.end, b.start))}
+        if merge_pairs:
+            rebuilt = []
+            for seg in segs:
+                if rebuilt and (rebuilt[-1].end, seg.start) in merge_pairs:
+                    merged_seg = rebuilt.pop()
+                    rebuilt.append(Segment(merged_seg.start, seg.end))
+                else:
+                    rebuilt.append(seg)
+            track.segments = rebuilt
         rows = []
-        radius = max(0, int(plan.source.fps / 4))
-        for index, boxes in local_frames.items():
+        for index, boxes in sorted(local_frames.items()):
             neighborhood = list(boxes)
             for direction in (-1, 1):
                 for distance in range(1, radius+1):

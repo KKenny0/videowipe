@@ -18,6 +18,32 @@ from videowipe.server import app as server_app
 
 
 def _write_test_video(path, width=96, height=64, frames=8):
+    """Write a test video with a bright region at rows 50-59, cols 10-85.
+
+    Uses ffmpeg (rawvideo→libx264) when available so that both
+    cv2.CAP_PROP_FRAME_COUNT and ffprobe avg_frame_rate are reliably set on
+    all CI platforms (Ubuntu, Windows, macOS).  Falls back to cv2+mp4v when
+    ffmpeg is absent.
+    """
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[50:60, 10:86] = 200
+    raw_pixels = (frame.tobytes()) * frames  # BGR, same frame repeated
+
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "rawvideo", "-vcodec", "rawvideo",
+                "-s", f"{width}x{height}", "-pix_fmt", "bgr24",
+                "-r", "4", "-i", "pipe:0",
+                "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+                str(path),
+            ],
+            input=raw_pixels,
+            check=True,
+        )
+        return
+
     writer = cv2.VideoWriter(
         str(path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -25,8 +51,6 @@ def _write_test_video(path, width=96, height=64, frames=8):
         (width, height),
     )
     for _ in range(frames):
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
-        frame[50:60, 10:86] = 200
         writer.write(frame)
     writer.release()
 
