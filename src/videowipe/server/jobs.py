@@ -146,7 +146,7 @@ def source_hash(path) -> str:
 
 
 def relative_path(root, value) -> str:
-    return str(Path(value).resolve().relative_to(Path(root).resolve()))
+    return Path(value).resolve().relative_to(Path(root).resolve()).as_posix()
 
 
 def contained_path(root, value) -> Path:
@@ -274,6 +274,8 @@ def restore_last(output_base: str) -> Optional[Job]:
         for entry in cache:
             if not isinstance(entry, dict) or type(entry.get("size")) is not int or entry["size"] < 0:
                 raise ValueError("invalid cache entry")
+            if isinstance(entry.get("path"), str):
+                entry["path"] = entry["path"].replace("\\", "/")
             if not isinstance(entry.get("path"), str) or not re.fullmatch(r"trials/[0-9a-f]{32}/[^/]+\.mp4", entry["path"]):
                 raise ValueError("invalid cache path")
             if any(not isinstance(entry.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", entry[key]) for key in ("key", "sha256")):

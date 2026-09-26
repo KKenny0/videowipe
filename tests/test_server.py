@@ -981,7 +981,16 @@ def test_early_review_cas_survives_refinement(client, tmp_path, monkeypatch):
     assert test_client.post(f"/jobs/{job_id}/confirm", json={"expected_revision": 0}).status_code == 409
 
 
-def test_saved_trial_cache_and_result_survive_restart(client, tmp_path):
+def test_manifest_paths_use_portable_separators(monkeypatch):
+    from pathlib import PureWindowsPath
+
+    monkeypatch.setattr(jobs, "Path", lambda value: SimpleNamespace(
+        resolve=lambda: PureWindowsPath(value)))
+    assert jobs.relative_path(r"C:\jobs\task", r"C:\jobs\task\trials\clip.mp4") == "trials/clip.mp4"
+
+
+@pytest.mark.parametrize("legacy_cache_path", [False, True])
+def test_saved_trial_cache_and_result_survive_restart(client, tmp_path, legacy_cache_path):
     test_client, fake = client
     video = tmp_path / "resume.mp4"
     _write_test_video(video)
@@ -1000,6 +1009,11 @@ def test_saved_trial_cache_and_result_survive_restart(client, tmp_path):
     manifest = json.loads((Path(jobs.get_job(job_id).output_dir) / "job.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 1
     assert not Path(manifest["plan_dir"]).is_absolute()
+    if legacy_cache_path:
+        for entry in manifest["trial_cache"]:
+            entry["path"] = entry["path"].replace("/", "\\")
+        (Path(jobs.get_job(job_id).output_dir) / "job.json").write_text(
+            json.dumps(manifest), encoding="utf-8")
     jobs.reset_jobs()
     restored = test_client.get("/jobs/current").json()
     assert restored["state"] == "done" and restored["id"] == job_id
