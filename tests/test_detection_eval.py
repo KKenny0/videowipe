@@ -552,7 +552,17 @@ def test_keep_injury_and_no_target_false_removal(tmp_path):
 
 def test_fact_baseline_uses_temporal_refinement_for_a_single_frame_gap(tmp_path, monkeypatch):
     module = _load_eval_module()
-    _write_video(tmp_path / "sample.mp4")
+    # The 12x8 band crop around the full-frame candidate bbox equals the whole
+    # frame, so the fake keys on content instead of shape: the subtitle is a
+    # dim rectangle on frames 0 and 2 and truly absent on frame 1.
+    video_path = tmp_path / "sample.mp4"
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 4, (12, 8))
+    for i in range(3):
+        frame = np.zeros((8, 12, 3), dtype=np.uint8)
+        if i != 1:
+            frame[2:7, 2:11] = 120
+        writer.write(frame)
+    writer.release()
     manifest = _write_manifest(tmp_path, np.zeros((8, 12), dtype=np.uint8))
     candidate = _candidate(np.ones((8, 12), dtype=np.uint8))
     candidate.presence_frames = [0, 2]
@@ -560,9 +570,11 @@ def test_fact_baseline_uses_temporal_refinement_for_a_single_frame_gap(tmp_path,
     class Detector:
         calls = 0
 
-        def detect(self, _frame):
+        def detect(self, frame):
             self.calls += 1
-            if self.calls == 2:
+            if np.ptp(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)) < 30:
+                # No local structure: also true of every contrast-restored
+                # variant of the empty gap frame.
                 return []
             return [TextBox(
                 points=np.array([[0, 0], [11, 0], [11, 7], [0, 7]]), confidence=1.0,
@@ -572,7 +584,7 @@ def test_fact_baseline_uses_temporal_refinement_for_a_single_frame_gap(tmp_path,
         [candidate], (8, 12), sample_indices=[0, 2], detector=Detector(),
     )
     draft = CleanPlanDraft(
-        str(tmp_path / "sample.mp4"),
+        str(video_path),
         result,
         compute_source(str(tmp_path / "sample.mp4")),
         [candidate.id],

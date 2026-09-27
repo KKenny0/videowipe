@@ -1458,6 +1458,97 @@ def detect_clean_candidates(
     )
 
 
+def _contrast_restored_variants(crop: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    """Independent contrast restorations for one band crop.
+
+    White flashes and cross-dissolves leave subtitle pixels present but with
+    almost no local contrast. Each variant restores contrast through a
+    different mechanism so a real glyph survives several of them while
+    amplified sensor/texture noise rarely survives two.
+    """
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    background = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 25)
+    highpass = np.clip(gray.astype(np.float32) - background + 128, 0, 255)
+    darkened = np.power(crop.astype(np.float32) / 255.0, 2.2) * 255
+    return [
+        ("contrast", cv2.cvtColor(clahe.apply(gray), cv2.COLOR_GRAY2BGR)),
+        ("highpass", cv2.cvtColor(highpass.astype(np.uint8), cv2.COLOR_GRAY2BGR)),
+        ("darkened", darkened.astype(np.uint8)),
+    ]
+
+
+def _rects_overlap(
+    rect1: tuple[int, int, int, int], rect2: tuple[int, int, int, int],
+) -> bool:
+    """Whether two ``(x1, y1, x2, y2)`` rectangles intersect."""
+    return not (rect1[2] < rect2[0] or rect2[2] < rect1[0]
+                or rect1[3] < rect2[1] or rect2[3] < rect1[1])
+
+
+def _contrast_recovered_boxes(
+    detector: TextDetector,
+    frame: np.ndarray,
+    bbox: tuple[int, int, int, int],
+) -> list[TextBox]:
+    """Second-chance detection for one candidate band on the current frame.
+
+    Runs detection on contrast-restored variants of the band around *bbox*.
+    A recovered box must (a) have its center inside the candidate bbox and
+    (b) be agreed on by at least two independent restorations; single-variant
+    hits stay negative. Returns boxes mapped back to frame coordinates.
+    """
+    x1, y1, x2, y2 = bbox
+    height, width = frame.shape[:2]
+    margin_y = max(8, (y2 - y1 + 1) // 4)
+    margin_x = max(8, (x2 - x1 + 1) // 8)
+    cx1, cy1 = max(0, x1 - margin_x), max(0, y1 - margin_y)
+    cx2, cy2 = min(width - 1, x2 + margin_x), min(height - 1, y2 + margin_y)
+    crop = frame[cy1:cy2 + 1, cx1:cx2 + 1]
+    if crop.size == 0:
+        return []
+
+    def band_boxes(variant_crop: np.ndarray) -> list[tuple[TextBox, tuple[int, int, int, int]]]:
+        found: list[tuple[TextBox, tuple[int, int, int, int]]] = []
+        for box in detector.detect(variant_crop):
+            bx1, by1, bx2, by2 = _bbox(box.points, crop.shape[1], crop.shape[0])
+            fx1, fy1, fx2, fy2 = bx1 + cx1, by1 + cy1, bx2 + cx1, by2 + cy1
+            center_x, center_y = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+            if x1 <= center_x <= x2 and y1 <= center_y <= y2:
+                # TextBox carries crop-local polygon points; remap them so the
+                # returned evidence lives in frame coordinates like every other
+                # detector box.
+                remapped = TextBox(
+                    points=box.points.astype(np.float64) + np.array([cx1, cy1]),
+                    confidence=box.confidence,
+                    text=box.text,
+                )
+                found.append((remapped, (fx1, fy1, fx2, fy2)))
+        return found
+
+    # Flip state of the shared detector must not leak: the manual fallback is
+    # a per-call choice here, not a mode switch for the rest of the video.
+    manual_only = getattr(detector, "_manual_only", None)
+    try:
+        per_variant: list[list[tuple[TextBox, tuple[int, int, int, int]]]] = []
+        confirmed: dict[tuple[int, int, int, int], TextBox] = {}
+        for _, variant_crop in _contrast_restored_variants(crop):
+            entries = band_boxes(variant_crop)
+            for earlier in per_variant:
+                for entry in entries:
+                    for other in earlier:
+                        if _rects_overlap(entry[1], other[1]):
+                            confirmed.setdefault(entry[1], entry[0])
+                            confirmed.setdefault(other[1], other[0])
+            per_variant.append(entries)
+            if confirmed:
+                break
+        return [confirmed[coords] for coords in sorted(confirmed)]
+    finally:
+        if manual_only is not None:
+            detector._manual_only = manual_only  # noqa: SLF001
+
+
 def refine_temporal_presence(
     video_path: str,
     result: CleanDetectionResult,
@@ -1470,7 +1561,10 @@ def refine_temporal_presence(
 
     Detection remains sequential and each active video frame is passed to the
     detector once.  A detector error is negative evidence: keeping that frame
-    is safer than carrying forward a coarse remove decision.
+    is safer than carrying forward a coarse remove decision.  A frame whose
+    normal detection succeeds but finds nothing may still recover evidence
+    through :func:`_contrast_recovered_boxes` — per-frame positive evidence
+    only; empty, failed, and protected content never gains presence.
     """
     detector = result.detector
     candidates = {
@@ -1521,15 +1615,18 @@ def refine_temporal_presence(
                     ]
                 if frame_index in result.sampled_frame_boxes:
                     boxes = result.sampled_frame_boxes[frame_index]
+                    detect_failed = False
                 else:
                     try:
                         boxes = detector.detect(frame)
+                        detect_failed = False
                     except Exception as exc:  # safety boundary: failed frame remains keep.
                         warnings.append(
                             f"temporal refinement failed at frame {frame_index}; "
                             f"keeping frame: {exc}"
                         )
                         boxes = []
+                        detect_failed = True
                     result.sampled_frame_boxes[frame_index] = boxes
                 for candidate in active:
                     if any(
@@ -1540,6 +1637,20 @@ def refine_temporal_presence(
                         for box in boxes
                     ):
                         candidate.presence_frames.append(frame_index)
+                    elif not detect_failed:
+                        # White flash / cross-dissolve recovery: per-frame
+                        # positive evidence from contrast-restored variants of
+                        # this candidate's own band. Failed detection above
+                        # never gets a second chance.
+                        recovered = _contrast_recovered_boxes(
+                            detector, frame, candidate.bbox,
+                        )
+                        if recovered:
+                            candidate.presence_frames.append(frame_index)
+                            result.sampled_frame_boxes[frame_index] = (
+                                list(result.sampled_frame_boxes[frame_index])
+                                + recovered
+                            )
             frame_index += 1
             if progress is not None:
                 progress(frame_index, expected_frame_count)

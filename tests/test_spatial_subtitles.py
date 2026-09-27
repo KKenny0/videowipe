@@ -2,13 +2,16 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
+from videowipe.detect import TextBox
 from videowipe.errors import InvalidInputError
 from videowipe.plan import (MaskAsset, Segment, Source, TemporalResolution, Track,
                            WipePlan, execution_masks, is_temporal, load_wipe_plan,
                            save_wipe_plan, validate_plan, _spatial_mask)
+from videowipe.planning import _add_spatial_segments, refine_temporal_presence
 from videowipe.server.review import compile_review
 from videowipe.server.app import _trial_key
 
@@ -323,7 +326,10 @@ def test_short_gap_requires_positive_frame_evidence(tmp_path, monkeypatch, mode)
     box = TextBox(np.array([[50,100],[150,100],[150,130],[50,130]]), .9)
     result = _gap_result({i: [box] for i in (0,1,5,6,7,8)})
     def detect(frame):
-        assert not frame.any()
+        # Contrast-recovery variants of a content-free frame stay uniform, so
+        # "no local structure anywhere" still proves the video carries no text.
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        assert np.ptp(gray) == 0  # Uniform input: still the content-free video.
         if mode == "error":
             raise RuntimeError("detector unavailable")
         return []
@@ -351,3 +357,237 @@ def test_short_gap_requires_positive_frame_evidence(tmp_path, monkeypatch, mode)
     assert all(not mask(i).any() for i in (2,3,4))
     if mode == "error":
         assert len(plan.warnings) == 3
+
+
+class _VariantSignaledDetector:
+    """Dense detector that only sees text in contrast-restored band crops.
+
+    The synthetic flash frame (background 250, glyphs 180) is invisible to the
+    "normal" pass but every contrast restoration leaves a distinct signature:
+    highpass re-centers the background at 128, darkened (gamma 2.2) drops the
+    background to ~244 with a wide spread. Returned boxes use the crop-local
+    coordinates of the band crop around bbox (30, 90, 180, 145); the recovered
+    glyph sits at frame coords (60, 100)-(120, 130).
+    """
+
+    def __init__(self, variants, box, raise_on_normal=False):
+        self.variants = set(variants)
+        self.box = box
+        self.raise_on_normal = raise_on_normal
+        self.normal_calls = 0
+        self._manual_only = False
+
+    def detect(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        median = float(np.median(gray))
+        spread = float(np.ptp(gray))
+        if frame.shape[:2] == (200, 400):
+            self.normal_calls += 1
+            if self.raise_on_normal:
+                raise RuntimeError("detector unavailable")
+            return []
+        restored = median < 248 or spread > 80
+        if not restored:
+            return []
+        if self._flip_on_restore:
+            self._manual_only = True
+        if 'highpass' in self.variants and 120 <= median <= 140:
+            return [self._text_box()]
+        if 'darkened' in self.variants and 232 <= median <= 247 and spread >= 100:
+            return [self._text_box()]
+        return []
+
+    _flip_on_restore = False
+
+    def _text_box(self):
+        x1, y1, x2, y2 = self.box
+        return TextBox(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], np.float64), .9)
+
+
+def _flash_video(path, frames=6, width=400, height=200):
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'FFV1'), 8,
+                             (width, height))
+    assert writer.isOpened()
+    for _ in range(frames):
+        frame = np.full((height, width, 3), 250, np.uint8)
+        frame[100:131, 60:121] = 180
+        writer.write(frame)
+    writer.release()
+
+
+def _flash_result(detector, sampled=None):
+    return SimpleNamespace(
+        frame_shape=(200, 400),
+        sample_indices=[0],
+        candidates=[SimpleNamespace(id='c1', type='subtitle', detector_backed=True,
+                                    bbox=(30, 90, 180, 145),
+                                    temporal_sample_indices=[0], presence_frames=[0])],
+        sampled_frame_boxes=sampled if sampled is not None else {},
+        detector=detector,
+    )
+
+
+def _flash_plan():
+    plan = _gap_plan([Segment(0, 6)])
+    plan.tracks[0].bbox = (30, 90, 180, 145)
+    return plan
+
+
+def test_white_flash_recovery_restores_per_frame_presence(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (48, 24, 108, 54))
+    result = _flash_result(detector)
+    warnings = refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert warnings == []
+    presence = set(result.candidates[0].presence_frames)
+    assert presence == set(range(6))  # Every flash frame has current-frame evidence.
+    assert detector.normal_calls == 6  # Normal pass ran first on every frame.
+    for index in range(6):
+        assert result.sampled_frame_boxes[index], index
+        assert detector._manual_only is False  # Retry never flips shared state.
+
+
+def test_single_variant_recovery_is_not_evidence(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass'}, (48, 24, 108, 54))
+    result = _flash_result(detector)
+    refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert result.candidates[0].presence_frames == []
+
+
+def test_recovery_outside_candidate_bbox_is_not_evidence(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (60, 0, 108, 10))
+    result = _flash_result(detector)
+    refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert result.candidates[0].presence_frames == []
+
+
+def test_detector_error_never_gets_a_second_chance(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (60, 100, 120, 130),
+                                        raise_on_normal=True)
+    result = _flash_result(detector)
+    warnings = refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert result.candidates[0].presence_frames == []
+    assert detector.normal_calls == 6  # One attempt per frame; never retried.
+    assert len(warnings) == 6
+
+
+def test_recovery_covers_cached_sampled_frames_too(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (48, 24, 108, 54))
+    result = _flash_result(detector, sampled={0: []})
+    refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert 0 in result.candidates[0].presence_frames
+
+
+def test_recovered_evidence_reaches_spatial_plan(tmp_path):
+    video = tmp_path / 'flash.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (48, 24, 108, 54))
+    result = _flash_result(detector)
+    refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    plan = _flash_plan()
+    _add_spatial_segments(plan, result, video_path=str(video))
+    mask = execution_masks(plan, 1)[1]
+    for index in range(6):
+        assert mask(index)[115, 90] == 1  # The recovered line is really wiped.
+        assert mask(index)[115, 20] == 0  # Only the evidenced line, never the band.
+
+
+def test_gap_probe_recovers_flash_hidden_subtitle(tmp_path):
+    # The coarse sample landed on the flash peak, so the gap frames were never
+    # refined. The gap probe's contrast-recovery retry must still close the
+    # split from per-frame positive evidence only.
+    video = tmp_path / 'flash-gap.avi'
+    _flash_video(video)
+    detector = _VariantSignaledDetector({'highpass', 'darkened'}, (48, 24, 108, 54))
+    detector.normal_detects_empty = True
+    plan = _gap_plan([Segment(0, 2), Segment(5, 9)])
+    result = SimpleNamespace(
+        frame_shape=(200, 400), sample_indices=[0],
+        candidates=[SimpleNamespace(id='c1', type='subtitle', detector_backed=True,
+                                    bbox=(30, 90, 180, 145),
+                                    temporal_sample_indices=[], presence_frames=[])],
+        sampled_frame_boxes={0: [], 1: [], 5: [], 6: [], 7: [], 8: []},
+        detector=detector,
+    )
+
+    def normal_empty(frame):
+        return []
+
+    # Frames 0-1 and 5-8 carry the coarse presence; the probe only needs to
+    # decide frames 2-4, whose normal pass finds nothing.
+    detector.detect = detector.detect  # variant-signaled behavior stands
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert plan.tracks[0].segments == [Segment(0, 9)]
+    mask = execution_masks(plan)[1]
+    for index in (2, 3, 4):
+        assert mask(index)[115, 90] == 1
+        assert mask(index)[115, 20] == 0
+
+
+def test_boundary_zone_probe_extends_late_subtitle_start(tmp_path):
+    # A coarse midpoint boundary placed the segment start three frames after
+    # the subtitle actually appears. The uncertainty-zone probe must extend
+    # the segment across contiguous frames with per-frame positive evidence.
+    video = tmp_path / 'late.avi'
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'FFV1'), 8, (400, 200))
+    assert writer.isOpened()
+    for i in range(8):
+        frame = np.full((200, 400, 3), 60, np.uint8)
+        if 1 <= i <= 5:
+            frame[100:131, 60:121] = 240
+        writer.write(frame)
+    writer.release()
+    plan = _gap_plan([Segment(3, 6)])
+    plan.source = Source('late.avi', 'a' * 64, 400, 200, 8, 8)
+    plan.tracks[0].bbox = (30, 90, 180, 145)
+    box = TextBox(np.array([[60, 100], [120, 100], [120, 130], [60, 130]], np.float64), .9)
+    result = SimpleNamespace(
+        frame_shape=(200, 400), sample_indices=[3],
+        candidates=[SimpleNamespace(id='c1', type='subtitle', detector_backed=True,
+                                    bbox=(30, 90, 180, 145),
+                                    temporal_sample_indices=[3, 4, 5], presence_frames=[3, 4, 5])],
+        sampled_frame_boxes={3: [box], 4: [box], 5: [box]},
+        detector=SimpleNamespace(detect=lambda frame: [box] if np.ptp(
+            cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)) > 100 else []),
+    )
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert plan.tracks[0].segments == [Segment(1, 6)]  # Extended to the real start.
+    mask = execution_masks(plan)[1]
+    for index in (1, 2, 3):
+        assert mask(index)[115, 90] == 1
+        assert mask(index)[115, 20] == 0
+    assert not mask(0).any()  # The empty frame before the text stays untouched.
+
+
+def test_boundary_zone_probe_stops_on_empty_frames(tmp_path):
+    # Without positive evidence the boundary never moves into the zone.
+    video = tmp_path / 'late-empty.avi'
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*'FFV1'), 8, (400, 200))
+    assert writer.isOpened()
+    for i in range(8):
+        writer.write(np.full((200, 400, 3), 60, np.uint8))
+    writer.release()
+    plan = _gap_plan([Segment(3, 6)])
+    plan.source = Source('late-empty.avi', 'a' * 64, 400, 200, 8, 8)
+    plan.tracks[0].bbox = (30, 90, 180, 145)
+    box = TextBox(np.array([[60, 100], [120, 100], [120, 130], [60, 130]], np.float64), .9)
+    result = SimpleNamespace(
+        frame_shape=(200, 400), sample_indices=[3],
+        candidates=[SimpleNamespace(id='c1', type='subtitle', detector_backed=True,
+                                    bbox=(30, 90, 180, 145),
+                                    temporal_sample_indices=[3, 4, 5], presence_frames=[3, 4, 5])],
+        sampled_frame_boxes={3: [box], 4: [box], 5: [box]},
+        detector=SimpleNamespace(detect=lambda frame: [box] if frame.max() > 200 else []),
+    )
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert plan.tracks[0].segments == [Segment(3, 6)]
+    assert not execution_masks(plan)[1](1).any()

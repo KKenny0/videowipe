@@ -15,6 +15,7 @@ from videowipe.detect import (
     CleanCandidate,
     TextBox,
     _bbox,
+    _contrast_recovered_boxes,
     infer_regions_from_text,
     infer_targets_from_text,
     normalize_target,
@@ -504,7 +505,15 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
     # over a white flash) can split one continuous subtitle into segments with a
     # spurious gap narrower than the sampling interval.
     radius = max(0, int(plan.source.fps / 4))
+    # A coarse midpoint boundary can be off by up to half the widest sample
+    # interval on each side, and refinement only verifies the segment interior.
+    # Those unobserved boundary zones get the same per-frame probe.
+    uncertainty = max(radius, int(getattr(plan.temporal_resolution, "max_gap_frames", 0) or 0) // 2)
     gap_frames: set[int] = set()
+    gap_tracks: dict[int, list] = {}
+    zone_frames: set[int] = set()
+    zone_tracks: dict[int, list] = {}
+    frame_count = plan.source.frame_count
     for track in plan.remove_tracks:
         if (track.id not in eligible or "bbox-override" in track.decision_reason
                 or (selected_ids is not None and track.id not in selected_ids)):
@@ -514,29 +523,112 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
             gap = b.start - a.end  # number of frames in the gap
             if 0 < gap <= radius * 2:
                 gap_frames.update(range(a.end, b.start))
-    missing_all = sorted(set(missing) | (gap_frames - evidence.keys()))
-    if missing_all and video_path is not None:
+                for index in range(a.end, b.start):
+                    gap_tracks.setdefault(index, []).append(track)
+        for segment in segs:
+            zone = set(range(max(0, segment.start - uncertainty), segment.start))
+            zone.update(range(min(segment.end, frame_count),
+                              min(segment.end + uncertainty, frame_count)))
+            zone_frames.update(zone)
+            for index in zone:
+                zone_tracks.setdefault(index, []).append(track)
+    frame_h, frame_w = result.frame_shape
+    missing_all = sorted(set(missing) | ((gap_frames | zone_frames) - evidence.keys()))
+    # Gap frames whose recorded evidence carries no band overlap also need the
+    # second chance: a coarse sample landing inside a white flash records an
+    # empty detection that refinement never revisits.
+    needs_probe = set(missing_all)
+    for index in gap_frames & evidence.keys():
+        boxes = evidence[index]
+        tracks_here = gap_tracks.get(index, ())
+        if not tracks_here or any(
+            track.bbox[0] <= (bx1 + bx2) / 2 <= track.bbox[2]
+            and track.bbox[1] <= (by1 + by2) / 2 <= track.bbox[3]
+            for track in tracks_here
+            for box in boxes
+            for bx1, by1, bx2, by2 in [_bbox(box.points, frame_w, frame_h)]
+        ):
+            continue
+        needs_probe.add(index)
+    if needs_probe and video_path is not None:
         reader = cv2.VideoCapture(video_path)
         try:
             if not reader.isOpened():
                 raise ValueError("Cannot open video for local subtitle boundary checks")
-            for index in missing_all:
+            for index in sorted(needs_probe):
                 if check_cancelled is not None:
                     check_cancelled()
                 reader.set(cv2.CAP_PROP_POS_FRAMES, index)
                 ok, frame = reader.read()
                 if not ok:
-                    if index in gap_frames:
-                        evidence[index] = []  # treat unreadable gap frame as absent
+                    if index in gap_frames or index in zone_frames:
+                        evidence[index] = []  # treat unreadable probed frame as absent
                         continue
                     raise ValueError(f"Cannot decode subtitle boundary frame {index}")
-                try:
-                    evidence[index] = result.detector.detect(frame)
-                except Exception as exc:
-                    evidence[index] = []
-                    plan.warnings.append(f"local subtitle detection failed at frame {index}; keeping frame: {exc}")
+                if index in evidence and index not in missing_all:
+                    # Keep the recorded normal-pass evidence; add only the
+                    # second chance below.
+                    boxes = list(evidence[index])
+                    detect_failed = False
+                else:
+                    try:
+                        boxes = result.detector.detect(frame)
+                        detect_failed = False
+                    except Exception as exc:
+                        boxes = []
+                        detect_failed = True
+                        plan.warnings.append(f"local subtitle detection failed at frame {index}; keeping frame: {exc}")
+                # A white flash or cross-dissolve can hide the subtitle from the
+                # normal pass even inside a short gap. Give the gap probe the
+                # same per-frame, cross-variant second chance as refinement;
+                # unreadable frames and detector errors above never get one.
+                if not detect_failed:
+                    for track in gap_tracks.get(index, ()):
+                        x1, y1, x2, y2 = track.bbox
+                        if any(
+                            x1 <= (bx1 + bx2) / 2 <= x2 and y1 <= (by1 + by2) / 2 <= y2
+                            for box in boxes
+                            for bx1, by1, bx2, by2 in [_bbox(box.points, frame.shape[1], frame.shape[0])]
+                        ):
+                            continue
+                        boxes = boxes + _contrast_recovered_boxes(result.detector, frame, track.bbox)
+                evidence[index] = boxes
         finally:
             reader.release()
+
+    # Extend segment boundaries across the probed uncertainty zone when every
+    # newly covered frame carries its own positive evidence; an observed,
+    # empty, or unobserved frame stops the walk.
+    def _local_positive(index: int, track) -> bool:
+        boxes = evidence.get(index) or []
+        bx1, by1, bx2, by2 = track.bbox
+        return any(
+            bx1 <= (cx1 + cx2) / 2 <= bx2 and by1 <= (cy1 + cy2) / 2 <= by2
+            for box in boxes
+            for cx1, cy1, cx2, cy2 in [_bbox(box.points, frame_w, frame_h)]
+        )
+
+    for track in plan.remove_tracks:
+        if (track.id not in eligible or "bbox-override" in track.decision_reason
+                or (selected_ids is not None and track.id not in selected_ids)):
+            continue
+        rebuilt = []
+        for segment in sorted(track.segments, key=lambda s: s.start):
+            start, end = segment.start, segment.end
+            while start - 1 >= 0 and _local_positive(start - 1, track):
+                start -= 1
+            while end < frame_count and _local_positive(end, track):
+                end += 1
+            rebuilt.append(Segment(start, end) if (start, end) != (segment.start, segment.end)
+                           else segment)
+        normalized = []
+        for segment in rebuilt:
+            if normalized and segment.start <= normalized[-1].end:
+                if segment.end > normalized[-1].end:
+                    normalized[-1] = Segment(normalized[-1].start, segment.end)
+            else:
+                normalized.append(segment)
+        track.segments = normalized
     evidence = sorted(evidence.items())
     for track in plan.remove_tracks:
         if (track.id not in eligible or "bbox-override" in track.decision_reason

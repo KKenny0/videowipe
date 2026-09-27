@@ -358,6 +358,10 @@ class _PlanFakeDetector:
     """Always reports a bottom subtitle + a persistent top overlay."""
 
     def detect(self, frame):
+        if frame.shape[:2] != (64, 96):
+            # Contrast-recovery crops of a candidate band are outside this
+            # fake's modeled full-frame behavior.
+            return []
         return [
             TextBox(
                 points=np.array([[8, 50], [88, 50], [88, 60], [8, 60]]),
@@ -815,6 +819,10 @@ def test_new_remove_refines_keep_and_reuses_frame_evidence(tmp_path):
         calls = 0
 
         def detect(self, frame):
+            if frame.shape[:2] != (64, 96):
+                # Contrast-recovery variants are not full-frame detections;
+                # the cache-reuse assertions count the latter only.
+                return super().detect(frame)
             self.calls += 1
             return super().detect(frame)
 
