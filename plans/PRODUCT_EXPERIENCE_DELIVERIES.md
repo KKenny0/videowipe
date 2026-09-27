@@ -1,6 +1,6 @@
 # VideoWipe 三次交付实施方案
 
-最近核对：2026-09-26。本轮获授权提交、推送并发布 v0.11.0；发布保留白闪帧漏检、macOS headless 验收和整体画质限制，不代表这些问题已经解决。下方逐日记录保留当时状态，以最后的复审更正及发布说明为准。`result/` 是本地忽略产物。
+最近核对：2026-09-27。Spec #3 的四段正常播放验收已由用户确认通过，PR #10 已合并，#3–#9 已结项。本轮获授权发布 v0.11.1，发布结果以对应 Release 与候选验证记录为准。原截图案例因缺少视频仍未验证；下方历史记录保留当时状态，后续验收更正优先。`result/` 是本地忽略产物。
 
 原计划日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。
 基线：v0.10.0，main，7286a04。原有未跟踪产品文档、plans 和 jobs 保留。

@@ -38,11 +38,11 @@
 
 ## Development status
 
-v0.11.0 includes the cleanup workspace, saved review state and task recovery, time-range and protection editing, STTN prediction reuse, and local subtitle-tail recovery. This release has the known quality and macOS installation limitations below.
+v0.11.1 improves subtitle recovery during white flashes and cross-fades, preserves failed-frame safety, and verifies macOS operation without requiring a GUI-free build.
 
-Quality acceptance remains open. Short subtitle gaps are merged only when every frame has positive local detector evidence; blank frames and detector failures never inherit neighboring boxes. This safety correction reopens the multilingual sample’s white-flash miss at frames 199–201. The frame-400 leading-letter recovery remains implemented. Cross-fade frames and complex-background reconstruction also need review. macOS installation acceptance remains blocked: a clean install of opencv-python-headless 4.14.0.94 reports GUI: COCOA. The smoke now verifies the loaded native binary against the headless distribution RECORD hash, rejects competing OpenCV packages, and requires GUI: NONE on every platform. Passing tests does not establish complete subtitle removal or cross-platform CI acceptance; see the release notes for cross-platform CI results.
+The reviewed white-flash, cross-fade, Chinese complex-background, and synthetic outlined-subtitle clips passed user acceptance at normal playback speed. This does not promise pixel-perfect reconstruction or complete removal on every video. The original user screenshot case remains unverified because its source and output videos are unavailable. macOS clean installation and operational checks passed; provider identity and native RECORD integrity checks remain enforced. Strong contrast recovery may require more detection work. See the release notes for verification results and metric tradeoffs.
 
-See the [delivery status](plans/PRODUCT_EXPERIENCE_DELIVERIES.md) and [diagnostic tools](scripts/QUALITY_DIAGNOSTICS.md). See [v0.11.0 release notes](https://github.com/KKenny0/videowipe/releases/tag/v0.11.0) for verification results and known limitations.
+See the [delivery status](plans/PRODUCT_EXPERIENCE_DELIVERIES.md) and [diagnostic tools](scripts/QUALITY_DIAGNOSTICS.md). See [v0.11.1 release notes](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1) for verification results and known limitations.
 
 ## Remove hardcoded subtitles, watermarks, and logos locally
 

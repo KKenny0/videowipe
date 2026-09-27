@@ -38,11 +38,11 @@
 
 ## 开发状态
 
-v0.11.0 包含清理工作区、审阅保存与任务恢复、时间和保护区域编辑、STTN 预测复用，以及字幕下缘恢复。本版仍有下述画质和 macOS 安装限制。
+v0.11.1 改善白闪和交叉淡化期间的字幕恢复，保留检测失败帧的安全保护，并以实际运行验证 macOS 可用性，不再把 GUI 编译字段作为唯一判断依据。
 
-画质验收仍未完成。短字幕缺口只有每帧都有本轨道的局部检测阳性证据才合并，真实空帧与检测失败帧不再继承邻帧框；该安全修正重新打开多语样片 199–201 白闪帧漏擦问题。第 400 帧行首字形恢复实现保留，交叉淡化帧及复杂背景重建仍需复查。macOS 安装验收仍阻塞：干净安装 opencv-python-headless 4.14.0.94 返回 GUI: COCOA。冒烟现核验实际加载的原生二进制与 headless 发行版 RECORD 哈希，拒绝混装 OpenCV，并在所有平台要求 GUI: NONE。测试通过不代表完整擦除或跨平台 CI 通过；跨平台 CI 结果见发布说明。
+本次复查的白闪、叠化、中文复杂背景和合成描边字幕片段均已由用户按正常播放标准验收通过。这不代表逐像素还原或所有视频都能完整擦除。原用户截图案例因缺少原片和输出视频，仍未验证。macOS 干净安装与实际运行检查通过，继续核验发行版来源和原生二进制 RECORD 完整性。较强的对比度恢复会增加检测开销；验证结果及指标取舍见发布说明。
 
-详见[交付状态](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)和[诊断工具说明](scripts/QUALITY_DIAGNOSTICS.md)。验证结果和已知限制见 [v0.11.0 发布说明](https://github.com/KKenny0/videowipe/releases/tag/v0.11.0)。
+详见[交付状态](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)和[诊断工具说明](scripts/QUALITY_DIAGNOSTICS.md)。验证结果和已知限制见 [v0.11.1 发布说明](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1)。
 
 ## 本地硬字幕去除、视频去水印
 
