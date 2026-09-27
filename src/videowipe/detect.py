@@ -1495,6 +1495,20 @@ def _rects_agree(
     return _iou_bbox(rect1, rect2) >= 0.5
 
 
+def _needs_contrast_recovery(
+    boxes: list[TextBox], bbox: tuple[int, int, int, int], width: int, height: int,
+) -> bool:
+    """Spend a recovery pass on empty or fragmentary bands, never infer a mask."""
+    x1, y1, x2, y2 = bbox
+    local = [_bbox(box.points, width, height) for box in boxes]
+    local = [b for b in local if x1 <= (b[0] + b[2]) / 2 <= x2
+             and y1 <= (b[1] + b[3]) / 2 <= y2]
+    # Half the candidate width is only a compute gate. Any added pixels still
+    # require two agreeing current-frame detector boxes, including short text.
+    return not local or (max(b[2] for b in local) - min(b[0] for b in local)
+                         < (x2 - x1) / 2)
+
+
 def _contrast_recovered_boxes(
     detector: TextDetector,
     frame: np.ndarray,
@@ -1550,8 +1564,8 @@ def _contrast_recovered_boxes(
                             confirmed.setdefault(entry[1], entry[0])
                             confirmed.setdefault(other[1], other[0])
             per_variant.append(entries)
-            if confirmed:
-                break
+            # Other glyphs may only agree with the final variant; one match
+            # must not stop evidence collection for the rest of the band.
         return [confirmed[coords] for coords in sorted(confirmed)]
     finally:
         if manual_only is not None:
@@ -1655,7 +1669,9 @@ def refine_temporal_presence(
                         for box in boxes
                     ):
                         candidate.presence_frames.append(frame_index)
-                    elif not detect_failed:
+                    if not detect_failed and _needs_contrast_recovery(
+                        boxes, candidate.bbox, frame.shape[1], frame.shape[0],
+                    ):
                         # White flash / cross-dissolve recovery: per-frame
                         # positive evidence from contrast-restored variants of
                         # this candidate's own band. Failed detection above

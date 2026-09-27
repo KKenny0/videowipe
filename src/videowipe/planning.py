@@ -16,6 +16,7 @@ from videowipe.detect import (
     TextBox,
     _bbox,
     _contrast_recovered_boxes,
+    _needs_contrast_recovery,
     infer_regions_from_text,
     infer_targets_from_text,
     normalize_target,
@@ -540,22 +541,15 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                 zone_tracks.setdefault(index, []).append(track)
     frame_h, frame_w = result.frame_shape
     missing_all = sorted(set(missing) | ((gap_frames | zone_frames) - evidence.keys()))
-    # Gap frames whose recorded evidence carries no band overlap also need the
-    # second chance: a coarse sample landing inside a white flash records an
-    # empty detection that refinement never revisits.
+    # Gap frames with empty or fragmentary evidence also need a second
+    # chance: a coarse sample inside a flash can miss most of the text.
     needs_probe = set(missing_all)
     for index in gap_frames & evidence.keys():
         boxes = evidence[index]
         tracks_here = gap_tracks.get(index, ())
-        if not tracks_here or any(
-            track.bbox[0] <= (bx1 + bx2) / 2 <= track.bbox[2]
-            and track.bbox[1] <= (by1 + by2) / 2 <= track.bbox[3]
-            for track in tracks_here
-            for box in boxes
-            for bx1, by1, bx2, by2 in [_bbox(box.points, frame_w, frame_h)]
-        ):
-            continue
-        needs_probe.add(index)
+        if any(_needs_contrast_recovery(boxes, track.bbox, frame_w, frame_h)
+               for track in tracks_here):
+            needs_probe.add(index)
     if needs_probe and video_path is not None:
         reader = cv2.VideoCapture(video_path)
         try:
@@ -594,11 +588,8 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                 # unreadable frames and detector errors above never get one.
                 if not detect_failed:
                     for track in gap_tracks.get(index, ()):
-                        x1, y1, x2, y2 = track.bbox
-                        if any(
-                            x1 <= (bx1 + bx2) / 2 <= x2 and y1 <= (by1 + by2) / 2 <= y2
-                            for box in boxes
-                            for bx1, by1, bx2, by2 in [_bbox(box.points, frame.shape[1], frame.shape[0])]
+                        if not _needs_contrast_recovery(
+                            boxes, track.bbox, frame.shape[1], frame.shape[0],
                         ):
                             continue
                         try:

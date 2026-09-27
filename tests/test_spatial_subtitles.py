@@ -632,6 +632,51 @@ def test_contrast_consensus_requires_meaningful_overlap():
     assert not _rects_agree((0, 0, 100, 30), (101, 31, 201, 61))
 
 
+def test_recovery_checks_later_variant_for_other_confirmed_glyphs():
+    from videowipe.detect import _contrast_recovered_boxes
+    left = TextBox(np.array([[40, 25], [80, 25], [80, 50], [40, 50]]), .9)
+    right = TextBox(np.array([[100, 25], [140, 25], [140, 50], [100, 50]]), .9)
+
+    class Detector:
+        calls = 0
+
+        def detect(self, frame):
+            boxes = ([left, right], [left], [right])[self.calls]
+            self.calls += 1
+            return boxes
+
+    detector = Detector()
+    recovered = _contrast_recovered_boxes(
+        detector, np.zeros((200, 400, 3), np.uint8), (30, 90, 180, 145),
+    )
+    assert len(recovered) == 2  # Both glyphs have two independent confirmations.
+    assert detector.calls == 3
+
+
+@pytest.mark.parametrize('phase', ['refine', 'gap'])
+def test_partial_normal_box_still_recovers_confirmed_text(tmp_path, phase):
+    video = tmp_path / 'partial.avi'
+    _flash_video(video, frames=9)
+    fragment = TextBox(np.array([[60, 100], [65, 100], [65, 110], [60, 110]]), .9)
+
+    class Detector(_VariantSignaledDetector):
+        def detect(self, frame):
+            if frame.shape[:2] == (200, 400):
+                return [fragment]
+            return super().detect(frame)
+
+    result = _flash_result(Detector({'highpass', 'darkened'}, (48, 24, 108, 54)))
+    if phase == 'refine':
+        refine_temporal_presence(str(video), result, {'c1': [Segment(0, 9)]}, 9)
+    else:
+        result.sampled_frame_boxes = {i: [fragment] for i in range(9)}
+        _add_spatial_segments(_gap_plan([Segment(0, 2), Segment(5, 9)]), result,
+                              video_path=str(video))
+    # The complete glyph is supported by two restored views of this frame;
+    # a normal-pass fragment must not prevent collecting that evidence.
+    assert any(box.points[:, 0].max() >= 120 for box in result.sampled_frame_boxes[2])
+
+
 def _synthetic_module():
     import importlib.util
     spec = importlib.util.spec_from_file_location('similar', 'scripts/verify_similar_subtitles.py')
