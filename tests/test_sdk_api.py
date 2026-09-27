@@ -358,6 +358,10 @@ class _PlanFakeDetector:
     """Always reports a bottom subtitle + a persistent top overlay."""
 
     def detect(self, frame):
+        if frame.shape[:2] != (64, 96):
+            # Contrast-recovery crops of a candidate band are outside this
+            # fake's modeled full-frame behavior.
+            return []
         return [
             TextBox(
                 points=np.array([[8, 50], [88, 50], [88, 60], [8, 60]]),
@@ -815,6 +819,10 @@ def test_new_remove_refines_keep_and_reuses_frame_evidence(tmp_path):
         calls = 0
 
         def detect(self, frame):
+            if frame.shape[:2] != (64, 96):
+                # Contrast-recovery variants are not full-frame detections;
+                # the cache-reuse assertions count the latter only.
+                return super().detect(frame)
             self.calls += 1
             return super().detect(frame)
 
@@ -838,6 +846,17 @@ def test_new_remove_refines_keep_and_reuses_frame_evidence(tmp_path):
     assert detector.calls == before  # initial subtitle refinement already checked all frames
     assert all(track.segments for track in result.remove_tracks)
     saved = json.loads((tmp_path / "execution/refinement_evidence.json").read_text())
+    assert saved["failed_frame_indices"] == []
+    prior = json.loads(evidence.read_text())
+    prior["failed_frame_indices"] = [2]
+    evidence.write_text(json.dumps(prior))
+    engine._refine_review(str(video), machine, deepcopy(reviewed), evidence,
+                          output_dir=str(tmp_path / "restored"))
+    restored = json.loads((tmp_path / "restored/refinement_evidence.json").read_text())
+    assert restored["failed_frame_indices"] == [2]
+    assert restored["boxes"]["2"] == []
+    assert all(2 not in candidate["presence_frames"] for candidate in restored["candidates"]
+               if candidate["id"] in keep_ids)
     for candidate in saved["candidates"]:
         if candidate["id"] in keep_ids:
             assert candidate["temporal_sample_indices"] == list(range(5))

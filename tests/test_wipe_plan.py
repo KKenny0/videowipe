@@ -123,9 +123,13 @@ def test_refinement_rechecks_each_active_frame_once_and_splits_a_gap(tmp_path):
         def __init__(self):
             self.calls = 0
 
-        def detect(self, _frame):
-            current = self.calls
+        def detect(self, frame):
             self.calls += 1
+            if frame.shape[:2] != (100, 100):
+                # Contrast-recovery crops of the band are honestly empty here;
+                # this fake only models full-frame detection.
+                return []
+            current = self.calls - 1
             if current == 2:
                 return []
             return [TextBox(
@@ -146,8 +150,10 @@ def test_refinement_rechecks_each_active_frame_once_and_splits_a_gap(tmp_path):
     )
 
     assert warnings == []
-    assert detector.calls == 5
-    assert cancellation_checks == [0, 1, 2, 3, 4]
+    # One normal pass per active frame; the empty frame also costs its bounded
+    # contrast-recovery retry (six views, three families), which finds nothing here.
+    assert detector.calls == 11
+    assert cancellation_checks == [0, 1, 2, 9, 10]
     assert progress == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
     assert candidate.temporal_sample_indices == [0, 1, 2, 3, 4]
     assert candidate.presence_frames == [0, 1, 3, 4]
