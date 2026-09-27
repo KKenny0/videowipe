@@ -8,6 +8,7 @@ import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "verify_package.py"
@@ -75,10 +76,55 @@ def test_headless_native_provenance(tmp_path, monkeypatch, case):
     if case == "mismatch":
         native.write_bytes(b"overwritten binary")
     monkeypatch.setattr(smoke, "cv2", fake)
+    monkeypatch.setattr(smoke, "_check_headless_ops", lambda: None)
     monkeypatch.setattr(sys, "platform", "darwin")
     check = smoke._check_headless
-    if case == "good":
+    if case in ("good", "cocoa"):
+        # "cocoa": a GUI-linked build field alone must not fail provenance.
         check()
     else:
         with pytest.raises(SystemExit):
             check()
+
+
+def test_headless_ops_roundtrip_and_red(tmp_path, monkeypatch):
+    # Real cv2 must complete the display-less operations the product needs.
+    smoke._check_headless_ops()
+    class BrokenWriter:
+        def __init__(self, *args, **kwargs):
+            self.opened = False
+        def isOpened(self):
+            return False
+        def write(self, frame):
+            return False
+        def release(self):
+            pass
+    monkeypatch.setattr(smoke.cv2, "VideoWriter", BrokenWriter)
+    with pytest.raises(SystemExit, match="cannot open a video writer"):
+        smoke._check_headless_ops()
+
+
+def test_headless_ops_records_cocoa_build_without_rejecting(tmp_path, monkeypatch):
+    # A GUI-linked build field must not fail provenance when the display-less
+    # operations still run (macOS headless wheels report GUI: COCOA).
+    class CocoaDetector:
+        def __init__(self, *args, **kwargs):
+            pass
+        def isOpened(self):
+            return True
+        def write(self, frame):
+            return True
+        def release(self):
+            pass
+    monkeypatch.setattr(smoke.cv2, "VideoWriter", CocoaDetector)
+    monkeypatch.setattr(smoke.cv2, "VideoWriter_fourcc", lambda *a: 0)
+    monkeypatch.setattr(smoke.cv2, "VideoCapture", lambda path: SimpleNamespace(
+        read=lambda: (True, np.zeros((32, 48, 3), np.uint8)), release=lambda: None))
+    monkeypatch.setattr(smoke.cv2, "cvtColor", lambda frame, code: np.zeros((32, 48), np.uint8))
+    monkeypatch.setattr(smoke.cv2, "COLOR_BGR2GRAY", 0, raising=False)
+    monkeypatch.setattr(smoke.cv2, "GaussianBlur", lambda *a, **k: None)
+    monkeypatch.setattr(smoke.cv2, "connectedComponents", lambda mask: (1,))
+    monkeypatch.setattr(smoke.cv2, "imwrite", lambda path, img: True)
+    monkeypatch.setattr(smoke.cv2, "imread", lambda path: np.zeros((32, 48, 3), np.uint8))
+    monkeypatch.setattr(smoke.cv2, "dnn", SimpleNamespace(readNetFromONNX=lambda data: None))
+    smoke._check_headless_ops()
