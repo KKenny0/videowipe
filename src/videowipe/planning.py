@@ -24,6 +24,7 @@ from videowipe.detect import (
     resolve_requested_targets,
     select_clean_candidates,
 )
+from videowipe.errors import ProcessingCancelledError
 from videowipe.plan import (Segment, Source, WipePlan, build_wipe_plan, compute_source,
                             validate_plan, _spatial_mask)
 
@@ -157,6 +158,7 @@ class CleanPlanDraft:
         """Private restart evidence; the public callback never exposes it."""
         evidence = {
             "sample_indices": self._result.sample_indices,
+            "failed_frame_indices": sorted(getattr(self._result, "failed_frame_indices", set())),
             "candidates": [dict(candidate.to_dict(),
                                 detector_backed=candidate.detector_backed,
                                 temporal_sample_indices=candidate.temporal_sample_indices)
@@ -490,6 +492,10 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                 if c.type == "subtitle" and getattr(c, "detector_backed", False)}
     h, w = result.frame_shape
     evidence = getattr(result, "sampled_frame_boxes", {})
+    failed = getattr(result, "failed_frame_indices", set())
+    result.failed_frame_indices = failed
+    for index in failed:
+        evidence[index] = []
     if not evidence:
         return  # Custom mask providers need not supply detector frame evidence.
     # Midpoint interpolation can extend final intervals beyond the coarse
@@ -555,7 +561,7 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
         try:
             if not reader.isOpened():
                 raise ValueError("Cannot open video for local subtitle boundary checks")
-            for index in sorted(needs_probe):
+            for index in sorted(needs_probe - failed):
                 if check_cancelled is not None:
                     check_cancelled()
                 reader.set(cv2.CAP_PROP_POS_FRAMES, index)
@@ -563,6 +569,7 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                 if not ok:
                     if index in gap_frames or index in zone_frames:
                         evidence[index] = []  # treat unreadable probed frame as absent
+                        failed.add(index)
                         continue
                     raise ValueError(f"Cannot decode subtitle boundary frame {index}")
                 if index in evidence and index not in missing_all:
@@ -574,7 +581,10 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                     try:
                         boxes = result.detector.detect(frame)
                         detect_failed = False
+                    except ProcessingCancelledError:
+                        raise
                     except Exception as exc:
+                        failed.add(index)
                         boxes = []
                         detect_failed = True
                         plan.warnings.append(f"local subtitle detection failed at frame {index}; keeping frame: {exc}")
@@ -591,7 +601,17 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
                             for bx1, by1, bx2, by2 in [_bbox(box.points, frame.shape[1], frame.shape[0])]
                         ):
                             continue
-                        boxes = boxes + _contrast_recovered_boxes(result.detector, frame, track.bbox)
+                        try:
+                            boxes = boxes + _contrast_recovered_boxes(result.detector, frame, track.bbox)
+                        except ProcessingCancelledError:
+                            raise
+                        except Exception as exc:
+                            failed.add(index)
+                            boxes = []
+                            plan.warnings.append(
+                                f"local subtitle recovery failed at frame {index}; keeping frame: {exc}"
+                            )
+                            break
                 evidence[index] = boxes
         finally:
             reader.release()
@@ -769,6 +789,7 @@ def refine_review(video_path, machine_plan, reviewed_plan, evidence_path, detect
         candidates=candidates,
         frame_shape=(machine_plan.source.height, machine_plan.source.width),
         sample_indices=evidence["sample_indices"], detector=detector,
+        failed_frame_indices=set(evidence.get("failed_frame_indices", [])),
         sampled_frame_boxes={int(index): [TextBox(np.asarray(box["points"]),
                                                 box["confidence"], box["text"])
                                          for box in boxes]

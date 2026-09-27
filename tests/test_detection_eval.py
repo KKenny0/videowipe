@@ -1424,3 +1424,28 @@ def test_candidate_to_dict_exposes_presence_frames():
     )
     d = c.to_dict()
     assert d["presence_frames"] == [3, 7, 11]
+
+
+def test_coarse_detection_failure_is_retained_for_refinement(tmp_path):
+    from videowipe.detect import refine_temporal_presence
+    from videowipe.plan import Segment
+    video = tmp_path / 'failure.mp4'
+    _write_video(video, width=100, height=100, frames=3)
+    class Detector:
+        calls = 0
+        def detect(self, frame):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError('sample failed')
+            return [TextBox(np.array([[20, 80], [80, 80], [80, 90], [20, 90]]), .9)]
+    detector = Detector()
+    result = detect_clean_candidates(str(video), detector=detector, sample_count=3,
+                                     subtitle_fallback='off')
+    assert result.failed_frame_indices == {1}
+    assert result.sampled_frame_boxes[1] == []
+    assert result.candidates
+    before = detector.calls
+    refine_temporal_presence(str(video), result,
+                             {c.id: [Segment(0, 3)] for c in result.candidates}, 3)
+    assert detector.calls == before
+    assert all(1 not in c.presence_frames for c in result.candidates)

@@ -295,3 +295,10 @@ ca55855 在干净工作树完成 416 项测试、正式 fact/decision 与 wheel/
 ### 2026-09-27 白闪/叠化/边界覆盖修复与 macOS 运行验收
 
 三层逐帧正证据修复：① refine 内对比度恢复重试（候选带 CLAHE/highpass/gamma 三变体，至少两变体几何一致且中心在候选 bbox 内才算证据，检测异常帧绝不重试）；② 短缺口探针同一第二机会（含已记录证据但带内无重叠的帧）；③ 边界不确定区探针——粗检中点边界外 max(fps/4, max_gap//2) 帧内未观测帧逐帧探测，边界按连续正证据延伸。修复 others 白闪 197–202（c4 全覆盖）、叠化 359–363（c4 缺口闭合；c5 恢复 359，360–363 无证据保持打开）；chinese1 复查发现既有覆盖缺陷 302–304（粗检中点边界偏差），修复后 303–306 擦净、302 一帧 DBNet 负证据保留。真 HEAD worktree 对照：新增擦除 26 帧（三片合计）逐帧目检全部含可见文字，零误擦；chinese1/english1 空帧与保护区零变化。非正式 fact 基线唯一变化 others f361 no_remove_false_removal 0→0.006014（标注空但帧内确有半透明文字，恢复证据支持，已解释）；decision 零变化；Jaccard 0.319345 等不变。macOS：GUI: COCOA 确认为构建字段而非运行障碍——冒烟改为记录该字段并新增无显示操作检查（VideoWriter/VideoCapture/DNN 往返），保留提供者唯一、RECORD 哈希核验；基础安装不再要求 imageio；干净 venv 基础冒烟与 [torch] 端到端（english1 522 帧→h264 导出）均通过。448 项测试通过；wheel/sdist 38/64 entries 验证通过。合成相似场景（黄白混色+黑描边+运动背景，`scripts/verify_similar_subtitles.py`，来源与参数见 synth/provenance.json）主体与描边全覆盖、空帧未修改、无文字残留，仅见不可知背景的填充斑块。遗留：others 198–202/359–363 片段级淡残影与 chinese1 f302 单帧（暂停可见），待人工播放签收；获授权后候选以三个提交推送为 PR #10（spec-3-playback-acceptance），干净候选上正式 fact/decision 基线通过：fact 唯一变化仍为 others f361 no_remove_false_removal 0→0.006014，decision 零变化；远端 CI（ubuntu 3.10/3.13、windows 3.12、build、package）全部通过。原用户截图案例仍待验证。证据：`result/spec-3-acceptance/`（REPORT.md、compare/、clips/、repro/、synth/、baselines/）。
+
+
+### PR #10 复审更正（2026-09-27，未提交修复）
+
+上文合成场景“主体与描边全覆盖、空帧未修改、无文字残留”的验收表述撤回：旧生成器把已画字的帧同时保存为 background truth，且逐字绘制与整行 truth mask 几何不一致（固定灰底复现漏标 7,931 个变化像素）。旧 `result/spec-3-acceptance/synth/` 保留为历史，不再作为正确性证据。
+
+修复后的独立证据位于 `result/pr10-review-repair/`：pristine truth 与 source 分离，所有绘制变化均被 glyph truth 覆盖；同一扩张 glyph 区域上 no-op MAE 67.00825、清洁 oracle 0、实际成片 4.56970。执行 mask 仍漏盖合计 305 个 glyph 像素，100 个空帧的执行 mask 为零，但有损编码使 decoded source/output 最大差值为 16，不能声称成片逐像素不变。更严格的跨变体 IoU≥0.5 共识减少 others f196–208 的擦除面积，旧真实成片不能替代新计划的播放验收。此次修复与自动化验证不等于整个 Spec 画质签收；完整命令、差异与播放证据见新 REPORT.md。未提交、未推送，非正式基线不能替代干净候选的正式门禁。

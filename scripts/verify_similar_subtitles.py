@@ -60,25 +60,20 @@ def _background_frames() -> list[np.ndarray]:
 
 def _draw_subtitle(frame: np.ndarray, glyph: np.ndarray) -> None:
     """Mixed yellow/white glyphs with a black outline; records the glyph mask."""
-    for row, (text, y) in enumerate(((LINE_1, 590), (LINE_2, 650))):
-        (w, h), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)
-        x = (WIDTH - w) // 2
-        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
-                    (0, 0, 0), 9, cv2.LINE_AA)  # black outline
-        # Alternate white and yellow per glyph: draw each character with its
-        # own advance so the mix is per-character like the reported scene.
-        cursor = x
-        for position, char in enumerate(text):
-            color = (255, 255, 255) if position % 2 == 0 else (0, 255, 255)
-            (cw, _), _ = cv2.getTextSize(char, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)
-            cv2.putText(frame, char, (cursor, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
-                        (0, 0, 0), 9, cv2.LINE_AA)
-            cv2.putText(frame, char, (cursor, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
-                        color, 3, cv2.LINE_AA)
-            cursor += cw
+    for text, y in ((LINE_1, 590), (LINE_2, 650)):
+        advances = [cv2.getTextSize(char, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0][0]
+                    for char in text]
+        cursor = (WIDTH - sum(advances)) // 2
         stencil = np.zeros(frame.shape[:2], np.uint8)
-        cv2.putText(stencil, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
-                    255, 9, cv2.LINE_AA)
+        for position, (char, advance) in enumerate(zip(text, advances)):
+            color = (255, 255, 255) if position % 2 == 0 else (0, 255, 255)
+            for target, value, thickness in ((frame, (0, 0, 0), 9),
+                                              (frame, color, 3),
+                                              (stencil, 255, 9),
+                                              (stencil, 255, 3)):
+                cv2.putText(target, char, (cursor, y), cv2.FONT_HERSHEY_SIMPLEX,
+                            1.5, value, thickness, cv2.LINE_AA)
+            cursor += advance
         glyph |= stencil > 0
 
 
@@ -89,7 +84,8 @@ def generate(out: Path) -> tuple[Path, Path, dict]:
     frames_dir.mkdir(exist_ok=True)
     frames = _background_frames()
     glyph = np.zeros((len(frames), HEIGHT, WIDTH), bool)
-    for index, frame in enumerate(frames):
+    for index, background in enumerate(frames):
+        frame = background.copy()
         if EMPTY_HEAD <= index < EMPTY_HEAD + PRESENT:
             _draw_subtitle(frame, glyph[index])
         cv2.imwrite(str(frames_dir / f"{index:06d}.png"), frame)

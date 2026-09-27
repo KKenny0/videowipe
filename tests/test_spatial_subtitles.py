@@ -591,3 +591,119 @@ def test_boundary_zone_probe_stops_on_empty_frames(tmp_path):
     _add_spatial_segments(plan, result, video_path=str(video))
     assert plan.tracks[0].segments == [Segment(3, 6)]
     assert not execution_masks(plan)[1](1).any()
+
+
+def test_failed_frame_stays_negative_through_spatial_recovery(tmp_path):
+    video = tmp_path / 'failed.avi'
+    _flash_video(video, frames=9)
+    class Detector(_VariantSignaledDetector):
+        def detect(self, frame):
+            if frame.shape[:2] == (200, 400) and self.normal_calls == 2:
+                self.normal_calls += 1
+                raise RuntimeError('failed frame')
+            return super().detect(frame)
+    result = _flash_result(Detector({'highpass', 'darkened'}, (48, 24, 108, 54)))
+    refine_temporal_presence(str(video), result, {'c1': [Segment(0, 9)]}, 9)
+    plan = _gap_plan([Segment(0, 2), Segment(3, 9)])
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert not execution_masks(plan)[1](2).any()
+
+
+def test_recovery_failure_is_negative_evidence(tmp_path):
+    video = tmp_path / 'failed.avi'
+    _flash_video(video)
+    class Detector:
+        def detect(self, frame):
+            if frame.shape[:2] == (200, 400):
+                return []
+            raise RuntimeError('crop detector failed')
+    result = _flash_result(Detector())
+    warnings = refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    assert len(warnings) == 6
+    assert result.failed_frame_indices == set(range(6))
+    assert result.candidates[0].presence_frames == []
+
+
+def test_contrast_consensus_requires_meaningful_overlap():
+    from videowipe.detect import _rects_agree
+    assert _rects_agree((0, 0, 100, 30), (2, 1, 98, 29))
+    assert not _rects_agree((0, 0, 100, 30), (100, 30, 200, 60))
+    assert not _rects_agree((0, 0, 100, 30), (99, 29, 199, 59))
+    assert not _rects_agree((0, 0, 100, 30), (101, 31, 201, 61))
+
+
+def _synthetic_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('similar', 'scripts/verify_similar_subtitles.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_synthetic_glyph_geometry():
+    module = _synthetic_module()
+    background = np.full((720, 1280, 3), 120, np.uint8)
+    frame = background.copy()
+    glyph = np.zeros((720, 1280), bool)
+    module._draw_subtitle(frame, glyph)
+    changed = np.any(frame != background, axis=2)
+    assert changed.any()
+    assert not (changed & ~glyph).any()
+
+
+def test_synthetic_truth_is_pristine(tmp_path, monkeypatch):
+    module = _synthetic_module()
+    background = np.full((720, 1280, 3), 120, np.uint8)
+    monkeypatch.setattr(module, 'EMPTY_HEAD', 0)
+    monkeypatch.setattr(module, 'PRESENT', 1)
+    monkeypatch.setattr(module, '_background_frames', lambda: [background.copy()])
+    monkeypatch.setattr(module, '_sha256', lambda path: 'test')
+    monkeypatch.setattr(module.subprocess, 'run', lambda *a, **kw: None)
+    module.generate(tmp_path)
+    truth = cv2.imread(str(tmp_path / 'truth-frames/000000.png'))
+    source = cv2.imread(str(tmp_path / 'source-frames/000000.png'))
+    assert np.array_equal(truth, background)
+    assert not np.array_equal(truth, source)
+
+
+def test_gap_recovery_failure_stays_negative_on_repeat(tmp_path):
+    video = tmp_path / 'failed-gap.avi'
+    _flash_video(video, frames=9)
+    class Detector:
+        calls = 0
+        def detect(self, frame):
+            self.calls += 1
+            if frame.shape[:2] == (200, 400):
+                return []
+            raise RuntimeError('crop detector failed')
+    detector = Detector()
+    box = _VariantSignaledDetector(set(), (60, 100, 120, 130))._text_box()
+    result = _flash_result(detector, {index: ([] if index == 2 else [box])
+                                     for index in range(9)})
+    plan = _gap_plan([Segment(0, 2), Segment(3, 9)])
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert result.failed_frame_indices == {2}
+    assert len(plan.warnings) == 1
+    before = detector.calls
+    _add_spatial_segments(plan, result, video_path=str(video))
+    assert detector.calls == before
+    assert not execution_masks(plan)[1](2).any()
+
+
+def test_recovery_does_not_swallow_cancellation(tmp_path):
+    from videowipe.errors import ProcessingCancelledError
+    import pytest
+    video = tmp_path / 'cancel.avi'
+    _flash_video(video, frames=9)
+    class Detector:
+        def detect(self, frame):
+            if frame.shape[:2] == (200, 400):
+                return []
+            raise ProcessingCancelledError('cancel')
+    result = _flash_result(Detector())
+    with pytest.raises(ProcessingCancelledError):
+        refine_temporal_presence(str(video), result, {'c1': [Segment(0, 6)]}, 6)
+    result = _flash_result(Detector(), {index: [] for index in range(9)})
+    with pytest.raises(ProcessingCancelledError):
+        _add_spatial_segments(_gap_plan([Segment(0, 2), Segment(3, 9)]), result,
+                              video_path=str(video))

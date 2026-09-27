@@ -41,6 +41,8 @@ from typing import Iterable, Iterator, List, Literal, Protocol, runtime_checkabl
 import cv2
 import numpy as np
 
+from videowipe.errors import ProcessingCancelledError
+
 logger = logging.getLogger(__name__)
 _PERSISTENT_OVERLAY_FRACTION = 0.80
 _STABLE_APPEARANCE_CORRELATION = 0.80
@@ -121,6 +123,8 @@ class CleanDetectionResult:
     sampled_frame_boxes: dict[int, list[TextBox]] = field(
         default_factory=dict, repr=False,
     )
+
+    failed_frame_indices: set[int] = field(default_factory=set, repr=False)
 
 
 # ── Detector protocol ────────────────────────────────────────────────────────
@@ -1217,6 +1221,7 @@ def detect_clean_candidates(
     n_valid = 0
     valid_sample_indices: list[int] = []
     sampled_frame_boxes: dict[int, list[TextBox]] = {}
+    failed_frame_indices: set[int] = set()
     all_frame_boxes: list[tuple[int, list[TextBox]]] = []
     appearance_thumbnails: dict[int, np.ndarray] = {}
     first_frame = None
@@ -1240,7 +1245,11 @@ def detect_clean_candidates(
             continue
         try:
             boxes = detector.detect(frame)
+        except ProcessingCancelledError:
+            raise
         except Exception as exc:
+            failed_frame_indices.add(sample_index)
+            sampled_frame_boxes[sample_index] = []
             logger.warning("Clean detection failed on sampled frame: %s", exc)
             continue
         n_valid += 1
@@ -1455,6 +1464,7 @@ def detect_clean_candidates(
         ).copy(),
         detector=detector,
         sampled_frame_boxes=sampled_frame_boxes,
+        failed_frame_indices=failed_frame_indices,
     )
 
 
@@ -1478,12 +1488,11 @@ def _contrast_restored_variants(crop: np.ndarray) -> list[tuple[str, np.ndarray]
     ]
 
 
-def _rects_overlap(
+def _rects_agree(
     rect1: tuple[int, int, int, int], rect2: tuple[int, int, int, int],
 ) -> bool:
-    """Whether two ``(x1, y1, x2, y2)`` rectangles intersect."""
-    return not (rect1[2] < rect2[0] or rect2[2] < rect1[0]
-                or rect1[3] < rect2[1] or rect2[3] < rect1[1])
+    """Require majority geometric agreement, not incidental touching pixels."""
+    return _iou_bbox(rect1, rect2) >= 0.5
 
 
 def _contrast_recovered_boxes(
@@ -1537,7 +1546,7 @@ def _contrast_recovered_boxes(
             for earlier in per_variant:
                 for entry in entries:
                     for other in earlier:
-                        if _rects_overlap(entry[1], other[1]):
+                        if _rects_agree(entry[1], other[1]):
                             confirmed.setdefault(entry[1], entry[0])
                             confirmed.setdefault(other[1], other[0])
             per_variant.append(entries)
@@ -1589,6 +1598,8 @@ def refine_temporal_presence(
         raise ValueError(f"Cannot open video for temporal refinement: {video_path}")
 
     warnings: list[str] = []
+    failed = getattr(result, "failed_frame_indices", set())
+    result.failed_frame_indices = failed
     try:
         frame_index = 0
         while frame_index < expected_frame_count:
@@ -1613,13 +1624,19 @@ def refine_temporal_presence(
                     candidate.presence_frames = [
                         index for index in candidate.presence_frames if index != frame_index
                     ]
-                if frame_index in result.sampled_frame_boxes:
+                if frame_index in failed:
+                    boxes = []
+                    detect_failed = True
+                    result.sampled_frame_boxes[frame_index] = []
+                elif frame_index in result.sampled_frame_boxes:
                     boxes = result.sampled_frame_boxes[frame_index]
                     detect_failed = False
                 else:
                     try:
                         boxes = detector.detect(frame)
                         detect_failed = False
+                    except ProcessingCancelledError:
+                        raise
                     except Exception as exc:  # safety boundary: failed frame remains keep.
                         warnings.append(
                             f"temporal refinement failed at frame {frame_index}; "
@@ -1627,6 +1644,7 @@ def refine_temporal_presence(
                         )
                         boxes = []
                         detect_failed = True
+                        failed.add(frame_index)
                     result.sampled_frame_boxes[frame_index] = boxes
                 for candidate in active:
                     if any(
@@ -1642,9 +1660,25 @@ def refine_temporal_presence(
                         # positive evidence from contrast-restored variants of
                         # this candidate's own band. Failed detection above
                         # never gets a second chance.
-                        recovered = _contrast_recovered_boxes(
-                            detector, frame, candidate.bbox,
-                        )
+                        try:
+                            recovered = _contrast_recovered_boxes(
+                                detector, frame, candidate.bbox,
+                            )
+                        except ProcessingCancelledError:
+                            raise
+                        except Exception as exc:
+                            warnings.append(
+                                f"temporal recovery failed at frame {frame_index}; "
+                                f"keeping frame: {exc}"
+                            )
+                            failed.add(frame_index)
+                            result.sampled_frame_boxes[frame_index] = []
+                            for affected in active:
+                                affected.presence_frames = [
+                                    index for index in affected.presence_frames
+                                    if index != frame_index
+                                ]
+                            break
                         if recovered:
                             candidate.presence_frames.append(frame_index)
                             result.sampled_frame_boxes[frame_index] = (
