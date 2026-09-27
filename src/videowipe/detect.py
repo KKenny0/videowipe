@@ -1481,10 +1481,20 @@ def _contrast_restored_variants(crop: np.ndarray) -> list[tuple[str, np.ndarray]
     background = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 25)
     highpass = np.clip(gray.astype(np.float32) - background + 128, 0, 255)
     darkened = np.power(crop.astype(np.float32) / 255.0, 2.2) * 255
+    # Preserve the mild views; strong views recover faint strokes without
+    # lowering detector thresholds. Repeated names identify the same family.
+    strong_highpass = np.clip((gray.astype(np.float32) - background) * 16 + 128, 0, 255)
+    strong_darkened = np.power(crop.astype(np.float32) / 255.0, 16) * 255
     return [
         ("contrast", cv2.cvtColor(clahe.apply(gray), cv2.COLOR_GRAY2BGR)),
         ("highpass", cv2.cvtColor(highpass.astype(np.uint8), cv2.COLOR_GRAY2BGR)),
         ("darkened", darkened.astype(np.uint8)),
+        ("contrast", cv2.cvtColor(
+            cv2.createCLAHE(clipLimit=16.0, tileGridSize=(8, 8)).apply(gray),
+            cv2.COLOR_GRAY2BGR,
+        )),
+        ("highpass", cv2.cvtColor(strong_highpass.astype(np.uint8), cv2.COLOR_GRAY2BGR)),
+        ("darkened", strong_darkened.astype(np.uint8)),
     ]
 
 
@@ -1553,18 +1563,20 @@ def _contrast_recovered_boxes(
     # a per-call choice here, not a mode switch for the rest of the video.
     manual_only = getattr(detector, "_manual_only", None)
     try:
-        per_variant: list[list[tuple[TextBox, tuple[int, int, int, int]]]] = []
+        per_variant: list[tuple[str, list[tuple[TextBox, tuple[int, int, int, int]]]]] = []
         confirmed: dict[tuple[int, int, int, int], TextBox] = {}
-        for _, variant_crop in _contrast_restored_variants(crop):
+        for family, variant_crop in _contrast_restored_variants(crop):
             entries = band_boxes(variant_crop)
-            for earlier in per_variant:
+            for earlier_family, earlier in per_variant:
+                if family == earlier_family:
+                    continue
                 for entry in entries:
                     for other in earlier:
                         if _rects_agree(entry[1], other[1]):
                             confirmed.setdefault(entry[1], entry[0])
                             confirmed.setdefault(other[1], other[0])
-            per_variant.append(entries)
-            # Other glyphs may only agree with the final variant; one match
+            per_variant.append((family, entries))
+            # Other glyphs may only agree with a later variant; one match
             # must not stop evidence collection for the rest of the band.
         return [confirmed[coords] for coords in sorted(confirmed)]
     finally:

@@ -641,7 +641,7 @@ def test_recovery_checks_later_variant_for_other_confirmed_glyphs():
         calls = 0
 
         def detect(self, frame):
-            boxes = ([left, right], [left], [right])[self.calls]
+            boxes = ([left, right], [left], [right], [], [], [])[self.calls]
             self.calls += 1
             return boxes
 
@@ -650,7 +650,7 @@ def test_recovery_checks_later_variant_for_other_confirmed_glyphs():
         detector, np.zeros((200, 400, 3), np.uint8), (30, 90, 180, 145),
     )
     assert len(recovered) == 2  # Both glyphs have two independent confirmations.
-    assert detector.calls == 3
+    assert detector.calls == 6
 
 
 @pytest.mark.parametrize('phase', ['refine', 'gap'])
@@ -752,3 +752,34 @@ def test_recovery_does_not_swallow_cancellation(tmp_path):
     with pytest.raises(ProcessingCancelledError):
         _add_spatial_segments(_gap_plan([Segment(0, 2), Segment(3, 9)]), result,
                               video_path=str(video))
+
+
+def test_faint_glyph_recovery_amplifies_current_frame_contrast():
+    from videowipe.detect import _contrast_recovered_boxes
+    frame = np.full((120, 600, 3), 240, np.uint8)
+    cv2.putText(frame, 'FAINT TEXT', (50, 80), cv2.FONT_HERSHEY_SIMPLEX,
+                1.5, (250, 250, 250), 3)
+    box = TextBox(np.array([[50, 40], [320, 40], [320, 85], [50, 85]]), .9)
+
+    class Detector:
+        def detect(self, image):
+            return [box] if np.ptp(image) >= 60 else []
+
+    assert _contrast_recovered_boxes(Detector(), frame, (0, 0, 599, 119))
+    assert not _contrast_recovered_boxes(
+        Detector(), np.full_like(frame, 240), (0, 0, 599, 119),
+    )
+
+
+def test_same_restoration_family_cannot_confirm_itself(monkeypatch):
+    import videowipe.detect as detect
+    frame = np.zeros((120, 600, 3), np.uint8)
+    box = TextBox(np.array([[50, 40], [320, 40], [320, 85], [50, 85]]), .9)
+    monkeypatch.setattr(detect, '_contrast_restored_variants',
+                        lambda crop: [('highpass', crop), ('highpass', crop)])
+
+    class Detector:
+        def detect(self, image):
+            return [box]
+
+    assert not detect._contrast_recovered_boxes(Detector(), frame, (0, 0, 599, 119))
