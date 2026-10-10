@@ -85,6 +85,14 @@ def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch):
     import sys
     from fastapi.testclient import TestClient
 
+    # Exercise Windows' default decoding even on UTF-8 development machines.
+    original_read_text = Path.read_text
+    def windows_read_text(path, *args, **kwargs):
+        if not args and kwargs.get('encoding') is None:
+            kwargs['encoding'] = 'cp1252'
+        return original_read_text(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', windows_read_text)
+
     video = tmp_path / 'source.mp4'
     video.write_bytes(b'input identity survives failed processing')
     output = tmp_path / 'acceptance'
@@ -97,14 +105,14 @@ def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch):
     monkeypatch.setenv('VIDEOWIPE_JOBS_DIR', str(output / 'jobs'))
     with pytest.raises(RuntimeError, match='upload failed deliberately'):
         module.main()
-    row = json.loads((output / 'report.json').read_text())['cases'][0]
+    row = json.loads((output / 'report.json').read_text(encoding='utf-8'))['cases'][0]
     assert row['source_sha256'] == module.sha256(video)
     assert row['source_path'] == str(video)
     assert row['expected_objects']
     assert row['stage'] == 'upload'
     assert row['effect_review']['status'] == 'unverified'
     assert 'full_sha256' not in row
-    assert json.loads((output / 'screenshot_scene/case.json').read_text()) == row
+    assert json.loads((output / 'screenshot_scene/case.json').read_text(encoding='utf-8')) == row
 
 
 @pytest.mark.parametrize('edits', [{}, {'english1': {}}])

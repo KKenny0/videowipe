@@ -173,7 +173,7 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
     preview = checked(client.get(f'/jobs/{job_id}/preview'))
     write_json(directory / 'preview.json', preview)
     job_dir = output / 'jobs' / job_id
-    manifest = json.loads((job_dir / 'job.json').read_text())
+    manifest = json.loads((job_dir / 'job.json').read_text(encoding='utf-8'))
     machine_path = job_dir / manifest['plan_dir'] / 'wipe_plan.json'
     machine = load_wipe_plan(str(machine_path))
     row.update(source=machine.source.to_dict(),
@@ -207,7 +207,7 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
     assert trial_done['trial'] and trial_done['trial']['ready']
     assert not trial_done['trial']['cache_hit'], 'fresh acceptance must capture real trial frames'
     row['timings']['first_effect_s'] = time.monotonic() - started
-    trial_manifest = json.loads((job_dir / 'job.json').read_text())
+    trial_manifest = json.loads((job_dir / 'job.json').read_text(encoding='utf-8'))
     trial_plan = load_wipe_plan(str(job_dir / trial_manifest['reviewed_plan_path']))
     observation['offset'] = 0
     capture.clear()
@@ -219,7 +219,7 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
     row['timings']['full_ready_s'] = time.monotonic() - started
     row['stage'] = 'execution_checks'
     full_capture = list(capture)
-    manifest = json.loads((job_dir / 'job.json').read_text())
+    manifest = json.loads((job_dir / 'job.json').read_text(encoding='utf-8'))
     executed_path = job_dir / manifest['reviewed_plan_path']
     executed = load_wipe_plan(str(executed_path))
     first, last = interval['frame_range']
