@@ -42,7 +42,7 @@ v0.11.1 改善白闪和交叉淡化期间的字幕恢复，保留检测失败帧
 
 本次复查的白闪、叠化、中文复杂背景和合成描边字幕片段均已由用户按正常播放标准验收通过。这不代表逐像素还原或所有视频都能完整擦除。原用户截图案例因缺少原片和输出视频，仍未验证。macOS 干净安装与实际运行检查通过，继续核验发行版来源和原生二进制 RECORD 完整性。较强的对比度恢复会增加检测开销；验证结果及指标取舍见发布说明。
 
-详见[交付状态](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)和[诊断工具说明](scripts/QUALITY_DIAGNOSTICS.md)。验证结果和已知限制见 [v0.11.1 发布说明](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1)。
+维护或接续实施先读[当前任务入口](NEXT_WORK.md)。历史取舍见[交付记录](plans/PRODUCT_EXPERIENCE_DELIVERIES.md)，工具使用见[诊断说明](scripts/QUALITY_DIAGNOSTICS.md)。验证结果和已知限制见 [v0.11.1 发布说明](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1)。
 
 ## 本地硬字幕去除、视频去水印
 
