@@ -1,5 +1,7 @@
 # VideoWipe 三次交付实施方案
 
+> 历史方案与分阶段证据。三次交付的 Web、进度取消、任务恢复、时段/保护编辑及预测复用均已进入 v0.11.1；下文各日期的未提交、未签收与下一步保留为历史。当前工作以[任务入口](../NEXT_WORK.md)及 GitHub #11–#18 为准。性能门槛与播放签收仅覆盖各自材料，五位目标用户验证仍待 #14。
+
 最近核对：2026-09-27。Spec #3 的四段正常播放验收已由用户确认通过，PR #10 已合并，#3–#9 已结项。本轮获授权发布 v0.11.1，发布结果以对应 Release 与候选验证记录为准。原截图案例因缺少视频仍未验证；下方历史记录保留当时状态，后续验收更正优先。`result/` 是本地忽略产物。
 
 原计划日期：2026-09-13。状态：交付一原型已确认、实现及工程验收完成；交付二实现及工程验收完成，尚无目标用户验证；交付三实现完成，三样片三轮复用性能门槛通过，画面复查仍有残字。交付记录见 result/product-delivery-one/DELIVERY_ONE_REPORT.md、result/product-delivery-two/DELIVERY_TWO_REPORT.md 和 result/product-delivery-three/DELIVERY_THREE_REPORT.md。

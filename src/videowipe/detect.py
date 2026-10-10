@@ -1144,7 +1144,7 @@ def _classify_region(
 
     edge = x1 < w * 0.12 or x2 > w * 0.88 or y1 < h * 0.18 or y2 > h * 0.80
     if edge and area_ratio < 0.05:
-        return "watermark", f"small persistent edge text in {zone}", True
+        return "watermark", f"small edge text in {zone}; watermark evidence uncertain", False
 
     return "scene_text", f"text in {zone}", False
 

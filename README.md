@@ -42,7 +42,7 @@ v0.11.1 improves subtitle recovery during white flashes and cross-fades, preserv
 
 The reviewed white-flash, cross-fade, Chinese complex-background, and synthetic outlined-subtitle clips passed user acceptance at normal playback speed. This does not promise pixel-perfect reconstruction or complete removal on every video. The original user screenshot case remains unverified because its source and output videos are unavailable. macOS clean installation and operational checks passed; provider identity and native RECORD integrity checks remain enforced. Strong contrast recovery may require more detection work. See the release notes for verification results and metric tradeoffs.
 
-See the [delivery status](plans/PRODUCT_EXPERIENCE_DELIVERIES.md) and [diagnostic tools](scripts/QUALITY_DIAGNOSTICS.md). See [v0.11.1 release notes](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1) for verification results and known limitations.
+For maintenance or the next implementation task, start with [current work](NEXT_WORK.md). See the [historical delivery record](plans/PRODUCT_EXPERIENCE_DELIVERIES.md) and [diagnostic tools](scripts/QUALITY_DIAGNOSTICS.md). See [v0.11.1 release notes](https://github.com/KKenny0/videowipe/releases/tag/v0.11.1) for verification results and known limitations.
 
 ## Remove hardcoded subtitles, watermarks, and logos locally
 

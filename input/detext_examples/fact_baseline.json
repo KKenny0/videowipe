@@ -5,6 +5,7 @@
   "videos": [
     {
       "file": "chinese1.mp4",
+      "source_sha256": "89c0690ee729e2f019a9d945c5c5507b7862202e62c4d0f48b3038fb7006377c",
       "objects": [
         {
           "id": 1,
@@ -29,6 +30,7 @@
     },
     {
       "file": "english1.mp4",
+      "source_sha256": "f7c6bb6f2bd0fff4af75f7b3ec969ec976f8ca9c2c86687c6117598069139a66",
       "objects": [
         {
           "id": 1,
@@ -47,6 +49,7 @@
     },
     {
       "file": "others.mp4",
+      "source_sha256": "b0564eb04d753fbfc1c47b98f78bc76aad0d435f6886a08080b14c6cda73b796",
       "objects": [
         {
           "id": 1,
