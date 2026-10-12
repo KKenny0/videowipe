@@ -80,7 +80,8 @@ def test_annotations_require_manifest_content_identity(tmp_path, monkeypatch):
     assert module.case_annotations(video, module.sha256(video)) is None
 
 
-def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch):
+@pytest.mark.parametrize('case', ['screenshot_scene', 'real_video'])
+def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch, case):
     import json
     import sys
     from fastapi.testclient import TestClient
@@ -96,9 +97,16 @@ def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch):
     video = tmp_path / 'source.mp4'
     video.write_bytes(b'input identity survives failed processing')
     output = tmp_path / 'acceptance'
-    monkeypatch.setattr(sys, 'argv', ['verify_cleanup_effect.py', '--output', str(output),
-        '--case', 'screenshot_scene', '--source', str(video),
-        '--material-note', 'test-only failure input'])
+    argv = ['verify_cleanup_effect.py', '--output', str(output),
+            '--case', case, '--source', str(video), '--material-note', 'test-only failure input']
+    expectations = {'source_sha256': module.sha256(video), 'request_goal': 'Remove captions; keep the logo',
+                    'objects': [{'action': 'remove', 'description': 'Bilingual captions'},
+                                {'action': 'keep', 'description': 'Corner logo'}]}
+    if case == 'real_video':
+        expectation_path = tmp_path / 'expectations.json'
+        expectation_path.write_text(json.dumps(expectations), encoding='utf-8')
+        argv += ['--expectations', str(expectation_path)]
+    monkeypatch.setattr(sys, 'argv', argv)
     def fail_upload(*args, **kwargs):
         raise RuntimeError('upload failed deliberately')
     monkeypatch.setattr(TestClient, 'post', fail_upload)
@@ -112,7 +120,34 @@ def test_failed_upload_retains_case_identity_in_report(tmp_path, monkeypatch):
     assert row['stage'] == 'upload'
     assert row['effect_review']['status'] == 'unverified'
     assert 'full_sha256' not in row
-    assert json.loads((output / 'screenshot_scene/case.json').read_text(encoding='utf-8')) == row
+    assert json.loads((output / case / 'case.json').read_text(encoding='utf-8')) == row
+    if case == 'real_video':
+        assert row['expected_objects'] == expectations['objects']
+        assert row['request_goal'] == expectations['request_goal']
+        assert row['review_expectations'] == expectations
+
+
+@pytest.mark.parametrize('invalid', ['missing', 'wrong-source', 'no-keep'])
+def test_real_case_rejects_missing_or_unbound_expectations(tmp_path, monkeypatch, invalid):
+    import json
+    import sys
+    video = tmp_path / 'real.mp4'
+    video.write_bytes(b'independent real input')
+    output = tmp_path / 'result'
+    argv = ['runner', '--case', 'real_video', '--source', str(video),
+            '--material-note', 'real input', '--output', str(output)]
+    if invalid != 'missing':
+        value = {'source_sha256': 'wrong' if invalid == 'wrong-source' else module.sha256(video),
+                 'request_goal': 'Remove captions',
+                 'objects': [{'action': 'remove', 'description': 'Captions'}]}
+        path = tmp_path / 'expectations.json'
+        path.write_text(json.dumps(value), encoding='utf-8')
+        argv += ['--expectations', str(path)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+    assert exc.value.code == 2
+    assert not output.exists()
 
 
 @pytest.mark.parametrize('edits', [{}, {'english1': {}}])
