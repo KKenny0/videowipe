@@ -20,7 +20,7 @@ import numpy as np
 from videowipe.plan import load_wipe_plan
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ('chinese1', 'english1', 'others', 'similar_scene', 'screenshot_scene')
+CASES = ('chinese1', 'english1', 'others', 'similar_scene', 'screenshot_scene', 'real_video')
 
 
 def sha256(path):
@@ -35,6 +35,22 @@ def case_annotations(video, source_sha256):
     facts = json.loads((ROOT / 'input/detext_examples/fact_baseline.json').read_text(encoding='utf-8'))
     return next((v for v in facts['videos']
                  if v['file'] == video.name and v.get('source_sha256') == source_sha256), None)
+
+
+def load_expectations(path, source):
+    """Read source-bound review expectations, never execution overrides."""
+    value = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(value, dict) or value.get('source_sha256') != sha256(source):
+        raise ValueError('expectations must identify the exact source')
+    objects = value.get('objects')
+    if (not isinstance(value.get('request_goal'), str) or not value['request_goal'].strip()
+            or not isinstance(objects, list) or not objects
+            or any(not isinstance(obj, dict) or obj.get('action') not in {'remove', 'keep'}
+                   or not isinstance(obj.get('description'), str) or not obj['description'].strip()
+                   for obj in objects)
+            or {obj['action'] for obj in objects} != {'remove', 'keep'}):
+        raise ValueError('expectations require a goal and described remove/keep objects')
+    return value
 
 
 def write_json(path, value):
@@ -136,7 +152,7 @@ def render_page(output, report):
 <p>本页是维护验收材料；素材性质以各案例来源为准，没有自动质量评分。</p>''' + ''.join(cards), encoding='utf-8')
 
 
-def run_case(client, web, name, output, capture, observation, baseline=None, edit=None, source=None, material_note=None, row=None):
+def run_case(client, web, name, output, capture, observation, baseline=None, edit=None, source=None, material_note=None, row=None, expectations=None):
     row = {} if row is None else row
     row.update(case=name, stage='input', correction_rounds=0, edit=edit,
                request_goal='移除字幕，保留非目标内容及顶部标记',
@@ -160,6 +176,15 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
     row['expected_objects'] = annotated['objects'] if annotated else [
         {'type': 'subtitle', 'action': 'remove', 'description': 'Bottom overlay subtitles'},
         {'type': 'background', 'action': 'keep', 'description': 'Scene content, printed labels, and pixels outside the subtitle target'}]
+    if expectations is None and baseline:
+        expectations = baseline.get('review_expectations')
+    if expectations:
+        assert expectations['source_sha256'] == row['source_sha256'], 'expectation source changed'
+        row.update(request_goal=expectations['request_goal'], expected_objects=expectations['objects'],
+                   review_expectations=expectations,
+                   annotation_status='source-bound review expectations; not execution overrides')
+    if name == 'real_video' and not expectations:
+        raise ValueError('real_video requires source-bound review expectations')
     if baseline:
         assert row['source_sha256'] == baseline['source_sha256'], 'baseline source changed'
     write_json(directory / 'case.json', row)
@@ -199,6 +224,8 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
         raise RuntimeError('default plan has no recommended nonempty trial; record as a default-flow failure')
     payload = dict(body, start_seconds=interval['start_seconds'], duration_seconds=interval['duration_seconds'],
                    expected_revision=revision, operation_id=f'{name}-trial')
+    row['recommended_trial'] = interval
+    row['trial_request'] = payload
     observation.update(offset=interval['frame_range'][0], protections=body.get('protections', []))
     capture.clear()
     checked(client.post(f'/jobs/{job_id}/trial', json=payload))
@@ -212,8 +239,9 @@ def run_case(client, web, name, output, capture, observation, baseline=None, edi
     observation['offset'] = 0
     capture.clear()
     row['stage'] = 'export'
-    checked(client.post(f'/jobs/{job_id}/confirm', json=dict(body,
-        expected_revision=trial_done['review_revision'], operation_id=f'{name}-full')))
+    row['export_request'] = dict(body, expected_revision=trial_done['review_revision'],
+                                 operation_id=f'{name}-full')
+    checked(client.post(f'/jobs/{job_id}/confirm', json=row['export_request']))
     done = wait_job(client, job_id)
     assert done['state'] == 'done'
     row['timings']['full_ready_s'] = time.monotonic() - started
@@ -272,6 +300,7 @@ def main():
     parser.add_argument('--case', choices=CASES, action='append')
     parser.add_argument('--source', type=Path, help='Explicit source for one non-repository case')
     parser.add_argument('--material-note', help='Required provenance description for an explicit source')
+    parser.add_argument('--expectations', type=Path, help='Source-bound JSON goal and remove/keep objects for review only')
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--edits', type=Path, help='JSON mapping case names to existing review overrides')
     args = parser.parse_args()
@@ -286,8 +315,18 @@ def main():
     names = args.case or list(edits) or list(CASES[:4])
     if args.source and (len(names) != 1 or not args.material_note or args.baseline):
         parser.error('--source requires one case and --material-note, without --baseline')
-    if 'screenshot_scene' in names and not (args.source or args.baseline):
-        parser.error('screenshot_scene requires an explicit source or baseline')
+    if any(name in names for name in ('screenshot_scene', 'real_video')) and not (args.source or args.baseline):
+        parser.error('external cases require an explicit source or baseline')
+    if args.expectations and (not args.source or args.baseline):
+        parser.error('--expectations requires an explicit source without a baseline')
+    if 'real_video' in names and not (args.expectations or args.baseline):
+        parser.error('real_video requires --expectations')
+    expectations = None
+    if args.expectations:
+        try:
+            expectations = load_expectations(args.expectations, args.source)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     if edits and set(names) != set(edits):
         parser.error('each correction case must have exactly one saved review edit')
     if any(name not in CASES for name in names) or len(set(names)) != len(names):
@@ -331,7 +370,7 @@ def main():
                 print(f'START {name}', flush=True)
                 row = {'case': name, 'stage': 'input', 'effect_review': {'status': 'unverified'}}
                 try:
-                    run_case(client, web, name, output, capture, observation, baselines.get(name), edits.get(name), args.source, args.material_note, row=row)
+                    run_case(client, web, name, output, capture, observation, baselines.get(name), edits.get(name), args.source, args.material_note, row=row, expectations=expectations)
                 except Exception as exc:
                     row['error'] = repr(exc)
                     report['cases'].append(row)

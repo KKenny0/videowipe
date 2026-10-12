@@ -25,14 +25,14 @@ Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运
 
 ## 当前任务
 
-#11、#18 的实现与本地验收已完成，提交、合入及结项状态见各自 Issue；后续实施从 #12 继续。#12–#17 在核对时均 OPEN。先完成效果证据，再推进辅助工程；关联不代表必须重做已完成上游。
+#11、#18 已合入并结项。#12 默认路径和原因证据、#13 一轮框编辑的用户结果确认已在本地整理；接下来补齐 #12 的逐例效果记录及 #15 的真人时间与运行条件记录。#13 当前案例已获用户确认，整票仍保留对 #12 的依赖。#12–#17 在本次核对时仍 OPEN。先完成效果证据，再推进辅助工程；关联不代表必须重做已完成上游。
 
 | 顺序 | Issue | 当前边界 / 下一步 |
 | --- | --- | --- |
 | 完成 | [#11 清理效果记录](https://github.com/KKenny0/videowipe/issues/11)、[#18 统一入口](https://github.com/KKenny0/videowipe/issues/18) | 实现与本地验收完成：验收 runner、误选保护、记录契约、当前入口和历史标记。交付与结项凭据见票据。 |
-| 2 | [#12 默认流程](https://github.com/KKenny0/videowipe/issues/12) | 用已许可的新真实素材执行默认选择→推荐试擦→完整导出，并单独记录正常播放判断；已有手动目标结果不能替代。 |
-| 3 | [#13 一轮纠正](https://github.com/KKenny0/videowipe/issues/13) | 从本轮默认失败出发，一次保存必要编辑后重试；保留前后身份、耗时及剩余失败。 |
-| 4 | [#14 五位用户](https://github.com/KKenny0/videowipe/issues/14)、[#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | #14 需要负责人提供真实参与者；#15 复用计时，只把真正可用结果记作成功，人类思考时间须实测。 |
+| 2 | [#12 默认流程](https://github.com/KKenny0/videowipe/issues/12) | 新真实片段默认全流程已运行；姓名与英文歌词同组的原因已查明。历史四例规划一致性已复核；逐例当前效果记录尚未补齐，保留该验收项。 |
+| 3 | [#13 一轮纠正](https://github.com/KKenny0/videowipe/issues/13) | 一次已有英文框编辑后，用户确认该输出“达到预期”。保留中断重试、区域检查失败及像素一致性未知；不是所有技术检查通过。 |
+| 4 | [#14 五位用户](https://github.com/KKenny0/videowipe/issues/14)、[#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | #14 需要负责人提供真实参与者；#15 已有阶段机器耗时，真人操作/审阅时间和完整冷/热/缓存分组未测，总成本仍未知。 |
 | 5 | [#17 macOS CI](https://github.com/KKenny0/videowipe/issues/17)、[#16 Agent 来源](https://github.com/KKenny0/videowipe/issues/16) | 尚待相应票据实施；安装保障、决策来源与回退原因记录不能抢占效果验证。 |
 
 [#19 残影诊断](https://github.com/KKenny0/videowipe/issues/19) 已 CLOSED。诊断未改生产算法：保持当前默认输入尺寸，不重做尺寸/时间上下文实验。新动态片段的“基本可用、有一些涂抹”判断只覆盖受控手动目标。原截图的“只擦半行”仍缺原片、版本和操作路径，继续未验证。旧中文输入 seek 偏移与预测残影分别处理。
@@ -43,7 +43,8 @@ Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运
 - `result/effect-acceptance/screenshot-default/reviewed.json`、`screenshot-corrected/reviewed.json`：静态截图探针及一次选择修正；不是原视频复现。
 - `result/effect-acceptance/safety-fix/`：原误选修复验证及残影分层证据。
 - `result/effect-acceptance/residue-diagnosis-20261006/REPORT.md`：#19 结论、复跑及最终证据入口。新素材许可和身份读同目录 `material-valid.json`；优先最终 manifest，早期 `material.json` / `static.mkv` 是无效对照。
-- `result/effect-acceptance/delivery-11-18-20261011/`：本轮本地交付验证，不替代播放验收。
+- `result/effect-acceptance/package-12-13-15-20261011/`：默认证据缺口、一轮框编辑结果、用户确认及阶段计时；用户确认绑定指定输出，技术限制保留。
+- `result/effect-acceptance/delivery-11-18-20261011/`：#11/#18 的历史本地交付验证，不替代播放验收。
 
 源素材私人路径仅查本地 manifest，不写进公共文档或自动上传。
 
