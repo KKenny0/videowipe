@@ -6,14 +6,48 @@ import hashlib
 import importlib.machinery
 import importlib.metadata
 import os
+import platform
+import sys
 import tempfile
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+import videowipe
 from videowipe import BackendUnavailableError, WipeEngine, WipeRequest, WipeResult
 from videowipe.propainter_wipe import _load_media_dependencies
+
+
+def _check_package():
+    """Reject source-tree imports and verify installed files against RECORD."""
+    distribution = importlib.metadata.distribution("videowipe")
+    if videowipe.__version__ != distribution.version:
+        raise SystemExit("loaded VideoWipe version differs from installed metadata")
+    module = Path(videowipe.__file__).resolve()
+    prefix = Path(sys.prefix).resolve()
+    if not module.is_relative_to(prefix):
+        raise SystemExit("VideoWipe was imported from outside the install environment")
+    files = distribution.files or []
+    if not any(Path(entry.locate()).resolve() == module for entry in files):
+        raise SystemExit("loaded VideoWipe module is absent from installed RECORD")
+    checked = 0
+    for entry in files:
+        if entry.hash is None:
+            continue
+        path = Path(entry.locate()).resolve()
+        if not path.is_relative_to(prefix):
+            raise SystemExit("VideoWipe RECORD points outside the install environment")
+        digest = hashlib.new(entry.hash.mode, path.read_bytes()).digest()
+        actual = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        if actual != entry.hash.value:
+            raise SystemExit(f"installed VideoWipe file differs from RECORD: {entry}")
+        checked += 1
+    if not checked:
+        raise SystemExit("installed VideoWipe RECORD has no file hashes")
+    print("installed-package", distribution.version, str(module),
+          "record-files-checked", checked, "python", platform.python_version(),
+          "platform", platform.system(), "arch", platform.machine())
 
 
 def _check_headless():
@@ -90,6 +124,7 @@ def _check_headless_ops() -> None:
 
 
 def main() -> None:
+    _check_package()
     requirements = importlib.metadata.requires("videowipe") or []
     if not any(item.startswith("opencv-python-headless") for item in requirements):
         raise SystemExit("installed metadata does not require opencv-python-headless")
