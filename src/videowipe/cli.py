@@ -153,6 +153,13 @@ def main():
         print(f"videowipe: {exc}", file=sys.stderr)
         sys.exit(1)
     finally:
+        decision = getattr(engine, "agent_decision", {})
+        if args.command == "clean" and decision:
+            print(
+                f"Agent selection: status={decision['status']}; "
+                f"source={decision['selection_source']}; reason={decision['reason']}",
+                file=sys.stderr,
+            )
         engine.cleanup()
 
 

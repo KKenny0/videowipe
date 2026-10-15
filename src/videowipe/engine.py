@@ -175,12 +175,25 @@ class WipeEngine:
         # Warnings from the most recent process() call (e.g. WipePlan warnings),
         # surfaced through WipeResult by run(). Reset at the start of process().
         self._last_warnings: list[str] = []
+        self._last_agent_decision = {"status": "not_requested", "selection_source": "local_rules", "reason": None}
 
     def __enter__(self) -> "WipeEngine":
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.cleanup()
+
+    @property
+    def agent_decision(self) -> dict:
+        """Safe diagnostic snapshot for the most recent request, including process()."""
+        return dict(self._last_agent_decision)
+
+    def _reset_agent_decision(self, mask=None, plan=None):
+        self._last_agent_decision = {
+            "status": "not_requested",
+            "selection_source": "manual_mask" if mask is not None else "saved_plan" if plan is not None else "local_rules",
+            "reason": "mask_supplied" if mask is not None else "plan_supplied" if plan is not None else None,
+        }
 
     def run(
         self,
@@ -228,6 +241,7 @@ class WipeEngine:
         token = cancellation or CancellationToken()
         self._active_cancellation = token
         self._active_progress = on_progress
+        self._reset_agent_decision(request.mask, request.plan)
         artifact_before = self._artifact_snapshot(output_dir)
 
         def legacy_progress(completed: int, total: int) -> None:
@@ -295,6 +309,7 @@ class WipeEngine:
             "benchmark.json",
             "wipe_plan.json",
             "wipe_plan_masks.npz",
+            "agent_decision.json",
         ):
             path = os.path.join(output_dir, name)
             try:
@@ -346,6 +361,7 @@ class WipeEngine:
             timings=dict(timings),
             warnings=tuple(self._last_warnings),
             preview=request.preview,
+            agent_decision=self.agent_decision,
         )
 
     def _check_cancelled(self) -> None:
@@ -474,6 +490,7 @@ class WipeEngine:
             if self._model != "sttn" or self._external_command or preview:
                 raise InvalidInputError("trial_range requires STTN execution, not detection preview")
         self._last_warnings = []
+        self._reset_agent_decision(mask, plan)
         self._active_plan: Optional[WipePlan] = None
         frame_mask = None
         os.makedirs(output, exist_ok=True)
@@ -483,6 +500,7 @@ class WipeEngine:
 
         if mask is not None:
             mask_arr = read_mask(mask)
+            self._save_agent_decision(output)
         else:
             det = detector or self._detector
             t_detect_start = time.monotonic()
@@ -493,6 +511,8 @@ class WipeEngine:
                 )
                 self._last_warnings = list(wipe_plan.warnings)
                 self._active_plan = wipe_plan
+                self._save_agent_decision(output)
+                bm["agent_decision"] = self.agent_decision
                 mask_arr, frame_mask = execution_masks(
                     wipe_plan, self._task_impl.feather_radius
                 )
@@ -685,14 +705,10 @@ class WipeEngine:
 
     @staticmethod
     def _select_candidates_with_agent(agent, candidates, intent):
-        """Compatibility hook for custom agent-selection adapters."""
-        from videowipe.agent import select_with_agent
+        """Compatibility hook: structured outcomes or legacy candidate lists/None."""
+        from videowipe.agent import select_with_agent_result
 
-        selected_ids = select_with_agent(agent, candidates, intent)
-        if selected_ids is None:
-            return None
-        id_set = set(selected_ids)
-        return [candidate for candidate in candidates if candidate.id in id_set]
+        return select_with_agent_result(agent, candidates, intent)
 
     # ── WipePlan: detection, construction, execution glue ────────────────────
 
@@ -753,6 +769,7 @@ class WipeEngine:
 
         self._active_cancellation = cancellation or CancellationToken()
         self._active_progress = on_progress
+        self._reset_agent_decision()
         try:
             self._emit_progress(ProgressEvent("prepare", 0, 1))
             os.makedirs(output_dir, exist_ok=True)
@@ -876,6 +893,11 @@ class WipeEngine:
         effective_mode = detect_mode or self._detect_mode
         effective_ocr = ocr or self._ocr
         self._emit_progress(ProgressEvent("detect", 0, 0))
+
+        def record_decision(decision):
+            self._last_agent_decision = dict(decision)
+            self._save_agent_decision(output)
+
         draft = prepare_clean_plan(
             video,
             detector=detector,
@@ -887,6 +909,7 @@ class WipeEngine:
             ocr=effective_ocr,
             recognizer_builder=self._build_recognizer,
             agent_selector=self._select_candidates_with_agent,
+            on_agent_decision=record_decision,
         )
         self._write_clean_artifacts(draft, draft.proposed_remove_ids, output)
         if confirm:
@@ -899,6 +922,7 @@ class WipeEngine:
             )
             draft = draft.with_remove_ids(candidate.id for candidate in selected)
             self._write_clean_artifacts(draft, draft.proposed_remove_ids, output)
+        self._last_agent_decision = draft.resolved_request["agent_decision"]
         self._emit_progress(ProgressEvent("detect", 1, 1))
         return draft
 
@@ -911,11 +935,23 @@ class WipeEngine:
             check_cancelled=self._check_cancelled,
         )
 
+    def _save_agent_decision(self, output):
+        if self.task != "clean":
+            return
+        Path(output, "agent_decision.json").write_text(
+            json.dumps(self.agent_decision, indent=2), encoding="utf-8",
+        )
+
     @staticmethod
     def _write_clean_artifacts(draft, selected_ids, output):
         from videowipe.detect import write_clean_artifacts
 
         candidates = list(draft.candidates)
+        decision = draft.resolved_request.get("agent_decision")
+        if decision is not None:
+            Path(output, "agent_decision.json").write_text(
+                json.dumps(decision, indent=2), encoding="utf-8",
+            )
         write_clean_artifacts(
             SimpleNamespace(
                 candidates=candidates,

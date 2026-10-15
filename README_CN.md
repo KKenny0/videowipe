@@ -253,6 +253,14 @@ videowipe clean input.mp4 -m mask.png -o result/
 | `-d, --dual` | 输出中并排显示原片 | 关 |
 | `-m, --mask` | mask 图片路径 | 自动 |
 
+#### Agent 选择诊断
+
+`clean` 命令将 Agent 状态写到 stderr。SDK 可读取 `WipeResult.agent_decision`；沿用返回路径的 `process()` 时，可读取 `WipeEngine.agent_decision`。规划还会将记录保存到 `agent_decision.json` 和 `WipePlan.request["agent_decision"]`。
+
+`status` 包含 `not_requested`、`success`、`command_unavailable`、`timeout`、`execution_failed` 和 `invalid_output`。只有同时提供 Agent 和意图才调用 Agent。合法空选择属于成功，会保留所有候选；失败继续按本地规则选择。重复 ID 会去重，缺少字段、类型非法和未知 ID 均拒绝。
+
+`selection_source` 区分 `agent`、`local_rules`、`user_selection`、`saved_plan` 和 `manual_mask`。执行已有计划时，结果表示本次未调用 Agent，原计划仍保留当时的规划记录。新增诊断仅保存固定原因码和选择来源，不保存 Agent 命令、生成的提示词或进程输出。返回候选列表或 `None` 的旧自定义选择接口继续可用；无法细分原因的旧接口失败标记为 `legacy_selector_failed`。
+
 <details>
 <summary><strong>旧命令：detext</strong></summary>
 

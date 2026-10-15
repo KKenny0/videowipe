@@ -255,6 +255,14 @@ videowipe clean input.mp4 -m mask.png -o result/
 | `-d, --dual` | Side-by-side original in the output | off |
 | `-m, --mask` | Mask image path | auto |
 
+#### Agent selection diagnostics
+
+For `clean`, the CLI reports Agent status on stderr. SDK callers can read `WipeResult.agent_decision`, or `WipeEngine.agent_decision` after using the path-returning `process()` API. Planning also saves the record in `agent_decision.json` and `WipePlan.request["agent_decision"]`.
+
+`status` is `not_requested`, `success`, `command_unavailable`, `timeout`, `execution_failed`, or `invalid_output`. Agent selection runs only with both an agent and an intent. A valid empty selection is successful and keeps every candidate; failures retain local-rule fallback. Duplicate IDs are deduplicated, while missing fields, invalid types, and unknown IDs are rejected.
+
+`selection_source` identifies `agent`, `local_rules`, `user_selection`, `saved_plan`, or `manual_mask`. Replaying a plan reports no current Agent invocation; the plan retains its original planning record. Diagnostics contain fixed reason codes and do not store Agent commands, generated prompts, or subprocess output. Custom selection hooks returning candidate lists or `None` remain supported; an unclassified legacy failure uses `legacy_selector_failed`.
+
 <details>
 <summary><strong>Legacy: detext command</strong></summary>
 
