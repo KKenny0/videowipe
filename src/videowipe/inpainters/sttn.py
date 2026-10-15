@@ -261,12 +261,23 @@ class STTNInpainter:
                 else:
                     candidate_reader.release()
             if context_start:
-                if not reader.set(cv2.CAP_PROP_POS_FRAMES, context_start):
-                    raise ValueError("Cannot seek source video for trial")
-                if output_reader is not None and not output_reader.set(
-                    cv2.CAP_PROP_POS_FRAMES, context_start
-                ):
-                    raise ValueError("Cannot seek comparison video for trial")
+                from videowipe.video import skip_frames
+
+                advanced = 0
+
+                def check_prefix():
+                    nonlocal advanced
+                    # Phase callbacks also carry cooperative cancellation.
+                    if advanced % gap == 0:
+                        if job.phase_progress is not None:
+                            job.phase_progress("decode", 0, last - first, None)
+                        elif job.progress is not None:
+                            job.progress(0, last - first)
+                    advanced += 1
+
+                skip_frames(reader, context_start, check_prefix)
+                if output_reader is not None:
+                    skip_frames(output_reader, context_start, check_prefix)
 
             # Backend instances are shared runtime objects; keep inference
             # serialized until the backend declares a thread-safety contract.

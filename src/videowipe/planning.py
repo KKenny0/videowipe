@@ -27,6 +27,7 @@ from videowipe.detect import (
     select_clean_candidates,
 )
 from videowipe.errors import ProcessingCancelledError
+from videowipe.video import skip_frames
 from videowipe.plan import (Segment, Source, WipePlan, build_wipe_plan, compute_source,
                             validate_plan, _spatial_mask)
 
@@ -257,6 +258,7 @@ def prepare(
     agent_selector: Callable[[str, Sequence[Any], str], Any] = _agent_selection,
     on_agent_decision: Callable[[dict], None] | None = None,
     warn: Callable[[str], None] = print,
+    check_cancelled: Callable[[], None] | None = None,
 ) -> CleanPlanDraft:
     """Interpret a request, detect candidates, and return its reviewable draft."""
     from videowipe.detect import detect_clean_candidates
@@ -298,6 +300,7 @@ def prepare(
         consistency=params["consistency"],
         subtitle_fallback=params["subtitle_fallback"],
         recognizer=recognizer_builder(ocr),
+        check_cancelled=check_cancelled,
     )
     selected = select_clean_candidates(
         result.candidates, targets=effective_targets, intent=intent,
@@ -475,8 +478,9 @@ def _recover_descenders(plan, tracks, video_path, check_cancelled):
         return
     reader = cv2.VideoCapture(video_path)
     try:
-        if not reader.isOpened() or not reader.set(cv2.CAP_PROP_POS_FRAMES, indices[0]):
+        if not reader.isOpened():
             raise ValueError('Cannot read subtitle outline evidence')
+        skip_frames(reader, indices[0], check_cancelled)
         for i in range(indices[0], indices[-1]+1):
             if check_cancelled is not None:
                 check_cancelled()
@@ -572,17 +576,15 @@ def _add_spatial_segments(plan, result, selected_ids=None, *, video_path=None, c
         try:
             if not reader.isOpened():
                 raise ValueError("Cannot open video for local subtitle boundary checks")
+            next_frame = 0
             for index in sorted(needs_probe - failed):
                 if check_cancelled is not None:
                     check_cancelled()
-                reader.set(cv2.CAP_PROP_POS_FRAMES, index)
+                skip_frames(reader, index - next_frame, check_cancelled)
                 ok, frame = reader.read()
                 if not ok:
-                    if index in gap_frames or index in zone_frames:
-                        evidence[index] = []  # treat unreadable probed frame as absent
-                        failed.add(index)
-                        continue
                     raise ValueError(f"Cannot decode subtitle boundary frame {index}")
+                next_frame = index + 1
                 if index in evidence and index not in missing_all:
                     # Keep the recorded normal-pass evidence; add only the
                     # second chance below.

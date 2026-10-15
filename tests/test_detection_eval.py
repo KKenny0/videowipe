@@ -1341,7 +1341,7 @@ def test_clean_detection_streams_main_then_fallback_with_exact_output(monkeypatc
     calls = []
     frame_refs = []
 
-    def sample_frames(_path, count):
+    def sample_frames(_path, count, *, check_cancelled=None):
         for index in range(count):
             frame = np.full((100, 100, 3), index, dtype=np.uint8)
             frame_refs.append(weakref.ref(frame))
