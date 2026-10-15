@@ -346,10 +346,13 @@ def test_short_gap_requires_positive_frame_evidence(tmp_path, monkeypatch, mode)
                 return self.reader.read()
             def release(self): self.reader.release()
         monkeypatch.setattr(cv2, "VideoCapture", Reader)
-        # Outline recovery's sequential decoder correctly raises on unreadable
-        # frames; inspect the completed spatial decision before that stage.
-        monkeypatch.setattr(planning, "_recover_descenders", lambda *args: None)
+        # A failed sequential decode has no trustworthy next ordinal; planning
+        # must stop rather than relabel another frame or record false absence.
     plan = _gap_plan([Segment(0,2), Segment(5,9)])
+    if mode == "unreadable":
+        with pytest.raises(ValueError, match="Cannot decode subtitle boundary frame 2"):
+            planning._add_spatial_segments(plan, result, video_path=str(video))
+        return
     planning._add_spatial_segments(plan, result, video_path=str(video))
     assert plan.tracks[0].segments == [Segment(0,2), Segment(5,9)]
     mask = execution_masks(plan)[1]
@@ -429,6 +432,7 @@ def _flash_result(detector, sampled=None):
 
 def _flash_plan():
     plan = _gap_plan([Segment(0, 6)])
+    plan.source = Source('flash.avi', 'a'*64, 400, 200, 8, 6)
     plan.tracks[0].bbox = (30, 90, 180, 145)
     return plan
 

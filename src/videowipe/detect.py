@@ -36,7 +36,7 @@ import re
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
-from typing import Iterable, Iterator, List, Literal, Protocol, runtime_checkable
+from typing import Callable, Iterable, Iterator, List, Literal, Protocol, runtime_checkable
 
 import cv2
 import numpy as np
@@ -382,7 +382,7 @@ class DBNetDetector:
 # ── Mask generation pipeline ─────────────────────────────────────────────────
 
 def _iter_sample_frames_with_indices(
-    video_path: str, count: int = 30
+    video_path: str, count: int = 30, *, check_cancelled: Callable[[], None] | None = None,
 ) -> Iterator[tuple[int, np.ndarray]]:
     """Yield uniformly sampled ``(frame_index, frame)`` pairs.
 
@@ -402,12 +402,19 @@ def _iter_sample_frames_with_indices(
     count = min(count, total)
     indices = sorted(set(np.linspace(0, total - 1, count, dtype=int)))
 
+    from videowipe.video import skip_frames
+
     try:
+        next_frame = 0
         for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            skip_frames(cap, int(idx) - next_frame, check_cancelled)
+            if check_cancelled is not None:
+                check_cancelled()
             ok, frame = cap.read()
-            if ok:
-                yield int(idx), frame
+            if not ok:
+                raise ValueError(f"Cannot decode sampled source frame {idx}")
+            next_frame = int(idx) + 1
+            yield int(idx), frame
     finally:
         cap.release()
 
@@ -1202,6 +1209,7 @@ def detect_clean_candidates(
     consistency: float = 0.4,
     subtitle_fallback: str = "off",
     recognizer: object | None = None,
+    check_cancelled: Callable[[], None] | None = None,
 ) -> CleanDetectionResult:
     """Detect removable clean targets from sampled video frames.
 
@@ -1231,7 +1239,7 @@ def detect_clean_candidates(
     freq = None
 
     for sample_index, frame in _iter_sample_frames_with_indices(
-        video_path, sample_count,
+        video_path, sample_count, check_cancelled=check_cancelled,
     ):
         if first_frame is None:
             first_frame = frame
@@ -1368,7 +1376,7 @@ def detect_clean_candidates(
             (
                 frame
                 for _, frame in _iter_sample_frames_with_indices(
-                    video_path, sample_count,
+                    video_path, sample_count, check_cancelled=check_cancelled,
                 )
             ),
             detector,

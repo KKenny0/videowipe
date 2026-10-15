@@ -910,6 +910,7 @@ class WipeEngine:
             recognizer_builder=self._build_recognizer,
             agent_selector=self._select_candidates_with_agent,
             on_agent_decision=record_decision,
+            check_cancelled=self._check_cancelled,
         )
         self._write_clean_artifacts(draft, draft.proposed_remove_ids, output)
         if confirm:
