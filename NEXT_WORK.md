@@ -1,6 +1,6 @@
 # 当前工作入口
 
-核对基准：v0.11.1 / `1982331`。GitHub 状态核对日期：2026-10-11。当前优先级是清理效果：去掉该去的、保留该留的，减少达到可用结果的修改。
+核对日期：2026-10-15。最新发布仍为 v0.11.1；当前 main 已包含 #16 的 Agent 选择诊断、#17 的 macOS 安装 CI 及 #22 的帧身份工程修复。当前优先级是清理效果：去掉该去的、保留该留的，减少达到可用结果的修改。
 
 ## 开始工作
 
@@ -21,19 +21,20 @@
 | 时段与保护编辑、局部空间蒙版及有界预测复用 | [WipePlan](src/videowipe/plan.py)、[审阅](src/videowipe/server/review.py)、[预测缓存](src/videowipe/inpainters/prediction_cache.py) |
 | 自动 MPS 选择与空目标段带跳过 | [后端](src/videowipe/backends.py)、[STTN](src/videowipe/inpainters/sttn.py) |
 
-Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运行已有发布验收。这些结果只覆盖当时的版本、输入和验证范围，不代表所有视频可用，也不代表 macOS CI 已完成。旧四例无需再次要求用户人工验收。
+Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运行已有发布验收。这些结果只覆盖当时的版本、输入和验证范围，不代表所有视频可用。#17 现已补齐持续 macOS arm64 安装 CI；安装冒烟不等于 MPS 全片效果验收。旧四例无需再次要求用户人工验收。
 
 ## 当前任务
 
-#11、#18 已合入并结项。#12 默认路径和原因证据、#13 一轮框编辑的用户结果确认已在本地整理；接下来补齐 #12 的逐例效果记录及 #15 的真人时间与运行条件记录。#13 当前案例已获用户确认，整票仍保留对 #12 的依赖。#12–#17 在本次核对时仍 OPEN。先完成效果证据，再推进辅助工程；关联不代表必须重做已完成上游。
+#11、#12、#13、#16、#17、#18 已合入并结项。#12 的英文／多语默认输出获用户完整播放接受，中文默认输出明确失败；#13 只覆盖指定一次框编辑的接受，固定 ROI 工程失败及部分未知结果保留。结项不是所有输入可用的证明。
 
 | 顺序 | Issue | 当前边界 / 下一步 |
 | --- | --- | --- |
-| 完成 | [#11 清理效果记录](https://github.com/KKenny0/videowipe/issues/11)、[#18 统一入口](https://github.com/KKenny0/videowipe/issues/18) | 实现与本地验收完成：验收 runner、误选保护、记录契约、当前入口和历史标记。交付与结项凭据见票据。 |
-| 2 | [#12 默认流程](https://github.com/KKenny0/videowipe/issues/12) | 新真实片段默认全流程已运行；姓名与英文歌词同组的原因已查明。历史四例规划一致性已复核；逐例当前效果记录尚未补齐，保留该验收项。 |
-| 3 | [#13 一轮纠正](https://github.com/KKenny0/videowipe/issues/13) | 一次已有英文框编辑后，用户确认该输出“达到预期”。保留中断重试、区域检查失败及像素一致性未知；不是所有技术检查通过。 |
-| 4 | [#14 五位用户](https://github.com/KKenny0/videowipe/issues/14)、[#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | #14 需要负责人提供真实参与者；#15 已有阶段机器耗时，真人操作/审阅时间和完整冷/热/缓存分组未测，总成本仍未知。 |
-| 5 | [#17 macOS CI](https://github.com/KKenny0/videowipe/issues/17)、[#16 Agent 来源](https://github.com/KKenny0/videowipe/issues/16) | 尚待相应票据实施；安装保障、决策来源与回退原因记录不能抢占效果验证。 |
+| P0 待播放 | [#22 中文字幕多处闪字](https://github.com/KKenny0/videowipe/issues/22) | [#25](https://github.com/KKenny0/videowipe/pull/25) 已合入，修复错误 seek 的帧身份错配；506 项本地测试、四例 1,809 帧试擦／全片一致性通过。新中文输出仍需正常速度完整播放，票保持开放；英文／多语视频字节与已接受输出相同。长片顺序采样有额外解码成本，不以蒙版或抽帧检查结项。 |
+| 并行 | [#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | 既有默认成功、修改后成功及中文失败的机器计时可关联原产物；真人操作／审阅时间、可用结果总耗时和严格冷／热／缓存分组未测，保持开放。按[观察流程](docs/cleanup-user-study_CN.md)前瞻采集，不倒推历史真人时间。 |
+| 人工依赖 | [#14 五位用户](https://github.com/KKenny0/videowipe/issues/14) | 等待负责人提供五位真实参与者和授权素材。观察流程与空模板已准备；没有真实试用数据，内部检查不能替代。 |
+| 完成 | [#16 Agent 来源](https://github.com/KKenny0/videowipe/issues/16) | [#24](https://github.com/KKenny0/videowipe/pull/24) 已合入，SDK／CLI／保存诊断区分六状态及来源；合法空选成功，失败本地回退。不是视觉 Agent 或跨端任务协议。 |
+| 完成 | [#17 macOS CI](https://github.com/KKenny0/videowipe/issues/17) | [#23](https://github.com/KKenny0/videowipe/pull/23) 已合入，macOS arm64 与 Ubuntu 候选包安装检查持续运行，Windows／Ubuntu 测试保留；不代表 Intel 或真实 MPS 全片导出验收。 |
+| 历史完成 | [#11](https://github.com/KKenny0/videowipe/issues/11)、[#12](https://github.com/KKenny0/videowipe/issues/12)、[#13](https://github.com/KKenny0/videowipe/issues/13)、[#18](https://github.com/KKenny0/videowipe/issues/18) | 复用已绑定输入、计划、输出及用户判断的记录；保留失败与未知范围，不重复开发已有能力或重做历史签收。 |
 
 [#19 残影诊断](https://github.com/KKenny0/videowipe/issues/19) 已 CLOSED。诊断未改生产算法：保持当前默认输入尺寸，不重做尺寸/时间上下文实验。新动态片段的“基本可用、有一些涂抹”判断只覆盖受控手动目标。原截图的“只擦半行”仍缺原片、版本和操作路径，继续未验证。旧中文输入 seek 偏移与预测残影分别处理。
 
