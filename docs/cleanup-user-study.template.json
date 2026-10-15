@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "record_kind": "template_not_observation",
+  "participant_id": null,
+  "observer_id": null,
+  "material_authorization": {
+    "use_granted": null,
+    "reference_local": null,
+    "publish_granted": null
+  },
+  "goal": {
+    "remove": null,
+    "keep": null
+  },
+  "source": {
+    "sha256": null,
+    "duration_s": null,
+    "width": null,
+    "height": null,
+    "decoded_frame_count": null,
+    "manifest_local": null
+  },
+  "product": {
+    "commit": null,
+    "package_sha256": null,
+    "os": null,
+    "architecture": null,
+    "python": null,
+    "device": null
+  },
+  "session": {
+    "started_at": null,
+    "upload_received_at": null,
+    "first_effect_ready_at": null,
+    "usable_result_accepted_at": null,
+    "stopped_at": null,
+    "outcome": null,
+    "independent": null,
+    "assistance": [],
+    "interruptions": [],
+    "failure_reason": null,
+    "abandon_reason": null,
+    "second_material_intent": null
+  },
+  "human_activity_intervals": [],
+  "runs": [],
+  "edit_submissions": [],
+  "modification_rounds": [],
+  "effect_review": {
+    "output_sha256": null,
+    "plan_sha256": null,
+    "job_id": null,
+    "review_revision": null,
+    "normal_speed": null,
+    "full_watched": null,
+    "target_removed": null,
+    "non_target_preserved": null,
+    "temporal_defects": null,
+    "visual_artifacts": null,
+    "willing_to_use": null,
+    "problem_intervals": [],
+    "original_feedback": null,
+    "record_local": null
+  },
+  "internal_comparison": {
+    "reviewer": null,
+    "judgment": null,
+    "difference_from_user": null
+  },
+  "derived_costs": {
+    "first_effect_wait_s": null,
+    "human_setup_s": null,
+    "human_edit_s": null,
+    "human_review_s": null,
+    "usable_result_total_s": null,
+    "until_stop_s": null,
+    "derivation_and_missing_fields": null
+  },
+  "raw_records_local": []
+}
