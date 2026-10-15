@@ -1,6 +1,7 @@
 """Internal clean planning: request -> reviewable draft -> deterministic plan."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from itertools import pairwise
 import json
@@ -95,7 +96,7 @@ class CleanPlanDraft:
         self._result = result
         self._source = source
         self._proposed_remove_ids = frozenset(proposed_remove_ids)
-        self._resolved_request = dict(resolved_request)
+        self._resolved_request = deepcopy(dict(resolved_request))
         self._user_directed = user_directed
 
     @property
@@ -110,7 +111,7 @@ class CleanPlanDraft:
 
     @property
     def resolved_request(self) -> dict[str, Any]:
-        return dict(self._resolved_request)
+        return deepcopy(self._resolved_request)
 
     @property
     def frame_shape(self) -> tuple[int, int]:
@@ -133,12 +134,15 @@ class CleanPlanDraft:
     def with_remove_ids(
         self, remove_ids: Iterable[str], *, user_directed: bool = True,
     ) -> CleanPlanDraft:
+        request = self.resolved_request
+        if user_directed and "agent_decision" in request:
+            request["agent_decision"]["selection_source"] = "user_selection"
         return CleanPlanDraft(
             self._video_path,
             self._result,
             self._source,
             remove_ids,
-            self._resolved_request,
+            request,
             user_directed,
         )
 
@@ -189,6 +193,8 @@ class CleanPlanDraft:
         resolved = dict(self._resolved_request if request is None else request)
         resolved.setdefault("intent", intent)
         resolved.setdefault("targets", list(effective_targets))
+        from videowipe.agent import AgentSelectionResult
+        resolved["agent_decision"] = AgentSelectionResult("not_requested").diagnostic()
         return CleanPlanDraft(
             self._video_path,
             self._result,
@@ -218,13 +224,9 @@ def build_recognizer(ocr_mode: str):
 
 
 def _agent_selection(agent: str, candidates: Sequence[Any], intent: str):
-    from videowipe.agent import select_with_agent
+    from videowipe.agent import select_with_agent_result
 
-    selected_ids = select_with_agent(agent, candidates, intent)
-    if selected_ids is None:
-        return None
-    wanted = set(selected_ids)
-    return [candidate for candidate in candidates if candidate.id in wanted]
+    return select_with_agent_result(agent, candidates, intent)
 
 
 def _warn_if_timestamp_unresolved(
@@ -253,6 +255,7 @@ def prepare(
     ocr: str = "auto",
     recognizer_builder: Callable[[str], Any] = build_recognizer,
     agent_selector: Callable[[str, Sequence[Any], str], Any] = _agent_selection,
+    on_agent_decision: Callable[[dict], None] | None = None,
     warn: Callable[[str], None] = print,
 ) -> CleanPlanDraft:
     """Interpret a request, detect candidates, and return its reviewable draft."""
@@ -300,13 +303,26 @@ def prepare(
         result.candidates, targets=effective_targets, intent=intent,
     )
     _warn_if_timestamp_unresolved(effective_targets, result.candidates, warn)
-    if agent and intent:
-        agent_selected = agent_selector(agent, result.candidates, intent)
-        if agent_selected is None:
-            warn("Agent selection unavailable; using local rules.")
-        else:
-            selected = agent_selected
+    from videowipe.agent import AgentSelectionResult
 
+    decision = AgentSelectionResult("not_requested", reason="intent_required" if agent and not intent else None)
+    if agent and intent:
+        outcome = agent_selector(agent, result.candidates, intent)
+        if isinstance(outcome, AgentSelectionResult):
+            decision = outcome
+            if decision.status == "success":
+                selected = [c for c in result.candidates if c.id in decision.selected_ids]
+        elif outcome is None:
+            decision = AgentSelectionResult("execution_failed", reason="legacy_selector_failed")
+        else:
+            # Preserve custom selectors returning candidate lists, including [].
+            selected = list(outcome)
+            decision = AgentSelectionResult("success", tuple(c.id for c in selected))
+        if decision.status != "success":
+            warn(f"Agent selection {decision.status} ({decision.reason}); using local rules.")
+
+    if on_agent_decision is not None:
+        on_agent_decision(decision.diagnostic())
     return CleanPlanDraft(
         video_path,
         result,
@@ -318,6 +334,7 @@ def prepare(
             "regions": requested_regions,
             "detect_mode": detect_mode,
             "ocr": ocr,
+            "agent_decision": decision.diagnostic(),
         },
         bool(target_list or intent or region_list),
     )

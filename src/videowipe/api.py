@@ -67,6 +67,7 @@ class WipeResult:
     timings: Mapping[str, float] = field(default_factory=dict)
     warnings: Sequence[str] = ()
     preview: bool = False
+    agent_decision: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -77,6 +78,7 @@ class WipeResult:
             "timings": dict(self.timings),
             "warnings": list(self.warnings),
             "preview": self.preview,
+            "agent_decision": dict(self.agent_decision),
         }
 
 
