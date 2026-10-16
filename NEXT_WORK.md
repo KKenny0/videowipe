@@ -1,6 +1,6 @@
 # 当前工作入口
 
-核对日期：2026-10-15。最新发布仍为 v0.11.1；当前 main 已包含 #16 的 Agent 选择诊断、#17 的 macOS 安装 CI 及 #22 的帧身份工程修复。当前优先级是清理效果：去掉该去的、保留该留的，减少达到可用结果的修改。
+核对日期：2026-10-16。最新发布仍为 v0.11.1；当前 main 已包含 #16 的 Agent 选择诊断、#17 的 macOS 安装 CI 及 #22 的帧身份修复。#22 的指定中文默认零编辑输出已完成 AI 自验收，并获用户明确确认结项；修复尚未通过新版本发布。当前优先级是清理效果：去掉该去的、保留该留的，减少达到可用结果的修改。
 
 ## 开始工作
 
@@ -25,13 +25,13 @@ Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运
 
 ## 当前任务
 
-#11、#12、#13、#16、#17、#18 已合入并结项。#12 的英文／多语默认输出获用户完整播放接受，中文默认输出明确失败；#13 只覆盖指定一次框编辑的接受，固定 ROI 工程失败及部分未知结果保留。结项不是所有输入可用的证明。
+#11、#12、#13、#16、#17、#18、#22 已结项。#12 的英文／多语默认输出获用户完整播放接受；修复前中文默认输出的失败记录保留，#22 的新中文输出通过 AI 自验收后，用户明确确认验收通过并要求收口。该确认是验收决定，没有新增真人播放观察。#13 只覆盖指定一次框编辑的接受，固定 ROI 工程失败及部分未知结果保留。结项不是所有输入可用的证明。
 
 | 顺序 | Issue | 当前边界 / 下一步 |
 | --- | --- | --- |
-| P0 待播放 | [#22 中文字幕多处闪字](https://github.com/KKenny0/videowipe/issues/22) | [#25](https://github.com/KKenny0/videowipe/pull/25) 已合入，修复错误 seek 的帧身份错配；506 项本地测试、四例 1,809 帧试擦／全片一致性通过。新中文输出仍需正常速度完整播放，票保持开放；英文／多语视频字节与已接受输出相同。长片顺序采样有额外解码成本，不以蒙版或抽帧检查结项。 |
-| 并行 | [#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | 既有默认成功、修改后成功及中文失败的机器计时可关联原产物；真人操作／审阅时间、可用结果总耗时和严格冷／热／缓存分组未测，保持开放。按[观察流程](docs/cleanup-user-study_CN.md)前瞻采集，不倒推历史真人时间。 |
+| 并行 | [#15 总成本](https://github.com/KKenny0/videowipe/issues/15) | 既有默认成功、修改后成功及旧中文失败的机器计时可关联原产物；真人操作／审阅时间、可用结果总耗时和严格冷／热／缓存分组未测，保持开放。按[观察流程](docs/cleanup-user-study_CN.md)前瞻采集，不倒推历史真人时间。 |
 | 人工依赖 | [#14 五位用户](https://github.com/KKenny0/videowipe/issues/14) | 等待负责人提供五位真实参与者和授权素材。观察流程与空模板已准备；没有真实试用数据，内部检查不能替代。 |
+| 完成 | [#22 中文字幕多处闪字](https://github.com/KKenny0/videowipe/issues/22) | [#25](https://github.com/KKenny0/videowipe/pull/25) 已合入，修复错误 seek 的帧身份错配；506 项测试、四例 1,809 帧试擦／全片一致性及固定 PNG 对照完成。指定中文新输出经全部 591 帧视觉对照、26 个边界相邻帧检查和浏览器 1× 完整播放完成 AI 自验收，[用户已确认结项](https://github.com/KKenny0/videowipe/issues/22#issuecomment-6206595928)。局部修复软化与图像序列审查方法已披露；原失败保留，不作为后续待播放任务。长片顺序采样仍有额外解码成本。 |
 | 完成 | [#16 Agent 来源](https://github.com/KKenny0/videowipe/issues/16) | [#24](https://github.com/KKenny0/videowipe/pull/24) 已合入，SDK／CLI／保存诊断区分六状态及来源；合法空选成功，失败本地回退。不是视觉 Agent 或跨端任务协议。 |
 | 完成 | [#17 macOS CI](https://github.com/KKenny0/videowipe/issues/17) | [#23](https://github.com/KKenny0/videowipe/pull/23) 已合入，macOS arm64 与 Ubuntu 候选包安装检查持续运行，Windows／Ubuntu 测试保留；不代表 Intel 或真实 MPS 全片导出验收。 |
 | 历史完成 | [#11](https://github.com/KKenny0/videowipe/issues/11)、[#12](https://github.com/KKenny0/videowipe/issues/12)、[#13](https://github.com/KKenny0/videowipe/issues/13)、[#18](https://github.com/KKenny0/videowipe/issues/18) | 复用已绑定输入、计划、输出及用户判断的记录；保留失败与未知范围，不重复开发已有能力或重做历史签收。 |
@@ -40,6 +40,7 @@ Spec #3 的四段历史样片已获正常播放签收，macOS 安装与实际运
 
 本地证据入口（均为忽略产物，不要求新 clone 自带）：
 
+- `result/goal-20261015/self-review-22-final/`：#22 最终中文输出的全帧对照、边界序列、1× 播放日志和 AI 自验收记录；原片、输出、计划与蒙版身份固定。`REVIEW.md` 和 `acceptance.json` 说明方法、局部软化和限制。后续用户确认是验收决定，不补写为真人实时观看记录。
 - `result/effect-acceptance/default-v2/report.json`：四条历史真实/合成案例的统一记录，人工状态保持 unverified。
 - `result/effect-acceptance/screenshot-default/reviewed.json`、`screenshot-corrected/reviewed.json`：静态截图探针及一次选择修正；不是原视频复现。
 - `result/effect-acceptance/safety-fix/`：原误选修复验证及残影分层证据。
