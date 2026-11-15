@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="80" height="80" alt="VideoWipe 标志">
+  <img src="assets/logo.png" width="100" height="100" alt="VideoWipe 标志">
 </p>
 
 <h1 align="center">VideoWipe</h1>
